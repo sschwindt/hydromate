@@ -1,0 +1,88 @@
+# =============================================================================
+# tmsetup configuration — Inn river reach (Bavaria), TELEMAC-2D + (optional) GAIA
+# =============================================================================
+# All relative paths are resolved against THIS file's directory.
+# Build the case with:   tm-setup config/inn.yml
+# -----------------------------------------------------------------------------
+
+project:
+  name: inn
+  crs_epsg: 25832            # ETRS89 / UTM zone 32N (metric) — see CLAUDE.md
+  work_dir: case            # intermediate rasters etc.
+  model_dir: case/simulation  # TELEMAC case files land here
+  results_dir: case/results
+
+telemac:
+  pysource: /home/schwindt/opt/telemac/configs/pysource.mint22.sh
+  solver: telemac2d
+  n_processors: 4
+
+inputs:
+  dem_initial: ../geodata/DEM-2025-20cm.tif
+  # dem_target: ../geodata/DEM-future-survey.tif    # enable for morphodynamics
+  # ROI / maximum wetted extent: the KB15 reach polygon (EPSG:25832).
+  boundary: ../geodata/roi-kb15.gpkg
+  breaklines: ../geodata/shapefiles/breaklines.shp
+  region_points: ../geodata/shapefiles/region-points.shp   # carries MATID + max_area
+  region_table: ../geodata/shapefiles/region-pts-table.txt
+  liquid_boundaries: ../geodata/shapefiles/liquid-boundaries.shp
+  inflow: ../stage-discharge/fluesse-abfluss/18004007_01.11.2020_30.11.2020_ezw_0.csv
+  # stage_discharge: ../stage-discharge/rating-curve.csv   # Q[m3/s];WSE[m] rating curve
+  # measurements: ../geodata/measurements.shp              # x,y,water_depth,scalar_velocity
+
+mesh:
+  default_size: 10.0         # background target edge length (m)
+  breakline_size: 3.0        # refinement along breaklines (m)
+  min_size: 0.5
+  # per-MATID refinement (edge length in m), mirroring region-pts-table.txt areas
+  region_sizes:
+    1: 1.5     # riverbed_fine
+    2: 3.0     # riverbed_coarse
+    3: 1.0     # block_ramp
+    4: 2.0     # gravel_bank
+    5: 7.0     # floodplain
+
+friction:
+  default_law: 4             # Manning
+  default_coefficient: 0.03
+  # one zone per MATID (id must equal the MATID); coefficients are the initial
+  # guesses that HydroBayesCal perturbs during calibration.
+  zones:
+    - { matid: 1, name: riverbed_fine,   law: 4, coefficient: 0.028 }
+    - { matid: 2, name: riverbed_coarse, law: 4, coefficient: 0.033 }
+    - { matid: 3, name: block_ramp,      law: 4, coefficient: 0.050 }
+    - { matid: 4, name: gravel_bank,     law: 4, coefficient: 0.035 }
+    - { matid: 5, name: floodplain,      law: 4, coefficient: 0.060 }
+
+hydrodynamics:
+  regime: steady
+  time_step: 1.0
+  n_time_steps: 15000
+  graphic_printout_period: 500
+  listing_printout_period: 500
+  # If no stage_discharge rating curve is provided, set the downstream water
+  # level explicitly (m a.s.l. in the project vertical datum):
+  prescribed_elevation: 371.33
+  # prescribed_flowrate: 47.2   # override; else the mean of the inflow series
+
+# morphodynamics:            # extension point (v1: 2D hydraulic first)
+#   enabled: true
+#   gaia_results_base: rgaia
+#   sediment_classes:
+#     - { diameter: 0.0008, density: 2650, shields: 0.047 }
+#     - { diameter: 0.016,  density: 2650, shields: 0.047 }
+
+calibration:
+  calibration_quantities: ["WATER DEPTH"]
+  extraction_quantities: ["WATER DEPTH", "SCALAR VELOCITY"]
+  measurement_error: 0.10
+  init_runs: 30
+  max_runs: 50
+  gp_library: gpy
+  # friction-zone parameters (names follow HydroBayesCal's "zone<MATID>" rule);
+  # add "gaiaCLASSES SHIELDS PARAMETERS <n>" entries for morphodynamic calibration.
+  parameters:
+    - { name: zone1, min: 0.020, max: 0.040, comment: riverbed_fine Manning n }
+    - { name: zone2, min: 0.025, max: 0.045, comment: riverbed_coarse }
+    - { name: zone4, min: 0.025, max: 0.050, comment: gravel_bank }
+    - { name: zone5, min: 0.040, max: 0.090, comment: floodplain }

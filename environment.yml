@@ -1,0 +1,32 @@
+# Conda/mamba environment for the Inn TELEMAC setup-automation workflow (tmsetup).
+#
+# This environment runs the *case-building* pipeline (DEM clipping, gmsh meshing,
+# SELAFIN/CLI/CAS/TBL generation, calibration CSV + hydrobayescal config emit).
+# It is intentionally separate from `wrr-proj` and from the TELEMAC installation:
+# the actual TELEMAC solver is invoked by *sourcing* the TELEMAC pysource shell
+# script defined in the user config (see config/inn.yml -> telemac.pysource), so
+# this env only needs the geospatial/meshing stack, not TELEMAC's Python.
+#
+# Create with:
+#   mamba env create -f environment.yml
+#   mamba activate telemac-inn
+#   pip install -e .
+name: telemac-inn
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - scipy
+  - pyyaml
+  - pyproj
+  - shapely>=2.0
+  - geopandas
+  - rasterio
+  - fiona
+  - gdal
+  - matplotlib
+  - pip
+  - pip:
+      - gmsh>=4.13
