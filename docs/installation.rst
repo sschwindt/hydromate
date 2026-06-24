@@ -48,6 +48,12 @@ Optional developer tools (tests, linting):
 
    pip install -e ".[dev]"
 
+The optional browser-based configuration editor (see :doc:`usage`) needs Streamlit, installed via the ``gui`` extra:
+
+.. code-block:: bash
+
+   pip install -e ".[gui]"
+
 Verify
 ------
 

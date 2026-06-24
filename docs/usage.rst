@@ -1,7 +1,7 @@
 Usage
 =====
 
-``hydromate`` is driven by a single YAML configuration file and exposes one command. The workflow is: write a config, build the case, then calibrate it with HydroBayesCal.
+``hydromate`` is driven by a single YAML configuration file. You can write it in a text editor and drive the build from the command line, or edit it in a browser with the optional graphical editor — both produce the same YAML. The workflow is: write a config, build the case, then calibrate it with HydroBayesCal.
 
 The command line
 ----------------
@@ -21,6 +21,18 @@ Useful flags:
     Skip checking that the TELEMAC environment can be sourced (useful when only producing files on a machine without TELEMAC).
 ``--dry-run``
     After building, launch the configured solver once to confirm the case is accepted by TELEMAC.
+
+Graphical configuration editor
+------------------------------
+
+An optional browser-based editor (built with Streamlit) renders the whole configuration as a form, so you can fill in the settings without hand-editing YAML. Install the ``gui`` extra and launch it:
+
+.. code-block:: bash
+
+   pip install -e ".[gui]"
+   hydromate-gui
+
+This opens a local app in your browser (nothing leaves your machine). The form mirrors the configuration sections (project, TELEMAC, inputs, mesh, friction, hydrodynamics, calibration); friction zones and calibration parameters are edited as tables. From the editor you can load an existing YAML, preview and download the generated YAML, save it to a path, and run validation (``--check``) or a full build directly — the same actions as the command line. Validation and build operate on the saved file, so its relative input paths resolve correctly.
 
 Inputs you provide
 ------------------

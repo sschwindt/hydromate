@@ -24,9 +24,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+gui = ["streamlit>=1.30"]
 
 [project.scripts]
 hydromate = "hydromate.cli:main"
+hydromate-gui = "hydromate.gui.launch:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
