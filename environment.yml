@@ -2,8 +2,7 @@
 #
 # This environment runs the *case-building* pipeline (DEM clipping, gmsh meshing,
 # SELAFIN/CLI/CAS/TBL generation, calibration CSV + hydrobayescal config emit).
-# It is intentionally separate from `wrr-proj` and from the TELEMAC installation:
-# the actual TELEMAC solver is invoked by *sourcing* the TELEMAC pysource shell
+# The actual TELEMAC solver is invoked by *sourcing* the TELEMAC pysource shell
 # script defined in the user config (see config/inn.yml -> telemac.pysource), so
 # this env only needs the geospatial/meshing stack, not TELEMAC's Python.
 #
