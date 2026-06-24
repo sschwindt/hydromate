@@ -34,3 +34,6 @@ dist/
 .claude/
 .idea/
 .vscode/
+
+# --- Sphinx docs build ---
+docs/_build/

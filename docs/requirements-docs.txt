@@ -1,0 +1,5 @@
+# Documentation build dependencies (Read the Docs / local `sphinx-build`).
+# Heavy runtime deps (gmsh, GDAL, geopandas, ...) are mocked in conf.py via
+# autodoc_mock_imports, so they are intentionally NOT listed here.
+sphinx>=7.0
+sphinx-rtd-theme>=2.0
