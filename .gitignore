@@ -1,8 +1,8 @@
-# --- Co-development data (NOT part of the package) -------------------------
-# These folders/files only live here so we can develop against real Inn data.
-/geodata/
-/stage-discharge/
-/geoVis.qgz
+# --- Co-development data / example dataset (NOT part of the package) --------
+# Real Inn data we develop against; lives here for co-development only.
+# (Previously /geodata/, /stage-discharge/ and /geoVis.qgz at the repo root;
+#  now consolidated under example-Inn/.)
+/example-Inn/
 /projection.info
 
 # --- Build outputs / generated TELEMAC cases -------------------------------
