@@ -34,7 +34,7 @@ def write_geometry(
     bottom: np.ndarray,
     *,
     friction_id: np.ndarray | None = None,
-    title: str = "tmsetup geometry",
+    title: str = "hydromate geometry",
     date: Sequence[int] = (2026, 1, 1, 0, 0, 0),
 ) -> Path:
     """Write a 2D triangular-mesh geometry SELAFIN.

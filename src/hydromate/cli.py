@@ -1,4 +1,4 @@
-"""Command-line entry point: ``tm-setup``."""
+"""Command-line entry point: ``hydromate``."""
 
 from __future__ import annotations
 
@@ -7,13 +7,13 @@ import logging
 import sys
 from pathlib import Path
 
-from tmsetup import __version__, pipeline
-from tmsetup.config import load_config
+from hydromate import __version__, pipeline
+from hydromate.config import load_config
 
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="tm-setup",
+        prog="hydromate",
         description="Build a calibration-ready TELEMAC-2D/GAIA case from a YAML "
                     "config and emit a HydroBayesCal config.",
     )
@@ -25,7 +25,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--check", action="store_true",
                    help="only load and validate the config, then exit")
     p.add_argument("-v", "--verbose", action="store_true")
-    p.add_argument("--version", action="version", version=f"tmsetup {__version__}")
+    p.add_argument("--version", action="version", version=f"hydromate {__version__}")
     return p
 
 
@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(message)s",
     )
-    log = logging.getLogger("tmsetup")
+    log = logging.getLogger("hydromate")
 
     try:
         cfg = load_config(args.config)

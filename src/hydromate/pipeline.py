@@ -6,11 +6,11 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from tmsetup import boundary, calibration, dem, hydraulics, mesh, steering
-from tmsetup.config import Config
-from tmsetup.env import TelemacRuntime
+from hydromate import boundary, calibration, dem, hydraulics, mesh, steering
+from hydromate.config import Config
+from hydromate.env import TelemacRuntime
 
-log = logging.getLogger("tmsetup")
+log = logging.getLogger("hydromate")
 
 
 @dataclass

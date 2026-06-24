@@ -1,6 +1,6 @@
 """Bridge to the TELEMAC runtime environment.
 
-The tmsetup pipeline runs in its own (``telemac-inn``) Python environment and
+The hydromate pipeline runs in its own (``telemac-inn``) Python environment and
 does *not* import TELEMAC's Python directly. Instead, whenever a TELEMAC tool or
 TELEMAC's SELAFIN API is needed, we spawn a subshell that first *sources* the
 user-configured ``pysource.*.sh`` (exporting HOMETEL + PYTHONPATH + the right
@@ -14,7 +14,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from tmsetup.config import TelemacEnv
+from hydromate.config import TelemacEnv
 
 
 class TelemacRuntime:

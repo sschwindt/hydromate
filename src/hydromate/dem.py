@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tmsetup.config import Config
+from hydromate.config import Config
 
 
 @dataclass

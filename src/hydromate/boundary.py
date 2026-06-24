@@ -19,8 +19,8 @@ from pathlib import Path
 
 import numpy as np
 
-from tmsetup.config import Config
-from tmsetup.mesh import Mesh
+from hydromate.config import Config
+from hydromate.mesh import Mesh
 
 WALL = (2, 2, 2)
 INFLOW = (5, 5, 5)

@@ -126,8 +126,8 @@ calibration:
 
 
 def run_pipeline_test(tmp: Path) -> None:
-    from tmsetup.config import load_config
-    from tmsetup import pipeline
+    from hydromate.config import load_config
+    from hydromate import pipeline
 
     cfg_yaml = _write_fixtures(tmp)
     cfg = load_config(cfg_yaml)

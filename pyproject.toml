@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tmsetup"
+name = "hydromate"
 version = "0.1.0"
 description = "Automated setup of calibration-ready TELEMAC-2D/3D + GAIA cases for the Inn river, feeding HydroBayesCal."
 readme = "README.md"
@@ -26,13 +26,13 @@ dependencies = [
 dev = ["pytest", "ruff"]
 
 [project.scripts]
-tm-setup = "tmsetup.cli:main"
+hydromate = "hydromate.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-tmsetup = ["templates/*.cas", "templates/*.tbl"]
+hydromate = ["templates/*.cas", "templates/*.tbl"]
 
 [tool.ruff]
 line-length = 100

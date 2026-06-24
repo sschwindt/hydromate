@@ -54,7 +54,7 @@ class TelemacEnv:
     ``pysource`` is the shell script that, when sourced, exports HOMETEL and the
     TELEMAC PYTHONPATH (e.g. ``configs/pysource.mint22.sh``). The pipeline does
     not import TELEMAC's Python directly; it sources this script in a subshell
-    for any solver call (see :mod:`tmsetup.env`).
+    for any solver call (see :mod:`hydromate.env`).
     """
 
     pysource: Path

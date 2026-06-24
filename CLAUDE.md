@@ -10,12 +10,12 @@ coupled with GAIA), set up automatically and calibrated with quantified uncertai
 [HydroBayesCal](https://github.com/Ecohydraulics/hydrobayescal).
 
 The repository contains both **input data** (`geodata/`, `stage-discharge/`) and the
-**`tmsetup` package** (`src/tmsetup/`) that turns that data into a calibration-ready
+**`hydromate` package** (`src/hydromate/`) that turns that data into a calibration-ready
 TELEMAC case. See `README.md` for the workflow and `config/inn.yml` for the case config.
 
-## The `tmsetup` workflow
+## The `hydromate` workflow
 
-`tm-setup config/inn.yml` runs a 5-stage pipeline (`src/tmsetup/pipeline.py`):
+`hydromate config/inn.yml` runs a 5-stage pipeline (`src/hydromate/pipeline.py`):
 
 1. `dem.py` — reproject + clip the initial (and optional target) DEM to the ROI boundary.
 2. `mesh.py` + `selafin.py` — gmsh triangular mesh from boundary + breaklines with
@@ -37,7 +37,7 @@ Key design points:
 - Friction zones come from the **MATID** scheme in `geodata/shapefiles/region-pts-table.txt`
   (1 riverbed_fine … 5 floodplain) → friction `.tbl` rows and `zone<MATID>` calibration
   parameters. HydroBayesCal perturbs the coefficient column of the `.tbl`.
-- `src/tmsetup/selafin.py` is a self-contained big-endian SELAFIN writer; its output is
+- `src/hydromate/selafin.py` is a self-contained big-endian SELAFIN writer; its output is
   validated against TELEMAC's own `data_manip.formats.selafin.Selafin` reader in the tests.
 - Calibration CSV schema (read by HydroBayesCal): `id, x, y, z, <QTY>_DATA, <QTY>_ERROR`,
   where `<QTY>` is a SELAFIN name (e.g. `WATER DEPTH`, `SCALAR VELOCITY`).
@@ -50,9 +50,9 @@ DEM-of-Difference topographic-change calibration are wired as extension points
 
 ```bash
 mamba env create -f environment.yml && mamba activate telemac-inn && pip install -e .
-tm-setup config/inn.yml --check        # validate config only
-tm-setup config/inn.yml                # build the case
-tm-setup config/inn.yml --dry-run      # build, then run the solver once to validate
+hydromate config/inn.yml --check        # validate config only
+hydromate config/inn.yml                # build the case
+hydromate config/inn.yml --dry-run      # build, then run the solver once to validate
 mamba run -n telemac-inn pytest tests/ # end-to-end test on synthetic fixtures (no solver)
 ```
 

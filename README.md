@@ -1,11 +1,11 @@
-# Inn TELEMAC setup workflow (`tmsetup`)
+# Inn TELEMAC setup workflow (`hydromate`)
 
 Automated setup of a calibration-ready **TELEMAC-2D** (optionally **+ GAIA**
 morphodynamics) case for a reach of the **Inn river (Bavaria)**, wired into
 [HydroBayesCal](https://github.com/Ecohydraulics/hydrobayescal) for
 surrogate-assisted Bayesian calibration with quantified uncertainty.
 
-You provide geodata + hydraulics; `tm-setup` produces a ready TELEMAC case
+You provide geodata + hydraulics; `hydromate` produces a ready TELEMAC case
 (geometry `.slf`, `boundaries.cli`, steering `.cas`, friction `.tbl`) plus a
 `measurements-calibration.csv` and a HydroBayesCal `config_Telemac.py`.
 
@@ -20,16 +20,16 @@ inflow / outflow / measurements ───┤
                                    └─▶ 5. measurements-calibration.csv + config_Telemac.py
 ```
 
-* **Stage 1** (`tmsetup/dem.py`) — reproject + clip the initial DEM (and optional
+* **Stage 1** (`hydromate/dem.py`) — reproject + clip the initial DEM (and optional
   target DEM) to the ROI boundary; optional DEM-of-Difference for morphodynamics.
-* **Stage 2** (`tmsetup/mesh.py`, `selafin.py`) — triangular mesh from boundary +
+* **Stage 2** (`hydromate/mesh.py`, `selafin.py`) — triangular mesh from boundary +
   breaklines with per-MATID size fields; DEM interpolated onto nodes; friction
   zones written as a `FRIC_ID` variable inside the geometry SELAFIN.
-* **Stage 3** (`tmsetup/boundary.py`) — classify contour nodes against the
+* **Stage 3** (`hydromate/boundary.py`) — classify contour nodes against the
   inflow/outflow lines; write `.cli` with the codes the solver expects.
-* **Stage 4** (`tmsetup/steering.py`) — friction `.tbl` (one row per MATID,
+* **Stage 4** (`hydromate/steering.py`) — friction `.tbl` (one row per MATID,
   perturbed by HydroBayesCal) and the `.cas`; GAIA `.cas` when morphodynamics on.
-* **Stage 5** (`tmsetup/calibration.py`) — calibration CSV from measurements and
+* **Stage 5** (`hydromate/calibration.py`) — calibration CSV from measurements and
   the HydroBayesCal `config_Telemac.py`.
 
 ## Install
@@ -53,9 +53,9 @@ pip install -e .
 3. Build the case:
 
 ```bash
-tm-setup config/inn.yml            # build everything
-tm-setup config/inn.yml --check    # validate config only
-tm-setup config/inn.yml --dry-run  # build, then run the solver once to validate
+hydromate config/inn.yml            # build everything
+hydromate config/inn.yml --check    # validate config only
+hydromate config/inn.yml --dry-run  # build, then run the solver once to validate
 ```
 
 4. Calibrate (in the HydroBayesCal clone, with its env):

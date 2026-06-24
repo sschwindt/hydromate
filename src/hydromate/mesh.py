@@ -8,7 +8,7 @@ breaklines, with per-region (MATID) size refinement, then:
   IPOBO array and the ``.cli`` row order — they must agree),
 * interpolates the clipped DEM onto the nodes (bathymetry),
 * assigns each element a MATID (friction zone),
-* writes the geometry ``.slf`` via :mod:`tmsetup.selafin`.
+* writes the geometry ``.slf`` via :mod:`hydromate.selafin`.
 
 The boundary contour and the per-node/element classification are returned so the
 boundary-condition stage can tag inflow/outflow nodes consistently.
@@ -21,8 +21,8 @@ from pathlib import Path
 
 import numpy as np
 
-from tmsetup.config import Config
-from tmsetup import selafin
+from hydromate.config import Config
+from hydromate import selafin
 
 
 @dataclass
