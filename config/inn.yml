@@ -29,14 +29,16 @@ telemac:
   n_processors: 4
 
 inputs:
+  # Paths resolve relative to THIS file (config/). The Inn example data lives
+  # under example-Inn/ (co-development dataset, not in version control).
   # ---- required -----------------------------------------------------------
-  dem_initial: path/to/dem.tif                 # [REQUIRED] baseline terrain (GeoTIFF)
-  boundary: path/to/roi.gpkg                   # [REQUIRED] ROI / max wetted extent polygon
-  liquid_boundaries: path/to/liquid-boundaries.shp  # [REQUIRED] inflow/outflow lines, tagged by a "type" field
-  inflow: path/to/inflow.csv                   # [REQUIRED] discharge value or time series
+  dem_initial: ../example-Inn/geodata/dem-2020.tif       # [REQUIRED] baseline terrain (GeoTIFF)
+  boundary: ../example-Inn/geodata/roi-kb15.gpkg         # [REQUIRED] ROI / max wetted extent polygon
+  liquid_boundaries: path/to/liquid-boundaries.shp  # [REQUIRED for a build] inflow/outflow lines (TODO: prepare)
+  inflow: path/to/inflow.csv                   # [REQUIRED for a build] discharge value or time series (TODO: prepare)
 
   # ---- optional -----------------------------------------------------------
-  # dem_target: path/to/dem-target.tif         # 2nd DEM, enables morphodynamic target
+  dem_target: ../example-Inn/geodata/DEM-2025-20cm.tif   # 2nd DEM, enables morphodynamic target
   # breaklines: path/to/breaklines.shp         # internal constraint lines (mesh + zone edges)
   # region_points: path/to/region-points.shp   # seed points carrying a MATID field
   # region_table: path/to/region-pts-table.txt # legend mapping MATID -> material/roughness

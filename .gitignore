@@ -2,7 +2,10 @@
 # Real Inn data we develop against; lives here for co-development only.
 # (Previously /geodata/, /stage-discharge/ and /geoVis.qgz at the repo root;
 #  now consolidated under example-Inn/.)
-/example-Inn/
+# Ignore everything under example-Inn/ EXCEPT the top-level example scripts/docs.
+/example-Inn/*
+!/example-Inn/*.py
+!/example-Inn/*.md
 /projection.info
 
 # --- Build outputs / generated TELEMAC cases -------------------------------

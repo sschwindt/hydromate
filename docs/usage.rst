@@ -52,6 +52,16 @@ For example, to crop two DEMs in a ``geodata`` folder to the same ROI:
 
 Options: ``--epsg <code>`` reprojects the raster to that EPSG before clipping; ``--all-touched`` keeps pixels touched by the polygon edge (the default keeps pixels whose centre is inside the polygon). The same clipping is applied automatically to ``inputs.dem_initial`` (and ``inputs.dem_target``) during a full build.
 
+Worked example scripts
+----------------------
+
+The repository ships two example scripts under ``example-Inn/`` that drive the workflow from a case configuration and are a good starting point to copy for your own case. ``preprocessing.py`` loads ``config/<case>.yml`` and clips the configured DEM(s) to the ROI using the data directories defined in the YAML; ``run2postprocessing.py`` then builds the TELEMAC case from the same configuration and points to the HydroBayesCal calibration.
+
+.. code-block:: bash
+
+   python example-Inn/preprocessing.py
+   python example-Inn/run2postprocessing.py
+
 Inputs you provide
 ------------------
 
