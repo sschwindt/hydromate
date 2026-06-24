@@ -34,6 +34,24 @@ An optional browser-based editor (built with Streamlit) renders the whole config
 
 This opens a local app in your browser (nothing leaves your machine). The form mirrors the configuration sections (project, TELEMAC, inputs, mesh, friction, hydrodynamics, calibration); friction zones and calibration parameters are edited as tables. From the editor you can load an existing YAML, preview and download the generated YAML, save it to a path, and run validation (``--check``) or a full build directly — the same actions as the command line. Validation and build operate on the saved file, so its relative input paths resolve correctly.
 
+Clipping a raster to the region of interest
+-------------------------------------------
+
+The ``clip`` subcommand crops a single raster (e.g. a DEM) to a region-of-interest polygon without needing a full configuration — handy for preparing inputs. The raster is cropped in its own grid and resolution; if it has no embedded CRS, the boundary's CRS is assumed and written onto the output.
+
+.. code-block:: bash
+
+   hydromate clip path/to/dem.tif -b path/to/roi.gpkg -o path/to/dem-roi-clip.tif
+
+For example, to crop two DEMs in a ``geodata`` folder to the same ROI:
+
+.. code-block:: bash
+
+   hydromate clip geodata/dem-2020.tif       -b geodata/roi.gpkg -o geodata/dem-2020-roi-clip.tif
+   hydromate clip geodata/DEM-2025-20cm.tif  -b geodata/roi.gpkg -o geodata/dem-2025-roi-clip.tif
+
+Options: ``--epsg <code>`` reprojects the raster to that EPSG before clipping; ``--all-touched`` keeps pixels touched by the polygon edge (the default keeps pixels whose centre is inside the polygon). The same clipping is applied automatically to ``inputs.dem_initial`` (and ``inputs.dem_target``) during a full build.
+
 Inputs you provide
 ------------------
 

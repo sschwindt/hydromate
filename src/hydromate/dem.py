@@ -23,21 +23,28 @@ class ClippedDEM:
     nodata: float
 
 
-def _read_boundary_geom(boundary_path: Path, crs_epsg: int):
+def _gdf_epsg(boundary_path: Path) -> int | None:
+    import geopandas as gpd
+
+    crs = gpd.read_file(boundary_path, rows=1).crs
+    return crs.to_epsg() if crs is not None else None
+
+
+def _load_polygons(boundary_path: Path, target_epsg: int):
+    """Read the boundary, reproject to *target_epsg*, polygonise lines if needed."""
     import geopandas as gpd
 
     gdf = gpd.read_file(boundary_path)
     if gdf.crs is None:
-        raise ValueError(f"{boundary_path} has no CRS; expected EPSG:{crs_epsg}")
-    if gdf.crs.to_epsg() != crs_epsg:
-        gdf = gdf.to_crs(epsg=crs_epsg)
-    # Lines (max wetted extent drawn as a closed polyline) -> polygonise.
-    geom_types = set(gdf.geom_type)
-    if geom_types & {"LineString", "MultiLineString"}:
+        raise ValueError(
+            f"{boundary_path} has no CRS; cannot place it relative to the DEM."
+        )
+    if gdf.crs.to_epsg() != target_epsg:
+        gdf = gdf.to_crs(epsg=target_epsg)
+    if set(gdf.geom_type) & {"LineString", "MultiLineString"}:
         from shapely.ops import polygonize, unary_union
 
-        merged = unary_union(gdf.geometry.values)
-        polys = list(polygonize(merged))
+        polys = list(polygonize(unary_union(gdf.geometry.values)))
         if not polys:
             raise ValueError(
                 f"{boundary_path}: boundary lines do not form a closed polygon."
@@ -46,53 +53,114 @@ def _read_boundary_geom(boundary_path: Path, crs_epsg: int):
     return list(gdf.geometry.values)
 
 
-def _reproject_to(src_path: Path, dst_path: Path, crs_epsg: int) -> Path:
-    """Reproject a raster to the target CRS only if it differs."""
+def _reproject_raster(src_path: Path, dst_path: Path, target_epsg: int,
+                      assume_epsg: int | None = None) -> Path:
+    """Reproject *src_path* to *target_epsg* (no-op if already there).
+
+    A raster without an embedded CRS is treated as being in *assume_epsg*.
+    """
     import rasterio
+    from rasterio.crs import CRS
     from rasterio.warp import calculate_default_transform, reproject, Resampling
 
     with rasterio.open(src_path) as src:
-        if src.crs and src.crs.to_epsg() == crs_epsg:
-            return src_path
-        dst_crs = f"EPSG:{crs_epsg}"
+        src_crs = src.crs or (CRS.from_epsg(assume_epsg) if assume_epsg else None)
+        if src_crs is None:
+            raise ValueError(f"{src_path} has no CRS and no assumed EPSG was given.")
+        if src_crs.to_epsg() == target_epsg:
+            return Path(src_path)
+        dst_crs = CRS.from_epsg(target_epsg)
         transform, width, height = calculate_default_transform(
-            src.crs, dst_crs, src.width, src.height, *src.bounds
+            src_crs, dst_crs, src.width, src.height, *src.bounds
         )
         meta = src.meta.copy()
         meta.update(crs=dst_crs, transform=transform, width=width, height=height)
         with rasterio.open(dst_path, "w", **meta) as dst:
             for i in range(1, src.count + 1):
                 reproject(
-                    source=rasterio.band(src, i),
-                    destination=rasterio.band(dst, i),
-                    src_transform=src.transform, src_crs=src.crs,
+                    source=rasterio.band(src, i), destination=rasterio.band(dst, i),
+                    src_transform=src.transform, src_crs=src_crs,
                     dst_transform=transform, dst_crs=dst_crs,
                     resampling=Resampling.bilinear,
                 )
-    return dst_path
+    return Path(dst_path)
+
+
+def clip_to_roi(dem_path, boundary_path, out_path, *, target_epsg: int | None = None,
+                all_touched: bool = False, compress: str | None = "lzw") -> Path:
+    """Clip a raster to a boundary polygon and write it to *out_path*.
+
+    By default the raster is cropped in its own grid and CRS (resolution
+    preserved). If the raster has no embedded CRS it is assumed to be in the
+    boundary's CRS, which is then stamped onto the output. Pass *target_epsg* to
+    reproject the raster before clipping.
+
+    Parameters
+    ----------
+    dem_path, boundary_path, out_path : input raster, ROI polygon, output raster.
+    target_epsg : optional EPSG to reproject the raster to before clipping.
+    all_touched : include pixels touched by the polygon edge (default: centre-in).
+    compress : GeoTIFF compression for the output (default ``"lzw"``).
+    """
+    import rasterio
+    from rasterio.crs import CRS
+    from rasterio.mask import mask
+
+    dem_path, out_path = Path(dem_path), Path(out_path)
+    boundary_epsg = _gdf_epsg(Path(boundary_path))
+
+    with rasterio.open(dem_path) as src:
+        dem_epsg = src.crs.to_epsg() if src.crs else None
+    # CRS the DEM is effectively in (assume the boundary's if undeclared)
+    effective_epsg = dem_epsg or boundary_epsg
+    if effective_epsg is None:
+        raise ValueError(
+            f"Neither {dem_path} nor {boundary_path} declares a CRS; "
+            "set target_epsg explicitly."
+        )
+
+    src_path = dem_path
+    out_epsg = effective_epsg
+    if target_epsg and target_epsg != effective_epsg:
+        src_path = _reproject_raster(
+            dem_path, out_path.with_suffix(".reproj.tif"), target_epsg,
+            assume_epsg=effective_epsg,
+        )
+        out_epsg = target_epsg
+
+    geoms = _load_polygons(Path(boundary_path), out_epsg)
+    with rasterio.open(src_path) as src:
+        nodata = src.nodata if src.nodata is not None else -9999.0
+        out_image, out_transform = mask(
+            src, geoms, crop=True, nodata=nodata, filled=True, all_touched=all_touched
+        )
+        meta = src.meta.copy()
+    meta.update(
+        height=out_image.shape[1], width=out_image.shape[2], transform=out_transform,
+        nodata=nodata, crs=CRS.from_epsg(out_epsg),
+    )
+    if compress:
+        meta["compress"] = compress
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(out_path, "w", **meta) as dst:
+        dst.write(out_image)
+    # tidy any temporary reprojected raster
+    if src_path != dem_path and Path(src_path).exists():
+        Path(src_path).unlink()
+    return out_path
 
 
 def clip_dem(cfg: Config, dem_path: Path, out_name: str) -> ClippedDEM:
-    """Reproject *dem_path* to the project CRS and clip it to the ROI boundary."""
+    """Pipeline wrapper: clip *dem_path* to the ROI, reprojected to the project CRS."""
     import rasterio
-    from rasterio.mask import mask
 
     cfg.ensure_dirs()
-    work = Path(cfg.work_dir)
-    reproj = _reproject_to(Path(dem_path), work / f"_reproj_{out_name}", cfg.crs_epsg)
-    geoms = _read_boundary_geom(Path(cfg.inputs.boundary), cfg.crs_epsg)
-
-    with rasterio.open(reproj) as src:
+    out_path = clip_to_roi(
+        dem_path, cfg.inputs.boundary, Path(cfg.work_dir) / out_name,
+        target_epsg=cfg.crs_epsg,
+    )
+    with rasterio.open(out_path) as src:
         nodata = src.nodata if src.nodata is not None else -9999.0
-        out_image, out_transform = mask(src, geoms, crop=True, nodata=nodata, filled=True)
-        meta = src.meta.copy()
-        meta.update(
-            height=out_image.shape[1], width=out_image.shape[2],
-            transform=out_transform, nodata=nodata,
-        )
-    out_path = work / out_name
-    with rasterio.open(out_path, "w", **meta) as dst:
-        dst.write(out_image)
     return ClippedDEM(path=out_path, nodata=float(nodata))
 
 
