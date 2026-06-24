@@ -9,6 +9,38 @@ Configuration
 .. automodule:: hydromate.config
    :members:
 
+Compile docs
+-------------------------------------------------------------------------------
+
+These docs are built locally with Sphinx; nothing leaves your machine, so this works regardless of whether the repository is public or private. The build needs only Sphinx and the theme (the heavy runtime dependencies are mocked in ``conf.py``); install them into the ``hydromate-env`` environment once with:
+
+.. code-block:: bash
+
+   mamba run -n hydromate-env pip install -r docs/requirements-docs.txt
+
+Build the HTML site with the provided Makefile (run from the ``docs/`` directory) and open it in your browser:
+
+.. code-block:: bash
+
+   cd docs
+   make html
+   xdg-open _build/html/index.html
+
+The Makefile is only a convenience wrapper; the equivalent direct call (run from the repository root) is:
+
+.. code-block:: bash
+
+   sphinx-build -b html docs docs/_build/html
+
+While editing the documentation, ``sphinx-autobuild`` rebuilds and refreshes the browser on every save, serving the site at ``http://127.0.0.1:8000``:
+
+.. code-block:: bash
+
+   mamba run -n hydromate-env pip install sphinx-autobuild
+   mamba run -n hydromate-env sphinx-autobuild docs docs/_build/html
+
+The build output (``docs/_build/``) is git-ignored, so compiling never dirties the repository.
+
 TELEMAC environment bridge
 -------------------------------------------------------------------------------
 
