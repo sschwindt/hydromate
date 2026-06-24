@@ -20,5 +20,12 @@ __version__ = "0.1.0"
 
 from hydromate.config import Config, load_config
 from hydromate.dem import clip_dem_to_roi, clip_to_roi
+from hydromate.ground_truth import compile_ground_truth, read_tidy
+from hydromate.mesh import (
+    build_mesh, interpolate_elevations, interpolate_roughness, write_mesh,
+)
 
-__all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi", "__version__"]
+__all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
+           "compile_ground_truth", "read_tidy",
+           "build_mesh", "interpolate_elevations", "interpolate_roughness",
+           "write_mesh", "__version__"]

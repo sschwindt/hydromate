@@ -74,6 +74,24 @@ class TelemacEnv:
 
 
 @dataclass
+class GroundTruthSource:
+    """One raw ground-truth source to compile into the tidy measurements table.
+
+    Measured values and their positions usually live in separate files: the
+    *values* export (e.g. a SonTek FlowTracker ``.ft.sum`` workbook) and a
+    *positions* point layer (shp/gpkg) joined on ``join_key``. ``category`` is the
+    tab the source contributes to the tidy table (``hydraulics``, ``sediment``,
+    ...); ``kind`` selects the adapter (``flowtracker`` or ``points``).
+    """
+
+    category: str
+    kind: str = "flowtracker"            # flowtracker | points
+    values: Path | None = None           # measured-values file (e.g. .ft.sum xlsx)
+    positions: Path | None = None        # position layer (shp/gpkg) to join coords from
+    join_key: str = "ID"
+
+
+@dataclass
 class Inputs:
     """User-provided geodata and hydraulics (paths resolved against the config dir)."""
 
@@ -83,10 +101,15 @@ class Inputs:
     inflow: Path                         # discharge time series / value (csv)
     dem_target: Path | None = None       # optional 2nd DEM for morphodynamic target
     breaklines: Path | None = None       # internal constraint lines (shp/gpkg)
+    mesh_zones: Path | None = None       # polygons with a 'Zone Name' (channel/floodplain) for sizing
+    channel_centerline: Path | None = None  # line the channel cells are elongated along
+    roughness_zones: Path | None = None  # polygons with a 'Zone ID' for per-node roughness
+    roughness_table: Path | None = None  # csv: zone_id, roughness (e.g. ks) -> calibrated by HBC
     region_points: Path | None = None    # seed points carrying MATID + max area
     region_table: Path | None = None     # region-pts-table.txt (MATID legend)
     stage_discharge: Path | None = None  # outlet rating curve (csv), optional
-    measurements: Path | None = None     # hydraulic calibration points (csv/shp)
+    measurements: Path | None = None     # tidy multi-tab ground-truth table (xlsx/csv)
+    ground_truth: list[GroundTruthSource] = field(default_factory=list)  # raw sources to compile
     dem_of_difference: Path | None = None  # precomputed DoD (else derived from DEMs)
 
     def validate(self) -> None:
@@ -99,22 +122,57 @@ class Inputs:
         missing = [name for name, p in required.items() if p is None or not Path(p).exists()]
         if missing:
             raise FileNotFoundError(f"Missing required inputs: {missing}")
-        for name in ("dem_target", "breaklines", "region_points", "region_table",
-                     "stage_discharge", "measurements", "dem_of_difference"):
+        for name in ("dem_target", "breaklines", "mesh_zones", "channel_centerline",
+                     "roughness_zones", "roughness_table", "region_points",
+                     "region_table", "stage_discharge", "dem_of_difference"):
             p = getattr(self, name)
             if p is not None and not Path(p).exists():
                 raise FileNotFoundError(f"inputs.{name} set but not found: {p}")
+        # measurements is a user-authored tidy table only when no raw ground_truth
+        # sources are given (otherwise it is the artifact compiled from them).
+        if self.measurements is not None and not self.ground_truth \
+                and not Path(self.measurements).exists():
+            raise FileNotFoundError(f"inputs.measurements set but not found: {self.measurements}")
+        for src in self.ground_truth:
+            for field_name in ("values", "positions"):
+                p = getattr(src, field_name)
+                if p is not None and not Path(p).exists():
+                    raise FileNotFoundError(
+                        f"ground_truth source '{src.category}' {field_name} not found: {p}"
+                    )
 
 
 @dataclass
 class MeshConfig:
     """gmsh meshing controls.
 
+    Two strategies, chosen automatically:
+
+    * **Anisotropic, flow-aligned** (preferred) — when ``inputs.mesh_zones`` and
+      ``inputs.channel_centerline`` are given. ``channel``-named zones get
+      triangles elongated along the centerline (cross-channel edge
+      ``channel_size``, stretched by ``channel_anisotropy`` along the flow);
+      ``floodplain``-named zones get near-equilateral triangles of edge
+      ``floodplain_size``; the size grows between them at ``growth_ratio`` per
+      element. Implemented with a metric-tensor background mesh and gmsh's BAMG
+      algorithm.
+    * **Isotropic fallback** — ``default_size`` everywhere, refined to
+      ``breakline_size`` along breaklines and per-MATID via ``region_sizes``.
+
     ``region_sizes`` maps a MATID (as int) to a target maximum element edge
     length (m); it mirrors the 'max_area' intent of region-pts-table.txt but in
     edge-length terms used by gmsh size fields.
     """
 
+    # anisotropic, flow-aligned strategy (channel/floodplain zones + centerline)
+    channel_size: float = 0.5           # cross-channel target edge length (m)
+    floodplain_size: float = 1.5        # floodplain target edge length (m)
+    growth_ratio: float = 1.2           # max edge-size growth per element (channel->floodplain)
+    channel_anisotropy: float = 4.0     # along-flow / cross-flow edge ratio in the channel
+    zone_name_field: str = "Zone Name"  # attribute in mesh_zones naming each zone
+    roughness_zone_field: str = "Zone ID"  # integer-id attribute in roughness_zones
+
+    # isotropic fallback strategy
     default_size: float = 10.0          # background target edge length (m)
     breakline_size: float = 3.0         # refined size along breaklines (m)
     region_sizes: dict[int, float] = field(default_factory=dict)
@@ -241,8 +299,19 @@ class Config:
     zones_file: str = "zones.bfr"
     gaia_cas: str = "gaia.cas"
     results_slf: str = "r2d.slf"
+    ground_truth_xlsx: str = "ground-truth.xlsx"  # compiled tidy table (in work_dir)
     calibration_csv: str = "measurements-calibration.csv"
     hbc_config: str = "config_Telemac.py"
+
+    def work_path(self, filename: str) -> Path:
+        return Path(self.work_dir) / filename
+
+    @property
+    def ground_truth_path(self) -> Path:
+        """Where the tidy ground-truth table lives (explicit input, else compiled)."""
+        if self.inputs.measurements is not None:
+            return Path(self.inputs.measurements)
+        return self.work_path(self.ground_truth_xlsx)
 
     def validate(self) -> None:
         self.telemac.validate()
@@ -282,9 +351,16 @@ def load_config(path: str | os.PathLike) -> Config:
 
     # inputs (resolve every path against the config dir)
     idict = dict(raw.get("inputs", {}))
+    gt_raw = idict.pop("ground_truth", None) or []
     for key in list(idict):
         idict[key] = _resolve(cfg_dir, idict[key])
-    inputs = Inputs(**_only_known(Inputs, idict))
+    ground_truth = []
+    for src in gt_raw:
+        src = _only_known(GroundTruthSource, src)
+        src["values"] = _resolve(cfg_dir, src.get("values"))
+        src["positions"] = _resolve(cfg_dir, src.get("positions"))
+        ground_truth.append(GroundTruthSource(**src))
+    inputs = Inputs(**_only_known(Inputs, idict), ground_truth=ground_truth)
 
     mesh = MeshConfig(**_only_known(MeshConfig, raw.get("mesh", {}) or {}))
     # YAML maps keys may come back as str; coerce region_sizes keys to int

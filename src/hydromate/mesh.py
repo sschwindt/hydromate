@@ -16,6 +16,8 @@ boundary-condition stage can tag inflow/outflow nodes consistently.
 
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -23,6 +25,8 @@ import numpy as np
 
 from hydromate.config import Config
 from hydromate import selafin
+
+log = logging.getLogger("hydromate")
 
 
 @dataclass
@@ -35,6 +39,7 @@ class Mesh:
     boundary_nodes: np.ndarray # ordered 0-based node indices along the contour
     element_matid: np.ndarray  # (NELEM,) MATID per element
     node_matid: np.ndarray     # (NPOIN,) MATID per node (-> FRIC_ID in geometry)
+    roughness: np.ndarray | None = None  # (NPOIN,) per-node roughness value (e.g. ks)
 
     @property
     def npoin(self) -> int:
@@ -135,8 +140,135 @@ def _build_gmsh(cfg: Config):
     if embedded_lines:
         gmsh.model.mesh.embed(1, embedded_lines, 2, surface)
 
-    _size_fields(cfg, embedded_lines)
+    if _anisotropic_enabled(cfg):
+        _anisotropic_size_field(cfg, poly)
+    else:
+        _size_fields(cfg, embedded_lines)
     return gmsh
+
+
+# --------------------------------------------------------------------------- #
+# anisotropic, flow-aligned size field (channel/floodplain zones + centerline)
+# --------------------------------------------------------------------------- #
+
+
+def _anisotropic_enabled(cfg: Config) -> bool:
+    return (cfg.inputs.mesh_zones is not None
+            and cfg.inputs.channel_centerline is not None)
+
+
+def _channel_union(cfg: Config):
+    """Union of the mesh-zone polygons whose name contains 'channel'."""
+    import geopandas as gpd
+    from shapely.ops import unary_union
+
+    gdf = gpd.read_file(cfg.inputs.mesh_zones)
+    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
+        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
+    field = next((c for c in gdf.columns
+                  if c.lower() == cfg.mesh.zone_name_field.lower()), None)
+    if field is None:
+        raise ValueError(
+            f"mesh_zones {Path(cfg.inputs.mesh_zones).name!r} has no "
+            f"'{cfg.mesh.zone_name_field}' column (has {list(gdf.columns)})"
+        )
+    names = gdf[field].astype(str).str.lower()
+    channel = gdf[names.str.contains("channel")]
+    if channel.empty:
+        raise ValueError(
+            f"no mesh zone named '*channel*' in {Path(cfg.inputs.mesh_zones).name!r}; "
+            f"found {sorted(gdf[field].astype(str).unique())}"
+        )
+    return unary_union(channel.geometry.values)
+
+
+def _centerline_tangents(cfg: Config, spacing: float):
+    """Sample the channel centerline -> (points, unit tangents, KD-tree)."""
+    import geopandas as gpd
+    from scipy.spatial import cKDTree
+    from shapely.ops import linemerge, unary_union
+
+    gdf = gpd.read_file(cfg.inputs.channel_centerline)
+    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
+        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
+    merged = unary_union(gdf.geometry.values)
+    line = linemerge(merged) if merged.geom_type == "MultiLineString" else merged
+    if line.geom_type == "MultiLineString":      # disjoint parts: take the longest
+        line = max(line.geoms, key=lambda g: g.length)
+    n = max(2, int(line.length / spacing))
+    s = np.linspace(0.0, line.length, n)
+    pts = np.array([[line.interpolate(d).x, line.interpolate(d).y] for d in s])
+    tang = np.gradient(pts, axis=0)
+    tang /= np.linalg.norm(tang, axis=1, keepdims=True).clip(1e-9)
+    return pts, tang, cKDTree(pts)
+
+
+def _metric_view(cfg: Config, poly):
+    """Build the metric-tensor background mesh as a gmsh list view.
+
+    The metric M at a node encodes the target edge lengths (a unit edge in
+    direction d satisfies d·M·d = 1): anisotropic inside the channel (long axis
+    along the centerline tangent, ``channel_size * channel_anisotropy``; short
+    axis ``channel_size`` across) and isotropic ``floodplain_size`` elsewhere.
+    A coarse background grid suffices — gmsh interpolates the metric within each
+    background triangle, which also yields the smooth channel->floodplain blend.
+    """
+    import gmsh
+    from scipy.spatial import Delaunay
+    from shapely.geometry import Point
+    from shapely.prepared import prep
+
+    m = cfg.mesh
+    channel = prep(_channel_union(cfg))
+    minx, miny, maxx, maxy = poly.bounds
+    area = (maxx - minx) * (maxy - miny)
+    # coarse background grid, node budget capped so any domain stays in memory
+    step = max(m.floodplain_size, math.sqrt(area / 40000.0))
+    cpts, tang, tree = _centerline_tangents(cfg, spacing=max(step, m.floodplain_size))
+
+    gx, gy = np.meshgrid(np.arange(minx, maxx + step, step),
+                         np.arange(miny, maxy + step, step))
+    pts = np.column_stack([gx.ravel(), gy.ravel()])
+    simplices = Delaunay(pts).simplices
+
+    h_along = m.channel_size * m.channel_anisotropy
+    inv_along2, inv_cross2 = 1.0 / h_along**2, 1.0 / m.channel_size**2
+    inv_fp2 = 1.0 / m.floodplain_size**2
+    metrics = np.tile([inv_fp2, 0.0, 0.0, 0.0, inv_fp2, 0.0, 0.0, 0.0, 1.0],
+                      (len(pts), 1))
+    for k, p in enumerate(pts):
+        if channel.contains(Point(p)):
+            t = tang[tree.query(p)[1]]
+            n = np.array([-t[1], t[0]])
+            M = inv_along2 * np.outer(t, t) + inv_cross2 * np.outer(n, n)
+            metrics[k] = [M[0, 0], M[0, 1], 0, M[1, 0], M[1, 1], 0, 0, 0, 1]
+
+    P = pts[simplices]
+    data = np.concatenate(
+        [P[:, :, 0], P[:, :, 1], np.zeros((len(simplices), 3)),
+         metrics[simplices].reshape(len(simplices), -1)], axis=1
+    ).ravel()
+    view = gmsh.view.add("mesh-metric")
+    gmsh.view.addListData(view, "TT", len(simplices), data.tolist())
+    return view
+
+
+def _anisotropic_size_field(cfg: Config, poly) -> None:
+    import gmsh
+
+    m = cfg.mesh
+    view = _metric_view(cfg, poly)
+    bg = gmsh.model.mesh.field.add("PostView")
+    gmsh.model.mesh.field.setNumber(bg, "ViewIndex", 0)
+    gmsh.model.mesh.field.setAsBackgroundMesh(bg)
+
+    gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
+    gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+    gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
+    gmsh.option.setNumber("Mesh.SmoothRatio", m.growth_ratio)
+    gmsh.option.setNumber("Mesh.AnisoMax", max(2.0 * m.channel_anisotropy, 10.0))
+    gmsh.option.setNumber("Mesh.Algorithm", 7)   # BAMG (anisotropic 2D)
+    _ = view
 
 
 def _size_fields(cfg: Config, breakline_curves: list[int]):
@@ -299,9 +431,19 @@ def _assign_matid(cfg: Config, points: np.ndarray) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 
 
-def build_mesh(cfg: Config, dem_initial_roi: Path) -> Mesh:
-    import gmsh
-
+def build_mesh(cfg: Config, dem_initial_roi: Path | None = None) -> Mesh:
+    """Generate the mesh (geometry + MATID). When *dem_initial_roi* is given,
+    its elevations are interpolated onto the nodes; otherwise the bottom is left
+    at zero and can be filled later with :func:`interpolate_elevations`.
+    """
+    if _anisotropic_enabled(cfg):
+        log.info("  mesh strategy: anisotropic (channel %.2f m x%.1f along centerline, "
+                 "floodplain %.2f m, growth %.2f)", cfg.mesh.channel_size,
+                 cfg.mesh.channel_anisotropy, cfg.mesh.floodplain_size,
+                 cfg.mesh.growth_ratio)
+    else:
+        log.info("  mesh strategy: isotropic (default %.2f m, breakline %.2f m)",
+                 cfg.mesh.default_size, cfg.mesh.breakline_size)
     gmsh = _build_gmsh(cfg)
     try:
         gmsh.model.mesh.generate(2)
@@ -328,7 +470,8 @@ def build_mesh(cfg: Config, dem_initial_roi: Path) -> Mesh:
     ipobo = np.zeros(npoin, dtype=int)
     ipobo[boundary_nodes] = np.arange(1, boundary_nodes.size + 1)
 
-    bottom = _interpolate_bottom(Path(dem_initial_roi), x, y)
+    bottom = (_interpolate_bottom(Path(dem_initial_roi), x, y)
+              if dem_initial_roi is not None else np.zeros(npoin))
     centroids = np.column_stack([
         x[triangles].mean(axis=1), y[triangles].mean(axis=1)
     ])
@@ -342,16 +485,103 @@ def build_mesh(cfg: Config, dem_initial_roi: Path) -> Mesh:
     )
 
 
+def interpolate_elevations(mesh: Mesh, dem_path: Path, *, decimals: int = 4) -> Mesh:
+    """Interpolate DEM elevations onto the mesh nodes (in place) and return it.
+
+    Elevations are rounded to *decimals* digits after the decimal point (4 by
+    default). NaNs (nodata / just outside the grid) are nearest-neighbour filled.
+    """
+    z = _interpolate_bottom(Path(dem_path), mesh.x, mesh.y)
+    mesh.bottom = np.round(z, decimals) if decimals is not None else z
+    return mesh
+
+
+def read_roughness_table(path: Path) -> dict[int, float]:
+    """Read the zone-roughness CSV -> ``{zone_id: roughness}``.
+
+    The first column is the integer zone id, the second the roughness value (e.g.
+    a Nikuradse k_s) that HydroBayesCal later adjusts. A header row is detected
+    and skipped; any further columns are ignored.
+    """
+    import pandas as pd
+
+    df = pd.read_csv(Path(path), header=None)
+    first = df.iloc[0]
+    if pd.to_numeric(first.iloc[:2], errors="coerce").isna().any():
+        df = df.iloc[1:]                         # the first row was a header
+    ids = pd.to_numeric(df.iloc[:, 0], errors="coerce")
+    vals = pd.to_numeric(df.iloc[:, 1], errors="coerce")
+    return {int(i): float(v) for i, v in zip(ids, vals) if not (np.isnan(i) or np.isnan(v))}
+
+
+def interpolate_roughness(cfg: Config, mesh: Mesh) -> Mesh:
+    """Assign each node a roughness value from the roughness zones + table.
+
+    Each node is tagged with the ``roughness_zone_field`` id of the polygon it
+    falls in (nearest polygon for nodes just outside any), then mapped to a
+    roughness value via ``inputs.roughness_table``. Sets ``mesh.roughness`` and
+    returns the mesh.
+    """
+    import geopandas as gpd
+
+    if cfg.inputs.roughness_zones is None or cfg.inputs.roughness_table is None:
+        raise ValueError("interpolate_roughness needs inputs.roughness_zones "
+                         "and inputs.roughness_table to be set")
+    table = read_roughness_table(Path(cfg.inputs.roughness_table))
+
+    zones = gpd.read_file(cfg.inputs.roughness_zones)
+    if zones.crs and zones.crs.to_epsg() != cfg.crs_epsg:
+        zones = zones.to_crs(epsg=cfg.crs_epsg)
+    field = next((c for c in zones.columns
+                  if c.lower() == cfg.mesh.roughness_zone_field.lower()), None)
+    if field is None:
+        raise ValueError(
+            f"roughness_zones {Path(cfg.inputs.roughness_zones).name!r} has no "
+            f"'{cfg.mesh.roughness_zone_field}' column (has {list(zones.columns)})"
+        )
+    zones = zones[[field, "geometry"]].rename(columns={field: "zone_id"})
+
+    nodes = gpd.GeoDataFrame(
+        geometry=gpd.points_from_xy(mesh.x, mesh.y), crs=f"EPSG:{cfg.crs_epsg}"
+    )
+    joined = gpd.sjoin_nearest(nodes, zones, how="left").sort_index()
+    # a node on a shared edge can match >1 polygon; keep the first per node
+    zone_ids = joined[~joined.index.duplicated()]["zone_id"].to_numpy()
+
+    missing = sorted(set(int(z) for z in zone_ids) - set(table))
+    if missing:
+        raise ValueError(
+            f"roughness zone id(s) {missing} present in "
+            f"{Path(cfg.inputs.roughness_zones).name!r} but absent from the "
+            f"roughness table {Path(cfg.inputs.roughness_table).name!r} "
+            f"(has {sorted(table)})"
+        )
+    mesh.roughness = np.array([table[int(z)] for z in zone_ids], dtype=float)
+    return mesh
+
+
+def write_mesh(mesh: Mesh, path: Path, *, title: str = "mesh") -> Path:
+    """Write a :class:`Mesh` to a TELEMAC geometry SELAFIN file.
+
+    Includes the per-node roughness as ``BOTTOM FRICTION`` when it has been set
+    (see :func:`interpolate_roughness`).
+    """
+    path = Path(path)
+    selafin.write_geometry(
+        path,
+        x=mesh.x, y=mesh.y,
+        ikle=mesh.triangles + 1,                # SELAFIN is 1-based
+        ipobo=mesh.ipobo, bottom=mesh.bottom,
+        friction_id=mesh.node_matid,
+        roughness=mesh.roughness,
+        title=title,
+    )
+    return path
+
+
 def run(cfg: Config, dem_initial_roi: Path) -> tuple[Mesh, Path]:
     """Build the mesh and write the geometry SELAFIN; returns (mesh, slf path)."""
     mesh = build_mesh(cfg, dem_initial_roi)
-    slf_path = cfg.model_path(cfg.geometry_slf)
-    selafin.write_geometry(
-        slf_path,
-        x=mesh.x, y=mesh.y,
-        ikle=mesh.triangles + 1,            # SELAFIN is 1-based
-        ipobo=mesh.ipobo, bottom=mesh.bottom,
-        friction_id=mesh.node_matid,
-        title=f"{cfg.name} geometry",
-    )
+    slf_path = write_mesh(mesh, cfg.model_path(cfg.geometry_slf),
+                          title=f"{cfg.name} geometry")
     return mesh, slf_path

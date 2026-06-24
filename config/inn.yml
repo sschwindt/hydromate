@@ -39,21 +39,59 @@ inputs:
 
   # ---- optional -----------------------------------------------------------
   dem_target: ../example-Inn/geodata/DEM-2025-20cm.tif   # 2nd DEM, enables morphodynamic target
+  # mesh zones (polygons with a 'Zone Name' of channel/floodplain) + the channel
+  # centerline drive the anisotropic, flow-aligned meshing (see the `mesh` block).
+  mesh_zones: ../example-Inn/geodata/mesh-zones.gpkg
+  channel_centerline: ../example-Inn/geodata/channel-centerline.gpkg
+  # roughness zones: polygons with an integer 'Zone ID', plus a CSV mapping each
+  # id to a roughness value (e.g. Nikuradse ks). The value is interpolated onto
+  # the mesh nodes and later adjusted by HydroBayesCal. For the Inn example,
+  # zone 1 = channel (ks ~0.2 m), zone 2 = floodplain (ks ~0.5 m).
+  roughness_zones: ../example-Inn/geodata/roughness-zones.gpkg
+  roughness_table: ../example-Inn/geodata/roughness-table.csv
   # breaklines: path/to/breaklines.shp         # internal constraint lines (mesh + zone edges)
   # region_points: path/to/region-points.shp   # seed points carrying a MATID field
   # region_table: path/to/region-pts-table.txt # legend mapping MATID -> material/roughness
   # stage_discharge: path/to/rating-curve.csv  # outlet rating curve: Q [m3/s] vs WSE [m]
-  # measurements: path/to/measurements.csv     # calibration points: x,y,water_depth,scalar_velocity
   # dem_of_difference: path/to/dod.tif         # precomputed bed-change raster (else derived from DEMs)
 
+  # ---- ground truth (calibration targets) ---------------------------------
+  # The calibration consumes a tidy, multi-tab "measurements" table: one tab per
+  # category (hydraulics, sediment, ...), first three columns x,y,z (project CRS),
+  # then quantity columns. Provide it one of two ways:
+  #
+  #   (a) author it yourself and point `measurements` at the .xlsx (general case);
+  #   (b) declare raw sources under `ground_truth` and hydromate compiles the
+  #       tidy table for you (this Inn showcase). Compiled to work_dir/ground-truth.xlsx
+  #       unless `measurements` gives an explicit output path.
+  #
+  # measurements: path/to/ground-truth.xlsx    # (a) user-authored tidy table
+  ground_truth:                                 # (b) raw sources -> compiled tidy table
+    # FlowTracker velocities (values) joined by ID to the DGPS survey points
+    # (positions, reprojected to the project CRS); two survey days -> one tab.
+    - { category: hydraulics, kind: flowtracker, join_key: ID,
+        values: ../example-Inn/ground-truth/hydraulics/FlowTracker2-KB15-day1.xlsx,
+        positions: ../example-Inn/geodata/flowtracker2/dgps-flowtracker-day1_utm33.shp }
+    - { category: hydraulics, kind: flowtracker, join_key: ID,
+        values: ../example-Inn/ground-truth/hydraulics/FlowTracker2-KB15-day2.xlsx,
+        positions: ../example-Inn/geodata/flowtracker2/dgps-flowtracker-day2_utm33.shp }
+
 mesh:
-  default_size: 10.0           # background target edge length (m)
-  breakline_size: 3.0          # refinement along breaklines (m)
-  min_size: 0.5
-  # optional per-MATID refinement (target edge length in m), keyed by MATID:
-  # region_sizes:
-  #   1: 1.5
-  #   2: 3.0
+  # Anisotropic, flow-aligned strategy (used when inputs.mesh_zones +
+  # inputs.channel_centerline are set). In zones whose 'Zone Name' contains
+  # "channel", triangles are elongated ALONG the centerline; zones containing
+  # "floodplain" get near-equilateral triangles; the size blends smoothly between.
+  channel_size: 0.5            # cross-channel target edge length (m)
+  floodplain_size: 1.5         # floodplain target edge length (m)
+  growth_ratio: 1.2            # max edge-size growth per element (channel -> floodplain)
+  channel_anisotropy: 4.0      # along-flow / cross-flow edge ratio in the channel
+  # zone_name_field: "Zone Name"  # attribute naming each mesh zone (default shown)
+
+  # Isotropic fallback (used when no mesh_zones/centerline are given):
+  # default_size: 10.0         # background target edge length (m)
+  # breakline_size: 3.0        # refinement along breaklines (m)
+  # min_size: 0.5
+  # region_sizes: {1: 1.5, 2: 3.0}   # optional per-MATID refinement (edge length m)
 
 friction:
   default_law: 4               # 4 = Manning (0 NOFR, 1 HAAL, 2 CHEZ, 3 STRI, 5 NIKU, 7 COWH)

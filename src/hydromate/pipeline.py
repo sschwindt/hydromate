@@ -20,6 +20,7 @@ class Artifacts:
     friction_tbl: Path | None = None
     cas_file: Path | None = None
     gaia_cas: Path | None = None
+    ground_truth: Path | None = None
     calibration_csv: Path | None = None
     hbc_config: Path | None = None
     rasters: dict[str, Path] = field(default_factory=dict)
@@ -78,8 +79,11 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False) -> Art
         gaia_cas=(art.gaia_cas.name if art.gaia_cas else None),
     )
 
-    # 5) calibration CSV + HydroBayesCal config
-    log.info("stage 5/5: building calibration CSV and HydroBayesCal config")
+    # 5) ground-truth -> calibration CSV + HydroBayesCal config
+    log.info("stage 5/5: compiling ground truth, calibration CSV and HydroBayesCal config")
+    art.ground_truth = calibration.compile_ground_truth(cfg)
+    if art.ground_truth:
+        log.info("  compiled tidy ground-truth table -> %s", art.ground_truth)
     art.calibration_csv = calibration.build_calibration_csv(cfg)
     art.hbc_config = calibration.emit_hbc_config(cfg, art.calibration_csv)
 

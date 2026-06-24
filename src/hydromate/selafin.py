@@ -34,14 +34,17 @@ def write_geometry(
     bottom: np.ndarray,
     *,
     friction_id: np.ndarray | None = None,
+    roughness: np.ndarray | None = None,
     title: str = "hydromate geometry",
     date: Sequence[int] = (2026, 1, 1, 0, 0, 0),
 ) -> Path:
     """Write a 2D triangular-mesh geometry SELAFIN.
 
-    Always writes the BOTTOM variable; if *friction_id* is given it is written as
-    a second variable ``FRIC_ID`` (per node), which TELEMAC reads to map nodes to
-    friction zones in the FRICTION DATA FILE (no separate ZONES FILE needed).
+    Always writes the BOTTOM variable. If *friction_id* is given it is written as
+    ``FRIC_ID`` (per node), which TELEMAC reads to map nodes to friction zones in
+    the FRICTION DATA FILE (no separate ZONES FILE needed). If *roughness* is
+    given it is written as ``BOTTOM FRICTION`` (per node, m) — the per-node
+    roughness value (e.g. a Nikuradse k_s) that HydroBayesCal later adjusts.
 
     Parameters
     ----------
@@ -50,6 +53,7 @@ def write_geometry(
     ipobo : (NPOIN,) int array — boundary numbering (0 interior, k>0 on contour).
     bottom : (NPOIN,) float array of bed elevations (m).
     friction_id : optional (NPOIN,) int array of friction-zone ids per node.
+    roughness : optional (NPOIN,) float array of per-node roughness values.
     """
     path = Path(path)
     x = np.asarray(x, dtype=float)
@@ -73,6 +77,11 @@ def write_geometry(
         if friction_id.size != npoin:
             raise ValueError(f"friction_id length {friction_id.size} != NPOIN={npoin}")
         variables.append(("FRIC_ID", "", friction_id))
+    if roughness is not None:
+        roughness = np.asarray(roughness, dtype=float)
+        if roughness.size != npoin:
+            raise ValueError(f"roughness length {roughness.size} != NPOIN={npoin}")
+        variables.append(("BOTTOM FRICTION", "M", roughness))
     nbv1 = len(variables)
 
     # IPARAM: index 9 == 1 -> a DATE record follows; index 6 == 0 -> 2D.

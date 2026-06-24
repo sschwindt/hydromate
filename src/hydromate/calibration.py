@@ -10,46 +10,89 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from hydromate.config import Config
-from hydromate import hydraulics
+from hydromate import ground_truth
 
-# map tidy measurement columns -> SELAFIN / HydroBayesCal quantity names
-QUANTITY_COLUMN = {
-    "WATER DEPTH": "water_depth",
-    "SCALAR VELOCITY": "scalar_velocity",
-}
+
+def _resolve_quantity(df: pd.DataFrame, qty: str) -> tuple[pd.Series, pd.Series | None] | None:
+    """Map a SELAFIN quantity name to (values, measured_error) from a tidy table.
+
+    Returns ``None`` when the tidy table lacks the columns to produce *qty*, so
+    callers can report missing quantities. ``measured_error`` is ``None`` when no
+    per-point error was measured (the caller falls back to the configured
+    fraction).
+    """
+    q = qty.upper()
+    if q == "WATER DEPTH" and "h" in df:
+        return df["h"].astype(float), None
+    if q == "SCALAR VELOCITY" and any(c in df for c in ("u", "v", "w")):
+        vel = ground_truth.scalar_velocity(df)
+        # propagate component errors: sigma_V = (1/V) * sqrt(sum((c_i * sigma_i)^2))
+        terms = [(df[c].astype(float) * df[f"{c}_err"].astype(float)) ** 2
+                 for c in ("u", "v", "w") if c in df and f"{c}_err" in df]
+        err = None
+        if terms:
+            safe_v = vel.replace(0.0, np.nan)
+            err = (np.sqrt(sum(terms)) / safe_v).fillna(0.0)
+        return vel, err
+    if q == "VELOCITY U" and "u" in df:
+        return df["u"].astype(float), df["u_err"].astype(float) if "u_err" in df else None
+    if q == "VELOCITY V" and "v" in df:
+        return df["v"].astype(float), df["v_err"].astype(float) if "v_err" in df else None
+    return None
+
+
+def _pick_table(tables: dict[str, pd.DataFrame], quantities: list[str]) -> pd.DataFrame:
+    """Choose the tidy category whose columns satisfy all calibration quantities."""
+    for df in (*([tables["hydraulics"]] if "hydraulics" in tables else []), *tables.values()):
+        if all(_resolve_quantity(df, q) is not None for q in quantities):
+            return df
+    available = {cat: [c for c in df.columns if c not in ("x", "y", "z")]
+                 for cat, df in tables.items()}
+    raise ValueError(
+        f"no ground-truth category provides all calibration quantities {quantities}. "
+        f"Available columns per category: {available}"
+    )
 
 
 def build_calibration_csv(cfg: Config) -> Path | None:
-    """Write the calibration-points CSV from the measurements input."""
-    if cfg.inputs.measurements is None:
+    """Write the HydroBayesCal calibration-points CSV from the tidy ground truth.
+
+    The tidy table is compiled from ``inputs.ground_truth`` when given, otherwise
+    read from a user-authored ``inputs.measurements``. Returns ``None`` if neither
+    is configured.
+    """
+    compile_ground_truth(cfg)            # no-op when the table is user-supplied
+    if not cfg.inputs.ground_truth and cfg.inputs.measurements is None:
         return None
-    df = hydraulics.read_measurements(Path(cfg.inputs.measurements), cfg.crs_epsg)
+    tables = ground_truth.read_tidy(cfg.ground_truth_path)
+    quantities = cfg.calibration.calibration_quantities
+    df = _pick_table(tables, quantities).reset_index(drop=True)
 
     out = pd.DataFrame({
-        "id": df["id"],
-        "x": df["x"],
-        "y": df["y"],
-        "z": df.get("z", 0.0),
+        "id": np.arange(1, len(df) + 1),
+        "x": df["x"].astype(float),
+        "y": df["y"].astype(float),
+        "z": df["z"].astype(float) if "z" in df else 0.0,
     })
-    err = cfg.calibration.measurement_error
-    for qty in cfg.calibration.calibration_quantities:
-        col = QUANTITY_COLUMN.get(qty.upper())
-        if col is None or col not in df.columns:
-            raise ValueError(
-                f"calibration quantity {qty!r} has no matching measurement column "
-                f"(expected '{QUANTITY_COLUMN.get(qty.upper(), '?')}'). "
-                f"Available: {[c for c in df.columns if c not in ('id', 'x', 'y', 'z')]}"
-            )
-        values = df[col].astype(float)
-        out[f"{qty}_DATA"] = values
-        out[f"{qty}_ERROR"] = (values.abs() * err).round(6)
+    frac = cfg.calibration.measurement_error
+    for qty in quantities:
+        values, measured_err = _resolve_quantity(df, qty)
+        err = measured_err if measured_err is not None else values.abs() * frac
+        out[f"{qty}_DATA"] = values.round(6)
+        out[f"{qty}_ERROR"] = err.round(6)
 
     path = cfg.model_path(cfg.calibration_csv)
     out.to_csv(path, index=False)
     return path
+
+
+def compile_ground_truth(cfg: Config) -> Path | None:
+    """Compile configured raw ground-truth sources into the tidy table (if any)."""
+    return ground_truth.compile_ground_truth(cfg)
 
 
 def emit_hbc_config(cfg: Config, calibration_csv: Path | None) -> Path:

@@ -55,7 +55,7 @@ Options: ``--epsg <code>`` reprojects the raster to that EPSG before clipping; `
 Worked example scripts
 ----------------------
 
-The repository ships two example scripts under ``example-Inn/`` that drive the workflow from a case configuration and are a good starting point to copy for your own case. ``preprocessing.py`` loads ``config/<case>.yml`` and clips the configured DEM(s) to the ROI using the data directories defined in the YAML; ``run2postprocessing.py`` then builds the TELEMAC case from the same configuration and points to the HydroBayesCal calibration.
+The repository ships two example scripts under ``example-Inn/`` that drive the workflow from a case configuration and are a good starting point to copy for your own case. ``preprocessing.py`` loads ``config/<case>.yml`` and clips the configured DEM(s) to the ROI, generates the mesh and stores the bare geometry as ``mesh-raw.slf``, interpolates DEM elevations onto the nodes (rounded to 4 decimals) and stores ``mesh-elevations.slf``, then compiles the ground-truth calibration table. ``run2postprocessing.py`` then builds the full TELEMAC case from the same configuration and points to the HydroBayesCal calibration.
 
 .. code-block:: bash
 
@@ -70,11 +70,57 @@ Inputs you provide
 * **liquid-boundary** lines tagged inflow / outflow;
 * **inflow** discharge (a single value or a time series);
 * optionally a **stage-discharge** rating curve for the outlet;
+* optionally **mesh zones** (polygons tagged ``channel``/``floodplain``) and a **channel centerline** to drive the flow-aligned anisotropic mesh — see `Meshing`_;
 * optionally **breaklines** and **region/MATID points** to control the mesh and friction zones;
-* optionally **hydraulic measurements** (water depth, flow velocity) that become the calibration data;
+* optionally **ground-truth measurements** (water depth, flow velocity, …) that become the calibration data — see `Ground-truth measurements`_ below;
 * optionally a **DEM-of-Difference** (initial − target) as topographic-change calibration data.
 
 All inputs are declared by path in the configuration; relative paths are resolved against the configuration file's own directory, and any input in a different coordinate system is reprojected to the project CRS on ingest.
+
+Ground-truth measurements
+-------------------------
+
+The calibration data is supplied as a **tidy, multi-tab table** (an ``.xlsx`` workbook). Each tab is one *category* of measurement (``hydraulics``, ``sediment``, …); within a tab the **first three columns are the coordinates** ``x``, ``y``, ``z`` (in the project CRS), and every **following column is a measured quantity** at that point. Column headers are matched case-insensitively and common aliases are accepted (e.g. ``easting``/``northing`` for ``x``/``y``, ``depth`` for ``h``, ``vx``/``vy``/``vz`` for ``u``/``v``/``w``).
+
+For FlowTracker-style hydraulics a row carries the velocity components ``u``, ``v``, ``w`` (m/s), their per-component errors ``u_err``, ``v_err``, ``w_err`` (m/s), and the water depth ``h`` (m). **Not every dataset has every column** — provide only what you measured. The calibration stage derives each requested ``calibration_quantity`` from whatever columns are present (``WATER DEPTH`` from ``h``; ``SCALAR VELOCITY`` from the velocity components, with its error propagated from ``u_err``/``v_err``/``w_err`` when given) and falls back to the configured ``measurement_error`` fraction where no measured error exists. A quantity you cannot supply the columns for is reported as an error rather than silently skipped.
+
+There are two ways to provide this table:
+
+#. **Author it yourself** (the general case): create the ``.xlsx`` with the structure above and point ``inputs.measurements`` at it.
+#. **Let hydromate compile it** from raw field exports (used by the Inn showcase): declare the raw sources under ``inputs.ground_truth`` and the tidy table is generated for you (written to ``work_dir/ground-truth.xlsx`` unless ``inputs.measurements`` sets an explicit output path). Each source names a ``category``, an adapter ``kind``, the ``values`` file and — when the values file has no coordinates — a ``positions`` point layer to join on (by ``join_key``), which is reprojected to the project CRS:
+
+   .. code-block:: yaml
+
+      inputs:
+        ground_truth:
+          - { category: hydraulics, kind: flowtracker, join_key: ID,
+              values: ../ground-truth/hydraulics/FlowTracker2-day1.xlsx,
+              positions: ../geodata/flowtracker2/dgps-day1.shp }
+
+   The ``flowtracker`` adapter reads a SonTek FlowTracker2 ``.ft.sum`` export and joins each measurement vertical (by ``ID``) to its surveyed position; the ``points`` adapter reads a point layer (or CSV) that already carries the quantity columns. Sources sharing a ``category`` are concatenated into one tab.
+
+Meshing
+-------
+
+The mesh is generated with `gmsh <https://gmsh.info>`_. Two strategies are chosen automatically.
+
+**Anisotropic, flow-aligned (preferred).** When you provide ``inputs.mesh_zones`` (polygons each tagged in a ``Zone Name`` attribute) and ``inputs.channel_centerline`` (a line), the channel is meshed with triangles **elongated along the centerline** and the floodplain with **near-equilateral** triangles, blended smoothly between the two. This keeps cells aligned with the main flow — reducing numerical diffusion and cross-flow artifacts — while staying economical on the overbank. Zones whose ``Zone Name`` *contains* ``channel`` (case-insensitive) are treated as channel; those containing ``floodplain`` as floodplain. The behaviour is controlled by the ``mesh`` block:
+
+.. code-block:: yaml
+
+   inputs:
+     mesh_zones: ../geodata/mesh-zones.gpkg            # polygons with a 'Zone Name'
+     channel_centerline: ../geodata/channel-centerline.gpkg
+   mesh:
+     channel_size: 0.5          # cross-channel target edge length (m)
+     floodplain_size: 1.5       # floodplain target edge length (m)
+     growth_ratio: 1.2          # max edge-size growth per element, channel -> floodplain
+     channel_anisotropy: 4.0    # along-flow / cross-flow edge-length ratio in the channel
+     # zone_name_field: "Zone Name"   # the attribute naming each zone (default)
+
+In the channel the cross-channel edge length is ``channel_size`` and the along-flow edge is stretched by ``channel_anisotropy`` (so ``0.5 m`` across and ``~2 m`` along, by default). These are *targets*: the mesh is built from a metric-tensor background field with gmsh's BAMG algorithm, which approximates the requested sizes and anisotropy (the realised cross size and elongation are typically a little gentler than the targets, and ``growth_ratio`` deliberately relaxes them near the banks). Push ``channel_anisotropy`` up for stronger elongation; raise the sizes for a quicker, coarser mesh. The defaults yield a high-resolution mesh — for a ~0.3 km² reach that is on the order of half a million elements — so increase the sizes while iterating.
+
+**Isotropic fallback.** With no ``mesh_zones``/``channel_centerline``, the mesh uses ``default_size`` everywhere, refined to ``breakline_size`` along ``inputs.breaklines`` and to ``region_sizes`` near MATID region points.
 
 The pipeline
 ------------
@@ -82,10 +128,10 @@ The pipeline
 ``hydromate`` runs five stages (see :doc:`codedocs`):
 
 #. **DEM → ROI** (:mod:`hydromate.dem`) — reproject and clip the DEM(s) to the boundary.
-#. **Mesh + bathymetry** (:mod:`hydromate.mesh`, :mod:`hydromate.selafin`) — a gmsh triangular mesh from the boundary and breaklines with per-region size refinement, the DEM interpolated onto the nodes, written as a TELEMAC geometry ``.slf`` with friction zones embedded as a per-node ``FRIC_ID`` variable.
+#. **Mesh + bathymetry** (:mod:`hydromate.mesh`, :mod:`hydromate.selafin`) — a gmsh triangular mesh from the boundary and breaklines (flow-aligned and anisotropic in the channel — see `Meshing`_), the DEM interpolated onto the nodes, written as a TELEMAC geometry ``.slf`` with friction zones embedded as a per-node ``FRIC_ID`` variable.
 #. **Boundary conditions** (:mod:`hydromate.boundary`) — classify the mesh contour against the liquid-boundary lines and write the ``.cli``.
 #. **Steering + friction** (:mod:`hydromate.steering`) — the TELEMAC-2D ``.cas`` and the zonal friction ``.tbl`` (and a GAIA ``.cas`` when morphodynamics is enabled).
-#. **Calibration** (:mod:`hydromate.calibration`) — the calibration-points CSV and a ready HydroBayesCal ``config_Telemac.py``.
+#. **Calibration** (:mod:`hydromate.calibration`, :mod:`hydromate.ground_truth`) — compile the ground-truth sources into the tidy table, turn it into the calibration-points CSV, and emit a ready HydroBayesCal ``config_Telemac.py``.
 
 Configuration reference
 -----------------------
@@ -97,9 +143,9 @@ A configuration file has these top-level sections:
 ``telemac``
     ``pysource`` (the TELEMAC environment script), ``solver`` and ``n_processors``.
 ``inputs``
-    all input data paths (DEM(s), boundary, breaklines, region points, liquid boundaries, inflow, optional stage-discharge and measurements).
+    all input data paths (DEM(s), boundary, liquid boundaries, inflow, optional mesh zones + channel centerline, breaklines, region points, stage-discharge, ground truth).
 ``mesh``
-    background and breakline target edge lengths and per-MATID ``region_sizes``.
+    the anisotropic channel/floodplain edge lengths, ``growth_ratio`` and ``channel_anisotropy`` (see `Meshing`_), or the isotropic fallback's ``default_size``/``breakline_size``/``region_sizes``.
 ``friction``
     the default friction law/coefficient and one zone per MATID.
 ``hydrodynamics``

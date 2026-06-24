@@ -80,6 +80,12 @@ Hydraulic input readers
 .. automodule:: hydromate.hydraulics
    :members:
 
+Ground-truth ingestion
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.ground_truth
+   :members:
+
 Stage 5 -- calibration CSV and HydroBayesCal config
 -------------------------------------------------------------------------------
 

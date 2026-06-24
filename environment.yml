@@ -26,6 +26,7 @@ dependencies:
   - fiona
   - gdal
   - matplotlib
+  - openpyxl>=3.1
   - pip
   - pip:
       - gmsh>=4.13
