@@ -34,6 +34,7 @@ dist/
 .claude/
 .idea/
 .vscode/
+.spyproject/
 
 # --- Sphinx docs build ---
 docs/_build/
