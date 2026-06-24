@@ -1,8 +1,7 @@
 Code documentation
 ==================
 
-This page is generated automatically from the docstrings in the ``hydromate``
-package. Each section documents one module of the pipeline.
+This page is generated automatically from the docstrings in the ``hydromate`` package. Each section documents one module of the pipeline.
 
 Configuration
 -------------------------------------------------------------------------------

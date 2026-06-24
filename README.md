@@ -1,13 +1,8 @@
 # Inn TELEMAC setup workflow (`hydromate`)
 
-Automated setup of a calibration-ready **TELEMAC-2D** (optionally **+ GAIA**
-morphodynamics) case for a reach of the **Inn river (Bavaria)**, wired into
-[HydroBayesCal](https://github.com/Ecohydraulics/hydrobayescal) for
-surrogate-assisted Bayesian calibration with quantified uncertainty.
+Automated setup of a calibration-ready **TELEMAC-2D** (optionally **+ GAIA** morphodynamics) case for a reach of the **Inn river (Bavaria)**, wired into [HydroBayesCal](https://github.com/Ecohydraulics/hydrobayescal) for surrogate-assisted Bayesian calibration with quantified uncertainty.
 
-You provide geodata + hydraulics; `hydromate` produces a ready TELEMAC case
-(geometry `.slf`, `boundaries.cli`, steering `.cas`, friction `.tbl`) plus a
-`measurements-calibration.csv` and a HydroBayesCal `config_Telemac.py`.
+You provide geodata + hydraulics; `hydromate` produces a ready TELEMAC case (geometry `.slf`, `boundaries.cli`, steering `.cas`, friction `.tbl`) plus a `measurements-calibration.csv` and a HydroBayesCal `config_Telemac.py`.
 
 ## Pipeline
 
@@ -20,23 +15,15 @@ inflow / outflow / measurements ───┤
                                    └─▶ 5. measurements-calibration.csv + config_Telemac.py
 ```
 
-* **Stage 1** (`hydromate/dem.py`) — reproject + clip the initial DEM (and optional
-  target DEM) to the ROI boundary; optional DEM-of-Difference for morphodynamics.
-* **Stage 2** (`hydromate/mesh.py`, `selafin.py`) — triangular mesh from boundary +
-  breaklines with per-MATID size fields; DEM interpolated onto nodes; friction
-  zones written as a `FRIC_ID` variable inside the geometry SELAFIN.
-* **Stage 3** (`hydromate/boundary.py`) — classify contour nodes against the
-  inflow/outflow lines; write `.cli` with the codes the solver expects.
-* **Stage 4** (`hydromate/steering.py`) — friction `.tbl` (one row per MATID,
-  perturbed by HydroBayesCal) and the `.cas`; GAIA `.cas` when morphodynamics on.
-* **Stage 5** (`hydromate/calibration.py`) — calibration CSV from measurements and
-  the HydroBayesCal `config_Telemac.py`.
+* **Stage 1** (`hydromate/dem.py`) — reproject + clip the initial DEM (and optional target DEM) to the ROI boundary; optional DEM-of-Difference for morphodynamics.
+* **Stage 2** (`hydromate/mesh.py`, `selafin.py`) — triangular mesh from boundary + breaklines with per-MATID size fields; DEM interpolated onto nodes; friction zones written as a `FRIC_ID` variable inside the geometry SELAFIN.
+* **Stage 3** (`hydromate/boundary.py`) — classify contour nodes against the inflow/outflow lines; write `.cli` with the codes the solver expects.
+* **Stage 4** (`hydromate/steering.py`) — friction `.tbl` (one row per MATID, perturbed by HydroBayesCal) and the `.cas`; GAIA `.cas` when morphodynamics on.
+* **Stage 5** (`hydromate/calibration.py`) — calibration CSV from measurements and the HydroBayesCal `config_Telemac.py`.
 
 ## Install
 
-The case-build pipeline runs in its **own** environment (`telemac-inn`); it does
-*not* import TELEMAC's Python. Instead it **sources** the TELEMAC `pysource.*.sh`
-(set in the config) whenever the solver or SELAFIN tooling is needed.
+The case-build pipeline runs in its **own** environment (`telemac-inn`); it does *not* import TELEMAC's Python. Instead it **sources** the TELEMAC `pysource.*.sh` (set in the config) whenever the solver or SELAFIN tooling is needed.
 
 ```bash
 mamba env create -f environment.yml
@@ -46,10 +33,8 @@ pip install -e .
 
 ## Use
 
-1. Edit `config/inn.yml` — point `telemac.pysource` at your TELEMAC env, set the
-   input paths, mesh sizes, friction zones, and calibration parameters/ranges.
-2. Provide a **ROI boundary polygon** (`inputs.boundary`): a closed polygon (or
-   closed polyline) delineating the maximum wetted extent, in EPSG:25832.
+1. Edit `config/inn.yml` — point `telemac.pysource` at your TELEMAC env, set the input paths, mesh sizes, friction zones, and calibration parameters/ranges.
+2. Provide a **ROI boundary polygon** (`inputs.boundary`): a closed polygon (or closed polyline) delineating the maximum wetted extent, in EPSG:25832.
 3. Build the case:
 
 ```bash
@@ -67,11 +52,7 @@ python /home/schwindt/github/hydrobayescal/bal_telemac.py --config config_Telema
 
 ## Configuration reference
 
-See `config/inn.yml` for a fully commented example. Key sections: `project`
-(name, CRS, output dirs), `telemac` (pysource, solver, processors), `inputs`
-(DEMs, boundary, breaklines, region/MATID points, liquid boundaries, inflow,
-optional stage-discharge + measurements), `mesh`, `friction` (zones ↔ MATID),
-`hydrodynamics`, optional `morphodynamics` (GAIA), and `calibration`.
+See `config/inn.yml` for a fully commented example. Key sections: `project` (name, CRS, output dirs), `telemac` (pysource, solver, processors), `inputs` (DEMs, boundary, breaklines, region/MATID points, liquid boundaries, inflow, optional stage-discharge + measurements), `mesh`, `friction` (zones ↔ MATID), `hydrodynamics`, optional `morphodynamics` (GAIA), and `calibration`.
 
 ### Calibration parameter naming (HydroBayesCal convention)
 
@@ -84,12 +65,8 @@ optional stage-discharge + measurements), `mesh`, `friction` (zones ↔ MATID),
 
 ## Coordinate system
 
-All inputs/outputs are **EPSG:25832 (ETRS89 / UTM 32N)**, metres — see
-`CLAUDE.md`. Inputs in another CRS are reprojected on ingest.
+All inputs/outputs are **EPSG:25832 (ETRS89 / UTM 32N)**, metres — see `CLAUDE.md`. Inputs in another CRS are reprojected on ingest.
 
 ## Status
 
-v1 covers the **2D hydraulic** path end to end (friction-zone calibration against
-water depth / velocity). GAIA morphodynamics and the DEM-of-Difference
-topographic-change calibration are wired as extension points (`morphodynamics`
-config block, `dem.dem_of_difference`, GAIA `.cas` writer) and built out next.
+v1 covers the **2D hydraulic** path end to end (friction-zone calibration against water depth / velocity). GAIA morphodynamics and the DEM-of-Difference topographic-change calibration are wired as extension points (`morphodynamics` config block, `dem.dem_of_difference`, GAIA `.cas` writer) and built out next.

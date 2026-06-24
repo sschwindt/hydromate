@@ -1,9 +1,7 @@
 Usage
 =====
 
-``hydromate`` is driven by a single YAML configuration file and exposes one
-command. The workflow is: write a config, build the case, then calibrate it with
-HydroBayesCal.
+``hydromate`` is driven by a single YAML configuration file and exposes one command. The workflow is: write a config, build the case, then calibrate it with HydroBayesCal.
 
 The command line
 ----------------
@@ -18,54 +16,36 @@ The command line
 Useful flags:
 
 ``--check``
-    Load and validate the configuration (paths exist, required inputs present,
-    TELEMAC ``pysource`` resolvable) and exit without building.
+    Load and validate the configuration (paths exist, required inputs present, TELEMAC ``pysource`` resolvable) and exit without building.
 ``--no-validate-env``
-    Skip checking that the TELEMAC environment can be sourced (useful when only
-    producing files on a machine without TELEMAC).
+    Skip checking that the TELEMAC environment can be sourced (useful when only producing files on a machine without TELEMAC).
 ``--dry-run``
-    After building, launch the configured solver once to confirm the case is
-    accepted by TELEMAC.
+    After building, launch the configured solver once to confirm the case is accepted by TELEMAC.
 
 Inputs you provide
 ------------------
 
-* an **initial ROI DEM** (GeoTIFF) and, optionally, a **target DEM** for
-  morphodynamics;
-* a **boundary** polygon delineating the region of interest / maximum wetted
-  extent;
+* an **initial ROI DEM** (GeoTIFF) and, optionally, a **target DEM** for morphodynamics;
+* a **boundary** polygon delineating the region of interest / maximum wetted extent;
 * **liquid-boundary** lines tagged inflow / outflow;
 * **inflow** discharge (a single value or a time series);
 * optionally a **stage-discharge** rating curve for the outlet;
-* optionally **breaklines** and **region/MATID points** to control the mesh and
-  friction zones;
-* optionally **hydraulic measurements** (water depth, flow velocity) that become
-  the calibration data;
-* optionally a **DEM-of-Difference** (initial − target) as topographic-change
-  calibration data.
+* optionally **breaklines** and **region/MATID points** to control the mesh and friction zones;
+* optionally **hydraulic measurements** (water depth, flow velocity) that become the calibration data;
+* optionally a **DEM-of-Difference** (initial − target) as topographic-change calibration data.
 
-All inputs are declared by path in the configuration; relative paths are
-resolved against the configuration file's own directory, and any input in a
-different coordinate system is reprojected to the project CRS on ingest.
+All inputs are declared by path in the configuration; relative paths are resolved against the configuration file's own directory, and any input in a different coordinate system is reprojected to the project CRS on ingest.
 
 The pipeline
 ------------
 
 ``hydromate`` runs five stages (see :doc:`codedocs`):
 
-#. **DEM → ROI** (:mod:`hydromate.dem`) — reproject and clip the DEM(s) to the
-   boundary.
-#. **Mesh + bathymetry** (:mod:`hydromate.mesh`, :mod:`hydromate.selafin`) — a
-   gmsh triangular mesh from the boundary and breaklines with per-region size
-   refinement, the DEM interpolated onto the nodes, written as a TELEMAC geometry
-   ``.slf`` with friction zones embedded as a per-node ``FRIC_ID`` variable.
-#. **Boundary conditions** (:mod:`hydromate.boundary`) — classify the mesh
-   contour against the liquid-boundary lines and write the ``.cli``.
-#. **Steering + friction** (:mod:`hydromate.steering`) — the TELEMAC-2D ``.cas``
-   and the zonal friction ``.tbl`` (and a GAIA ``.cas`` when morphodynamics is
-   enabled).
-#. **Calibration** (:mod:`hydromate.calibration`) — the calibration-points CSV
-   and a ready HydroBayesCal ``config_Telemac.py``.
+#. **DEM → ROI** (:mod:`hydromate.dem`) — reproject and clip the DEM(s) to the boundary.
+#. **Mesh + bathymetry** (:mod:`hydromate.mesh`, :mod:`hydromate.selafin`) — a gmsh triangular mesh from the boundary and breaklines with per-region size refinement, the DEM interpolated onto the nodes, written as a TELEMAC geometry ``.slf`` with friction zones embedded as a per-node ``FRIC_ID`` variable.
+#. **Boundary conditions** (:mod:`hydromate.boundary`) — classify the mesh contour against the liquid-boundary lines and write the ``.cli``.
+#. **Steering + friction** (:mod:`hydromate.steering`) — the TELEMAC-2D ``.cas`` and the zonal friction ``.tbl`` (and a GAIA ``.cas`` when morphodynamics is enabled).
+#. **Calibration** (:mod:`hydromate.calibration`) — the calibration-points CSV and a ready HydroBayesCal ``config_Telemac.py``.
 
 Configuration reference
 -----------------------
@@ -73,26 +53,21 @@ Configuration reference
 A configuration file has these top-level sections:
 
 ``project``
-    case name, ``crs_epsg`` (project coordinate system), and the output
-    directories (``work_dir``, ``model_dir``, ``results_dir``).
+    case name, ``crs_epsg`` (project coordinate system), and the output directories (``work_dir``, ``model_dir``, ``results_dir``).
 ``telemac``
-    ``pysource`` (the TELEMAC environment script), ``solver`` and
-    ``n_processors``.
+    ``pysource`` (the TELEMAC environment script), ``solver`` and ``n_processors``.
 ``inputs``
-    all input data paths (DEM(s), boundary, breaklines, region points, liquid
-    boundaries, inflow, optional stage-discharge and measurements).
+    all input data paths (DEM(s), boundary, breaklines, region points, liquid boundaries, inflow, optional stage-discharge and measurements).
 ``mesh``
     background and breakline target edge lengths and per-MATID ``region_sizes``.
 ``friction``
     the default friction law/coefficient and one zone per MATID.
 ``hydrodynamics``
-    steady/unsteady regime, time stepping, turbulence, and the prescribed
-    boundary values.
+    steady/unsteady regime, time stepping, turbulence, and the prescribed boundary values.
 ``morphodynamics`` *(optional)*
     enable GAIA and declare sediment classes.
 ``calibration``
-    the calibration and extraction quantities, the calibration parameters with
-    their ranges, and the BAL sampling settings forwarded to HydroBayesCal.
+    the calibration and extraction quantities, the calibration parameters with their ranges, and the BAL sampling settings forwarded to HydroBayesCal.
 
 A minimal example:
 
