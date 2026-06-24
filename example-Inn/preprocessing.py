@@ -1,50 +1,39 @@
-"""Example preprocessing for the Inn case.
+"""Example preprocessing for the Inn case: clip the DEM(s) to the ROI.
 
-Clips the DEM(s) declared in a hydromate case configuration to the
-region-of-interest boundary, writing the cropped rasters next to their sources.
-This is the first step of the workflow; it is followed by ``run2postprocessing.py``.
+First step of the workflow (followed by ``run2postprocessing.py``). The script
+reads a hydromate case configuration and clips the DEM(s) it declares to the
+region-of-interest boundary, writing each cropped raster next to its source as
+``<name>-roi-clip.tif``.
 
-Run it from anywhere (the paths are resolved from the config file):
+Run it with:
 
     mamba run -n hydromate-env python example-Inn/preprocessing.py
 """
-
-from __future__ import annotations
 
 from pathlib import Path
 
 import hydromate
 from hydromate.config import load_config
-from hydromate.dem import clip_to_roi
 
-# --------------------------------------------------------------------------- #
-# 1. Load the case configuration  (config/<case>.yml)
-# --------------------------------------------------------------------------- #
-REPO = Path(__file__).resolve().parents[1]
-CONFIG = REPO / "config" / "inn.yml"          # <-- your config/<case>.yml
+# ---------------------------------------------------------------------------
+# Load the case configuration  (config/<case>.yml)
+# ---------------------------------------------------------------------------
+config_file = Path(__file__).resolve().parents[1] / "config" / "inn.yml"
+cfg = load_config(config_file)
 
-cfg = load_config(CONFIG)
+print(f"Case '{cfg.name}'  |  CRS EPSG:{cfg.crs_epsg}")
+print(f"ROI boundary: {cfg.inputs.boundary.name}")
 
+# ---------------------------------------------------------------------------
+# Clip the DEM(s) to the region of interest
+# (uses the boundary + CRS from the config; writes <name>-roi-clip.tif next
+#  to each source DEM)
+# ---------------------------------------------------------------------------
+initial_clip = hydromate.clip_dem_to_roi(cfg, cfg.inputs.dem_initial)
+print(f"initial DEM clipped -> {initial_clip}")
 
-# --------------------------------------------------------------------------- #
-# 2. Clip the DEM(s) to the ROI, using the data directories from the YAML
-# --------------------------------------------------------------------------- #
-def main() -> None:
-    print(f"hydromate {hydromate.__version__} — case '{cfg.name}' (EPSG {cfg.crs_epsg})")
-    print(f"ROI boundary: {cfg.inputs.boundary}")
+if cfg.inputs.dem_target is not None:
+    target_clip = hydromate.clip_dem_to_roi(cfg, cfg.inputs.dem_target)
+    print(f"target  DEM clipped -> {target_clip}")
 
-    # the DEMs declared in inputs: the initial (required) and the optional target
-    dems = [d for d in (cfg.inputs.dem_initial, cfg.inputs.dem_target) if d is not None]
-    if not dems:
-        raise SystemExit("no DEM declared in inputs.dem_initial / inputs.dem_target")
-
-    for dem in dems:
-        out = dem.with_name(f"{dem.stem}-roi-clip.tif")   # written next to the source
-        clip_to_roi(dem, cfg.inputs.boundary, out, target_epsg=cfg.crs_epsg)
-        print(f"  clipped {dem.name}  ->  {out.name}")
-
-    print("preprocessing done.")
-
-
-if __name__ == "__main__":
-    main()
+print("preprocessing done.")

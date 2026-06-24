@@ -19,5 +19,6 @@ Everything is driven by a single YAML config (:mod:`hydromate.config`).
 __version__ = "0.1.0"
 
 from hydromate.config import Config, load_config
+from hydromate.dem import clip_dem_to_roi, clip_to_roi
 
-__all__ = ["Config", "load_config", "__version__"]
+__all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi", "__version__"]

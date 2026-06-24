@@ -150,6 +150,20 @@ def clip_to_roi(dem_path, boundary_path, out_path, *, target_epsg: int | None = 
     return out_path
 
 
+def clip_dem_to_roi(cfg: Config, dem_path, out_path=None) -> Path:
+    """Clip *dem_path* to the configuration's ROI boundary, in the project CRS.
+
+    Convenience wrapper around :func:`clip_to_roi` that takes the boundary and
+    CRS from *cfg*. By default the clipped raster is written next to the source
+    as ``<stem>-roi-clip.tif``; pass *out_path* to choose another location. The
+    output path is returned.
+    """
+    dem_path = Path(dem_path)
+    if out_path is None:
+        out_path = dem_path.with_name(f"{dem_path.stem}-roi-clip.tif")
+    return clip_to_roi(dem_path, cfg.inputs.boundary, out_path, target_epsg=cfg.crs_epsg)
+
+
 def clip_dem(cfg: Config, dem_path: Path, out_name: str) -> ClippedDEM:
     """Pipeline wrapper: clip *dem_path* to the ROI, reprojected to the project CRS."""
     import rasterio
