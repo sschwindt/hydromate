@@ -3,11 +3,11 @@
 Generates a small ROI (a square channel), breaklines, MATID region points, a
 sloping DEM, an inflow series and measurements, then runs the full pipeline and
 checks every artifact is produced and structurally sane. Requires the
-``telemac-inn`` environment (gmsh, geopandas, rasterio). The TELEMAC solver is
+``hydromate-env`` environment (gmsh, geopandas, rasterio). The TELEMAC solver is
 NOT invoked here (``validate_env=False``), so this runs without TELEMAC.
 
-Run directly:  mamba run -n telemac-inn python tests/test_integration.py
-Or via pytest: mamba run -n telemac-inn pytest tests/
+Run directly:  mamba run -n hydromate-env python tests/test_integration.py
+Or via pytest: mamba run -n hydromate-env pytest tests/
 """
 
 from __future__ import annotations

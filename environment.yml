@@ -9,9 +9,9 @@
 #
 # Create with:
 #   mamba env create -f environment.yml
-#   mamba activate telemac-inn
+#   mamba activate hydromate-env
 #   pip install -e .
-name: telemac-inn
+name: hydromate-env
 channels:
   - conda-forge
 dependencies:

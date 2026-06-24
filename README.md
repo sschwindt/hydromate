@@ -23,11 +23,11 @@ inflow / outflow / measurements ───┤
 
 ## Install
 
-The case-build pipeline runs in its **own** environment (`telemac-inn`); it does *not* import TELEMAC's Python. Instead it **sources** the TELEMAC `pysource.*.sh` (set in the config) whenever the solver or SELAFIN tooling is needed.
+The case-build pipeline runs in its **own** environment (`hydromate-env`); it does *not* import TELEMAC's Python. Instead it **sources** the TELEMAC `pysource.*.sh` (set in the config) whenever the solver or SELAFIN tooling is needed.
 
 ```bash
 mamba env create -f environment.yml
-mamba activate telemac-inn
+mamba activate hydromate-env
 pip install -e .
 ```
 

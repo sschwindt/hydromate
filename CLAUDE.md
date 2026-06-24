@@ -19,7 +19,7 @@ The repository contains both **input data** (`geodata/`, `stage-discharge/`) and
 5. `calibration.py` — `measurements-calibration.csv` and the HydroBayesCal `config_Telemac.py`.
 
 Key design points:
-- The build runs in its **own** `telemac-inn` conda env (gmsh/geopandas/rasterio); it does not import TELEMAC's Python. `env.py` *sources* `telemac.pysource` (the `pysource.*.sh`) in a subshell for any solver/SELAFIN call. The config's `telemac.pysource` must point at the real script (e.g. `/home/schwindt/opt/telemac/configs/pysource.mint22.sh`).
+- The build runs in its **own** `hydromate-env` conda env (gmsh/geopandas/rasterio); it does not import TELEMAC's Python. `env.py` *sources* `telemac.pysource` (the `pysource.*.sh`) in a subshell for any solver/SELAFIN call. The config's `telemac.pysource` must point at the real script (e.g. `/home/schwindt/opt/telemac/configs/pysource.mint22.sh`).
 - Friction zones come from the **MATID** scheme in `geodata/shapefiles/region-pts-table.txt` (1 riverbed_fine … 5 floodplain) → friction `.tbl` rows and `zone<MATID>` calibration parameters. HydroBayesCal perturbs the coefficient column of the `.tbl`.
 - `src/hydromate/selafin.py` is a self-contained big-endian SELAFIN writer; its output is validated against TELEMAC's own `data_manip.formats.selafin.Selafin` reader in the tests.
 - Calibration CSV schema (read by HydroBayesCal): `id, x, y, z, <QTY>_DATA, <QTY>_ERROR`, where `<QTY>` is a SELAFIN name (e.g. `WATER DEPTH`, `SCALAR VELOCITY`).
@@ -29,11 +29,11 @@ v1 covers the **2D hydraulic** path end to end; GAIA morphodynamics and the DEM-
 ### Build, test, run
 
 ```bash
-mamba env create -f environment.yml && mamba activate telemac-inn && pip install -e .
+mamba env create -f environment.yml && mamba activate hydromate-env && pip install -e .
 hydromate config/inn.yml --check        # validate config only
 hydromate config/inn.yml                # build the case
 hydromate config/inn.yml --dry-run      # build, then run the solver once to validate
-mamba run -n telemac-inn pytest tests/ # end-to-end test on synthetic fixtures (no solver)
+mamba run -n hydromate-env pytest tests/ # end-to-end test on synthetic fixtures (no solver)
 ```
 
 The user must supply a **ROI boundary polygon** (`inputs.boundary`, a closed polygon/polyline in EPSG:25832) — it is not in `geodata/` yet.

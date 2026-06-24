@@ -25,9 +25,9 @@ The pipeline runs in its **own** conda/mamba environment, kept separate from the
 .. code-block:: bash
 
    mamba env create -f environment.yml
-   mamba activate telemac-inn
+   mamba activate hydromate-env
 
-The environment is named ``telemac-inn`` and pulls ``gdal``, ``geopandas``, ``rasterio``, ``shapely``, ``pyproj`` from conda-forge and ``gmsh`` from PyPI.
+The environment is named ``hydromate-env`` and pulls ``gdal``, ``geopandas``, ``rasterio``, ``shapely``, ``pyproj`` from conda-forge and ``gmsh`` from PyPI.
 
 Install the package
 -------------------
@@ -54,7 +54,7 @@ Verify
 .. code-block:: bash
 
    hydromate --version
-   mamba run -n telemac-inn pytest tests/   # end-to-end test on synthetic inputs
+   mamba run -n hydromate-env pytest tests/   # end-to-end test on synthetic inputs
 
 The test suite builds a complete synthetic case (mesh, boundary, steering, friction, calibration CSV) without invoking the TELEMAC solver, so it runs anywhere the environment is installed.
 
