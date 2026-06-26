@@ -8,13 +8,13 @@ hydromate
 Motivation
 ----------
 
-Building a TELEMAC model by hand is slow, error-prone and hard to reproduce: a mesh has to be generated, a digital elevation model interpolated onto it, boundary conditions encoded node-by-node, steering and friction files written, and measurements reshaped into a calibration table — each step a chance for a silent inconsistency (a mismatched coordinate system, a boundary numbering that disagrees with the mesh, a friction zone that no longer maps to the terrain).
+Building a TELEMAC model by hand is slow, error-prone and hard to reproduce: a mesh has to be generated, a digital elevation model interpolated onto it, boundary conditions encoded node-by-node, steering and friction files written, and measurements reshaped into a calibration table - each step a chance for a silent inconsistency (a mismatched coordinate system, a boundary numbering that disagrees with the mesh, a friction zone that no longer maps to the terrain).
 
 ``hydromate`` automates that whole chain from a single, validated configuration file, so that:
 
 * the same inputs always produce the same model (reproducibility);
 * every artifact agrees with every other (the mesh boundary order *is* the boundary-condition order, friction zones *are* the calibration parameters);
-* the modeller's effort moves from clicking through GIS dialogs to deciding the physics — mesh resolution, friction laws, calibration ranges.
+* the modeller's effort moves from clicking through GIS dialogs to deciding the physics - mesh resolution, friction laws, calibration ranges.
 
 Goal
 ----
@@ -40,6 +40,7 @@ From a region-of-interest DEM, inflow data, an optional stage-discharge relation
    :caption: Contents
 
    installation
+   input_files
    usage
    codedocs
    license

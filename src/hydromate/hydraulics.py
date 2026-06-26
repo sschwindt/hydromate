@@ -8,11 +8,14 @@ in ``stage-discharge/`` and tidy user-prepared tables.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger("hydromate")
 
 
 def _is_lfu(path: Path) -> bool:
@@ -72,8 +75,11 @@ def read_inflow(path: Path, steady: bool = True) -> Inflow:
 def read_stage_discharge(path: Path):
     """Read a rating curve -> callable mapping discharge (m3/s) to WSE (m).
 
-    Expects two numeric columns; the one whose values look like discharges
-    (smaller magnitude, m3/s) is treated as Q and the other as stage/elevation.
+    Accepts a ``Q,WSE`` (or ``Q,stage``) CSV with one or more rows. A single Q-h
+    pair is enough for a steady run (the WSE is then constant); with several rows
+    the WSE is linearly interpolated in Q. Querying a Q outside the tabulated
+    range clamps to the nearest endpoint and logs a warning (the curve does not
+    extrapolate), so for steady runs supply the pair at the simulated discharge.
     """
     df = _read_generic(Path(path))
     num = df.select_dtypes("number")
@@ -87,10 +93,19 @@ def read_stage_discharge(path: Path):
         qcol, hcol = num.columns[0], num.columns[1]
     q = pd.to_numeric(df[qcol], errors="coerce").to_numpy(dtype=float)
     h = pd.to_numeric(df[hcol], errors="coerce").to_numpy(dtype=float)
+    keep = ~(np.isnan(q) | np.isnan(h))
+    q, h = q[keep], h[keep]
+    if q.size == 0:
+        raise ValueError(f"stage-discharge file {Path(path).name!r} has no Q-h pairs")
     order = np.argsort(q)
     q, h = q[order], h[order]
 
     def wse_at(discharge: float) -> float:
+        if discharge < q[0] - 1e-9 or discharge > q[-1] + 1e-9:
+            log.warning(
+                "outflow Q=%.3f m3/s is outside the rating curve range "
+                "[%.3f, %.3f] m3/s; clamping the WSE. Add a Q-h pair at the "
+                "simulated discharge to %s.", discharge, q[0], q[-1], Path(path).name)
         return float(np.interp(discharge, q, h))
 
     return wse_at

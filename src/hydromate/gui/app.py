@@ -28,8 +28,11 @@ OPTIONAL_INPUTS = [
 ]
 
 TEMPLATE: dict = {
-    "project": {"name": "case", "crs_epsg": 25832, "work_dir": "case",
-                "model_dir": "case/simulation", "results_dir": "case/results"},
+    "project": {"name": "case", "crs_epsg": 25832,
+                "preprocessing_dir": "tm-simulation/preprocessing",
+                "model_dir": "tm-simulation/simulation",
+                "postprocessing_dir": "tm-simulation/postprocessing",
+                "calibration_dir": "tm-simulation/calibration-validation"},
     "telemac": {"pysource": "/path/to/telemac/configs/pysource.sh",
                 "solver": "telemac2d", "n_processors": 4},
     "inputs": {"dem_initial": "path/to/dem.tif", "boundary": "path/to/roi.gpkg",
@@ -88,7 +91,7 @@ def run_cli(args: list[str]) -> tuple[int, str]:
 # --------------------------------------------------------------------------- #
 
 st.set_page_config(page_title="hydromate config editor", layout="wide")
-st.title("hydromate — configuration editor")
+st.title("hydromate - configuration editor")
 st.caption("Build and validate a TELEMAC case configuration, then run it.")
 
 if "cfg" not in st.session_state:
@@ -121,17 +124,24 @@ with tabs[0]:
     p["crs_epsg"] = int(c2.number_input(
         "CRS EPSG (metric)", value=int(_get(cfg, "project", "crs_epsg", default=25832)),
         step=1, format="%d"))
-    p["work_dir"] = c1.text_input("Work dir", _get(cfg, "project", "work_dir", default="case"))
-    p["model_dir"] = c2.text_input("Model dir",
-                                   _get(cfg, "project", "model_dir", default="case/simulation"))
-    p["results_dir"] = c1.text_input("Results dir",
-                                     _get(cfg, "project", "results_dir", default="case/results"))
+    p["preprocessing_dir"] = c1.text_input(
+        "Preprocessing dir",
+        _get(cfg, "project", "preprocessing_dir", default="tm-simulation/preprocessing"))
+    p["model_dir"] = c2.text_input(
+        "Simulation (model) dir",
+        _get(cfg, "project", "model_dir", default="tm-simulation/simulation"))
+    p["postprocessing_dir"] = c1.text_input(
+        "Postprocessing dir",
+        _get(cfg, "project", "postprocessing_dir", default="tm-simulation/postprocessing"))
+    p["calibration_dir"] = c2.text_input(
+        "Calibration-validation dir",
+        _get(cfg, "project", "calibration_dir", default="tm-simulation/calibration-validation"))
 
 # ---- TELEMAC ------------------------------------------------------------- #
 with tabs[1]:
     t = cfg.setdefault("telemac", {})
     t["pysource"] = st.text_input(
-        "pysource.*.sh (TELEMAC environment script) — sourced, not imported",
+        "pysource.*.sh (TELEMAC environment script) - sourced, not imported",
         _get(cfg, "telemac", "pysource", default=""))
     c1, c2 = st.columns(2)
     sol = _get(cfg, "telemac", "solver", default="telemac2d")
@@ -216,7 +226,7 @@ with tabs[5]:
         "Downstream prescribed elevation (m a.s.l.)",
         value=float(_get(cfg, "hydrodynamics", "prescribed_elevation", default=0.0)), format="%.3f")
     q = _get(cfg, "hydrodynamics", "prescribed_flowrate", default="")
-    q_in = st.text_input("Prescribed inflow Q (m³/s) — blank = mean of inflow series", str(q or ""))
+    q_in = st.text_input("Prescribed inflow Q (m³/s) - blank = mean of inflow series", str(q or ""))
     if q_in.strip():
         h["prescribed_flowrate"] = float(q_in)
     else:
@@ -267,7 +277,7 @@ with left:
 
 with right:
     st.subheader("Save & run")
-    save_path = st.text_input("Save to path", value="config/inn-edited.yml")
+    save_path = st.text_input("Save to path", value="cases/example-Inn/case-config-edited.yml")
     if st.button("💾 Save YAML"):
         path = Path(save_path)
         path.parent.mkdir(parents=True, exist_ok=True)

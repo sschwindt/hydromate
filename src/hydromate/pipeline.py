@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from hydromate import boundary, calibration, dem, hydraulics, mesh, steering
 from hydromate.config import Config
 from hydromate.env import TelemacRuntime
+from hydromate.logsetup import log_step, setup_logging
 
 log = logging.getLogger("hydromate")
 
@@ -18,6 +20,7 @@ class Artifacts:
     geometry_slf: Path | None = None
     boundary_cli: Path | None = None
     friction_tbl: Path | None = None
+    initial_conditions: Path | None = None
     cas_file: Path | None = None
     gaia_cas: Path | None = None
     ground_truth: Path | None = None
@@ -26,83 +29,117 @@ class Artifacts:
     rasters: dict[str, Path] = field(default_factory=dict)
 
 
-def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False) -> Artifacts:
+def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
+        log_to_file: bool = True) -> Artifacts:
     """Build the full case. Returns the produced :class:`Artifacts`.
 
     Parameters
     ----------
     validate_env : check that the TELEMAC environment can be sourced first.
     dry_run : after building, launch the solver once to confirm the case is valid.
+    log_to_file : attach this build's ``<model_dir>/hydromate.log`` (set False
+        when a caller already routes everything to its own compound log, e.g. the
+        mesh-convergence study logging the per-level builds to postprocessing/).
     """
     cfg.validate()
     cfg.ensure_dirs()
+    # compound logfile for the build, in the simulation (model) output folder
+    if log_to_file:
+        setup_logging(cfg.model_path(cfg.log_file))
     art = Artifacts()
+    t_start = time.perf_counter()
+    log.info("build start: case '%s' -> %s", cfg.name, cfg.model_dir)
 
     runtime = TelemacRuntime(cfg.telemac)
     if validate_env or dry_run:
-        version = runtime.check_available()
-        log.info("TELEMAC environment OK (python %s)", version)
+        with log_step("validate TELEMAC environment"):
+            version = runtime.check_available()
+            log.info("TELEMAC environment OK (python %s)", version)
 
     # 1) DEM -> ROI
-    log.info("stage 1/5: clipping DEM(s) to the region of interest")
-    art.rasters = dem.run(cfg)
-    dem_initial = art.rasters["dem_initial_roi"]
+    with log_step("stage 1/5: clip DEM(s) to the region of interest"):
+        art.rasters = dem.run(cfg)
+        dem_initial = art.rasters["dem_initial_roi"]
 
     # 2) mesh + bathymetry + geometry SELAFIN
-    log.info("stage 2/5: generating mesh, bathymetry and geometry SELAFIN")
-    the_mesh, art.geometry_slf = mesh.run(cfg, dem_initial)
-    log.info("  mesh: %d nodes, %d elements, %d boundary nodes",
-             the_mesh.npoin, the_mesh.nelem, the_mesh.boundary_nodes.size)
+    with log_step("stage 2/5: generate mesh, bathymetry and geometry SELAFIN"):
+        the_mesh, art.geometry_slf = mesh.run(cfg, dem_initial)
+        log.info("  mesh: %d nodes, %d elements, %d boundary nodes",
+                 the_mesh.npoin, the_mesh.nelem, the_mesh.boundary_nodes.size)
 
     # 3) boundary conditions
-    log.info("stage 3/5: writing boundary conditions (.cli)")
-    art.boundary_cli, liquids = boundary.write_cli(cfg, the_mesh)
-    for lb in liquids:
-        log.info("  liquid boundary %d: %s (%d nodes)", lb.index, lb.kind, lb.n_nodes)
+    with log_step("stage 3/5: write boundary conditions (.cli)"):
+        art.boundary_cli, liquids = boundary.write_cli(cfg, the_mesh)
+        for lb in liquids:
+            log.info("  liquid boundary %d: %s (%d nodes)", lb.index, lb.kind, lb.n_nodes)
 
-    # boundary prescribed values
-    inflow = hydraulics.read_inflow(
-        Path(cfg.inputs.inflow), steady=(cfg.hydrodynamics.regime == "steady")
-    )
-    inflow_q = (cfg.hydrodynamics.prescribed_flowrate
-                if cfg.hydrodynamics.prescribed_flowrate is not None
-                else inflow.steady_value)
-    outflow_wse = _resolve_outflow_wse(cfg, inflow_q)
-    log.info("  prescribed inflow Q=%.3f m3/s, outflow WSE=%.3f m", inflow_q, outflow_wse)
+        # boundary prescribed values
+        inflow = hydraulics.read_inflow(
+            Path(cfg.inputs.inflow), steady=(cfg.hydrodynamics.regime == "steady")
+        )
+        inflow_q = (cfg.hydrodynamics.prescribed_flowrate
+                    if cfg.hydrodynamics.prescribed_flowrate is not None
+                    else inflow.steady_value)
+        if cfg.hydrodynamics.outflow_condition == "free":
+            outflow_wse = None
+            log.info("  prescribed inflow Q=%.3f m3/s, free (Neumann) outflow", inflow_q)
+        else:
+            outflow_wse = _resolve_outflow_wse(cfg, inflow_q)
+            log.info("  prescribed inflow Q=%.3f m3/s, outflow WSE=%.3f m (%s)",
+                     inflow_q, outflow_wse, cfg.hydrodynamics.outflow_condition)
 
     # 4) steering files
-    log.info("stage 4/5: writing friction table and steering (.cas)")
-    art.friction_tbl = steering.write_friction_tbl(cfg)
-    art.gaia_cas = steering.write_gaia_cas(cfg)
-    art.cas_file = steering.write_cas(
-        cfg, liquids, inflow_q, outflow_wse,
-        gaia_cas=(art.gaia_cas.name if art.gaia_cas else None),
-    )
+    with log_step("stage 4/5: write friction table and steering (.cas)"):
+        art.friction_tbl = steering.write_friction_tbl(cfg)
+        art.gaia_cas = steering.write_gaia_cas(cfg)
+        # optional pre-wetting: warm-start the channel to a given depth so the run
+        # need not advance the wetting front from a dry bed
+        prev_comp = None
+        if cfg.hydrodynamics.prewet_depth is not None:
+            art.initial_conditions = steering.write_initial_conditions(cfg, the_mesh)
+            prev_comp = art.initial_conditions.name
+        art.cas_file = steering.write_cas(
+            cfg, liquids, inflow_q, outflow_wse,
+            gaia_cas=(art.gaia_cas.name if art.gaia_cas else None),
+            previous_computation=prev_comp,
+        )
 
     # 5) ground-truth -> calibration CSV + HydroBayesCal config
-    log.info("stage 5/5: compiling ground truth, calibration CSV and HydroBayesCal config")
-    art.ground_truth = calibration.compile_ground_truth(cfg)
-    if art.ground_truth:
-        log.info("  compiled tidy ground-truth table -> %s", art.ground_truth)
-    art.calibration_csv = calibration.build_calibration_csv(cfg)
-    art.hbc_config = calibration.emit_hbc_config(cfg, art.calibration_csv)
+    with log_step("stage 5/5: compile ground truth, calibration CSV and HydroBayesCal config"):
+        art.ground_truth = calibration.compile_ground_truth(cfg)
+        if art.ground_truth:
+            log.info("  compiled tidy ground-truth table -> %s", art.ground_truth)
+        art.calibration_csv = calibration.build_calibration_csv(cfg)
+        art.hbc_config = calibration.emit_hbc_config(cfg, art.calibration_csv)
 
     if dry_run:
-        log.info("dry run: launching %s once to validate the case", cfg.telemac.solver)
-        proc = runtime.run_solver(cfg.cas_file, cwd=cfg.model_dir, ncsize=1)
-        log.info("solver finished rc=%d", proc.returncode)
+        with log_step(f"dry run: launch {cfg.telemac.solver} once to validate the case"):
+            proc = runtime.run_solver(cfg.cas_file, cwd=cfg.model_dir, ncsize=1)
+            log.info("solver finished rc=%d", proc.returncode)
 
+    log.info("build done: case '%s' in %.2fs", cfg.name, time.perf_counter() - t_start)
     return art
 
 
 def _resolve_outflow_wse(cfg: Config, inflow_q: float) -> float:
-    """Downstream water-surface elevation: explicit, else from a rating curve."""
-    if cfg.hydrodynamics.prescribed_elevation is not None:
+    """Downstream water-surface elevation for a prescribed-elevation outflow.
+
+    ``stage_discharge`` (default) reads the rating curve and interpolates the WSE
+    at the simulated discharge; ``elevation`` uses the fixed prescribed value.
+    """
+    cond = cfg.hydrodynamics.outflow_condition
+    if cond == "elevation":
+        if cfg.hydrodynamics.prescribed_elevation is None:
+            raise ValueError(
+                "outflow_condition: elevation needs hydrodynamics.prescribed_elevation"
+            )
         return float(cfg.hydrodynamics.prescribed_elevation)
-    if cfg.inputs.stage_discharge is not None:
-        wse_at = hydraulics.read_stage_discharge(Path(cfg.inputs.stage_discharge))
-        return wse_at(inflow_q)
-    raise ValueError(
-        "No downstream water level available: set hydrodynamics.prescribed_elevation "
-        "or provide inputs.stage_discharge (a rating curve)."
-    )
+    # stage_discharge: look up the rating curve at the simulated Q
+    if cfg.inputs.stage_discharge is None:
+        raise ValueError(
+            "outflow_condition: stage_discharge needs inputs.stage_discharge (a Q-h "
+            "rating CSV). Generate one with `hydromate rating` from a Manning/"
+            "Strickler value and the channel geometry (normal-flow conditions)."
+        )
+    wse_at = hydraulics.read_stage_discharge(Path(cfg.inputs.stage_discharge))
+    return wse_at(inflow_q)

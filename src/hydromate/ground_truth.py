@@ -3,10 +3,10 @@
 Calibration ground truth comes in two halves that live in separate places and
 are joined here:
 
-* **positions** — a point layer (shapefile/GeoPackage) giving where each
+* **positions** - a point layer (shapefile/GeoPackage) giving where each
   measurement was taken, in *some* CRS (often not the project CRS); reprojected
   to the project CRS on ingest.
-* **values** — the measured quantities, in a source-specific export (e.g. a
+* **values** - the measured quantities, in a source-specific export (e.g. a
   SonTek FlowTracker2 ``.ft.sum`` workbook).
 
 Every source is normalised to the same **tidy** schema: the first three columns
@@ -113,7 +113,7 @@ def read_flowtracker_values(xlsx: Path) -> pd.DataFrame:
     """Read a SonTek FlowTracker2 ``.ft.sum`` workbook -> per-vertical values.
 
     Returns columns ``ID, u, v, w, u_err, v_err, w_err, h`` (one row per
-    measurement vertical). Coordinates are *not* here — they come from the
+    measurement vertical). Coordinates are *not* here - they come from the
     paired DGPS position layer (see :func:`read_flowtracker`).
     """
     raw = read_xlsx_sheet(Path(xlsx))

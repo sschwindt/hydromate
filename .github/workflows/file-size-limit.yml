@@ -1,0 +1,34 @@
+name: file-size-limit
+
+# Guard against accidentally pushing large files (DEMs, orthos, GeoPackages, the
+# produced TELEMAC cases). The co-development data under cases/*/user-sources/ and
+# the generated cases/*/case/ are gitignored, but this CI is the backstop: it
+# fails any push or pull request that carries a tracked file larger than 20 MB.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check-file-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject tracked files larger than 20 MB
+        run: |
+          limit=$((20 * 1024 * 1024))   # 20 MB
+          status=0
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            size=$(stat -c%s "$f")
+            if [ "$size" -gt "$limit" ]; then
+              printf '::error file=%s::%s is %d bytes (> 20 MB limit)\n' "$f" "$f" "$size"
+              status=1
+            fi
+          done < <(git ls-files)
+          if [ "$status" -ne 0 ]; then
+            echo "Large files must stay out of git (see .gitignore: cases/*/user-sources/, *.tif, *.gpkg, ...)."
+            exit 1
+          fi
+          echo "All tracked files are within the 20 MB limit."

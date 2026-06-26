@@ -67,7 +67,7 @@ The test suite builds a complete synthetic case (mesh, boundary, steering, frict
 Configure the TELEMAC link
 --------------------------
 
-In your case configuration (``config/inn.yml``), point ``telemac.pysource`` at the real environment script of your TELEMAC installation, for example:
+In your case configuration (``cases/example-Inn/case-config.yml``), point ``telemac.pysource`` at the real environment script of your TELEMAC installation, for example:
 
 .. code-block:: yaml
 

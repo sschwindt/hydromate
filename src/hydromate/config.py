@@ -1,6 +1,6 @@
 """User configuration framework for the TELEMAC setup pipeline.
 
-A single YAML file (see ``config/inn.yml``) describes the whole case: where the
+A single YAML file (see ``cases/example-Inn/case-config.yml``) describes the whole case: where the
 TELEMAC environment lives, the coordinate system, the input geodata/hydraulics,
 the meshing and friction strategy, and the calibration parameters handed to
 HydroBayesCal. This module loads that YAML into validated dataclasses.
@@ -148,15 +148,20 @@ class MeshConfig:
 
     Two strategies, chosen automatically:
 
-    * **Anisotropic, flow-aligned** (preferred) — when ``inputs.mesh_zones`` and
-      ``inputs.channel_centerline`` are given. ``channel``-named zones get
-      triangles elongated along the centerline (cross-channel edge
-      ``channel_size``, stretched by ``channel_anisotropy`` along the flow);
-      ``floodplain``-named zones get near-equilateral triangles of edge
-      ``floodplain_size``; the size grows between them at ``growth_ratio`` per
-      element. Implemented with a metric-tensor background mesh and gmsh's BAMG
-      algorithm.
-    * **Isotropic fallback** — ``default_size`` everywhere, refined to
+    * **Anisotropic, flow-aligned** (preferred) - when ``inputs.mesh_zones`` and
+      ``inputs.channel_centerline`` are given. Each mesh-zone polygon is classified
+      by its ``Zone Name`` (substring, case-insensitive) into one of three types and
+      sized by its own ``Max Edge Length (m)`` field (``zone_size_field``; the
+      ``*_size`` values below are only fallbacks when that field is absent/blank):
+      ``channel`` zones get triangles elongated along the centerline (cross-channel
+      edge = the zone's max edge length, stretched by ``channel_anisotropy`` along
+      the flow); ``floodplain`` zones get near-equilateral triangles of the zone's
+      edge length; ``refinement`` zones get near-equilateral triangles at their
+      (typically smaller) edge length for **local refinement**. The size grows
+      between zones at ``growth_ratio`` per element. Where zones overlap the finest
+      intent wins (refinement > channel > floodplain). Implemented with a
+      metric-tensor background mesh and gmsh's BAMG algorithm.
+    * **Isotropic fallback** - ``default_size`` everywhere, refined to
       ``breakline_size`` along breaklines and per-MATID via ``region_sizes``.
 
     ``region_sizes`` maps a MATID (as int) to a target maximum element edge
@@ -165,12 +170,22 @@ class MeshConfig:
     """
 
     # anisotropic, flow-aligned strategy (channel/floodplain zones + centerline)
-    channel_size: float = 0.5           # cross-channel target edge length (m)
-    floodplain_size: float = 1.5        # floodplain target edge length (m)
+    channel_size: float = 0.5           # channel edge length (m); fallback if not in the gpkg
+    floodplain_size: float = 1.5        # floodplain edge length (m); also the default outside zones
+    refinement_size: float = 0.5        # 'refinement' zone edge length (m); fallback if not in the gpkg
     growth_ratio: float = 1.2           # max edge-size growth per element (channel->floodplain)
     channel_anisotropy: float = 4.0     # along-flow / cross-flow edge ratio in the channel
+    max_aspect_ratio: float = 4.0       # hard cap on cell aspect ratio (gmsh Mesh.AnisoMax)
     zone_name_field: str = "Zone Name"  # attribute in mesh_zones naming each zone
+    # per-polygon max edge length [m] in mesh_zones (overrides the *_size defaults
+    # above); read with a decimal-comma-tolerant parser so a German-locale gpkg works
+    zone_size_field: str = "Max Edge Length (m)"
     roughness_zone_field: str = "Zone ID"  # integer-id attribute in roughness_zones
+
+    # quality-report thresholds (warnings only; channel anisotropy is exempt)
+    min_angle_deg: float = 30.0         # warn if floodplain cells dip below this
+    max_angle_deg: float = 90.0         # warn on obtuse floodplain cells above this
+    max_area_jump: float = 0.20         # warn on adjacent-cell area jumps over this (20%)
 
     # isotropic fallback strategy
     default_size: float = 10.0          # background target edge length (m)
@@ -195,6 +210,13 @@ class FrictionZone:
 class Friction:
     default_law: int = 4               # Manning
     default_coefficient: float = 0.03
+    # law for the .tbl rows derived from inputs.roughness_zones + roughness_table
+    # (5 = NIKU, Nikuradse k_s in metres - matching the ks roughness values)
+    roughness_law: int = 5
+    # lateral (wall) boundary friction -> TELEMAC LAW OF FRICTION ON LATERAL
+    # BOUNDARIES / ROUGHNESS COEFFICIENT OF BOUNDARIES (3 = Strickler, 4 = Manning)
+    boundary_law: int = 4
+    boundary_coefficient: float = 0.03
     zones: list[FrictionZone] = field(default_factory=list)
 
     @classmethod
@@ -203,6 +225,9 @@ class Friction:
         return cls(
             default_law=d.get("default_law", 4),
             default_coefficient=d.get("default_coefficient", 0.03),
+            roughness_law=d.get("roughness_law", 5),
+            boundary_law=d.get("boundary_law", 4),
+            boundary_coefficient=d.get("boundary_coefficient", 0.03),
             zones=zones,
         )
 
@@ -216,16 +241,48 @@ class Hydrodynamics:
     n_time_steps: int = 15000
     graphic_printout_period: int = 500
     listing_printout_period: int = 500
-    turbulence_model: int = 3          # 3 = k-epsilon
+    # let TELEMAC adapt the time step to the CFL condition (DESIRED COURANT NUMBER):
+    # a fixed time_step on a fine channel mesh (sub-metre cells) is a CFL violation
+    # that diverges; with this on, time_step is only the initial/maximum step.
+    variable_timestep: bool = True
+    desired_courant: float = 0.9
+    # discretisation: finite volumes (default) are robust for transcritical, wetting/
+    # drying flow on steep terrain; finite_volume_scheme 5 = HLLC Riemann solver,
+    # fv_space_order 2 = 2nd-order (MUSCL). Set finite_volumes=False for the classic
+    # finite-element kernel (then the solver/* and tidal-flats keywords below apply).
+    finite_volumes: bool = True
+    finite_volume_scheme: int = 5      # 0 Roe, 1 kinetic, 3 Zokagoa, 4 Tchamen, 5 HLLC, 6 WAF
+    fv_space_order: int = 2
+    free_surface_gradient_compat: float = 0.1   # damps free-surface wiggles (FE; default 1.0)
+    # finite-element linear solver: 2 = preconditioned CG (robust where plain CG,
+    # solver 1, stalls); preconditioning 2 = diagonal; solver_accuracy = tolerance.
+    solver: int = 2
+    preconditioning: int = 2
+    solver_accuracy: float = 1.0e-5
+    # turbulence closure. NOTE: finite volumes accept ONLY model 1 (constant
+    # viscosity); k-epsilon (3) and Spalart-Allmaras (6) require finite_volumes=False.
+    turbulence_model: int = 1          # 1 const-visc, 3 k-epsilon, 6 Spalart-Allmaras
+    velocity_diffusivity: float | None = None   # constant eddy viscosity [m2/s] for model 1
+    # downstream (outflow) boundary type:
+    #   "stage_discharge" -> prescribed water level (cli 5 4 4) read from the
+    #                        inputs.stage_discharge rating curve at the simulated
+    #                        Q (the default; one Q-h pair suffices for steady runs)
+    #   "elevation"       -> prescribed water level (cli 5 4 4) from prescribed_elevation
+    #   "free"            -> Neumann / free outflow (cli 4 4 4), nothing prescribed
+    outflow_condition: str = "stage_discharge"
     prescribed_flowrate: float | None = None   # upstream Q (m3/s); else from inflow
-    prescribed_elevation: float | None = None  # downstream WSE (m); else from stage_discharge
+    prescribed_elevation: float | None = None  # downstream WSE (m); only for outflow_condition=elevation
     initial_conditions: str = "ZERO DEPTH"
+    # pre-wetting: when set, write a warm-start SELAFIN seeding this water depth
+    # (m) on the channel mesh-zone nodes (dry elsewhere) and continue the run from
+    # it, so wetting need not advance from a dry bed (speeds up steady runs)
+    prewet_depth: float | None = None
     extra_keywords: dict[str, Any] = field(default_factory=dict)  # raw .cas overrides
 
 
 @dataclass
 class Morphodynamics:
-    """GAIA morphodynamic block — extension point, off by default in v1."""
+    """GAIA morphodynamic block - extension point, off by default in v1."""
 
     enabled: bool = False
     gaia_results_base: str = "rgaia"
@@ -280,9 +337,11 @@ class Config:
     name: str
     crs_epsg: int
     config_dir: Path
-    work_dir: Path
-    model_dir: Path
-    results_dir: Path
+    # all produced artifacts live under tm-simulation/, split by workflow phase
+    preprocessing_dir: Path   # preprocessing.py products (DEM clips, meshes, ground truth)
+    model_dir: Path           # the TELEMAC case (build): geometry/cli/cas/tbl + results
+    postprocessing_dir: Path  # mesh-convergence study and other post-processing
+    calibration_dir: Path     # HydroBayesCal artifacts (calibration CSV, config_Telemac.py)
     telemac: TelemacEnv
     inputs: Inputs
     mesh: MeshConfig
@@ -295,27 +354,60 @@ class Config:
     geometry_slf: str = "geometry.slf"
     boundary_cli: str = "boundaries.cli"
     cas_file: str = "steady2d.cas"
+    ic_slf: str = "initial-conditions.slf"   # warm-start file when prewet_depth is set
     friction_tbl: str = "friction.tbl"
     zones_file: str = "zones.bfr"
     gaia_cas: str = "gaia.cas"
     results_slf: str = "r2d.slf"
-    ground_truth_xlsx: str = "ground-truth.xlsx"  # compiled tidy table (in work_dir)
+    ground_truth_xlsx: str = "ground-truth.xlsx"  # compiled tidy table (in preprocessing_dir)
     calibration_csv: str = "measurements-calibration.csv"
     hbc_config: str = "config_Telemac.py"
+    # per-phase compound logfile name; each script logs into its own output folder
+    log_file: str = "hydromate.log"
 
-    def work_path(self, filename: str) -> Path:
-        return Path(self.work_dir) / filename
+    def preprocessing_path(self, filename: str) -> Path:
+        return Path(self.preprocessing_dir) / filename
+
+    def model_path(self, filename: str) -> Path:
+        return Path(self.model_dir) / filename
+
+    def postprocessing_path(self, filename: str) -> Path:
+        return Path(self.postprocessing_dir) / filename
+
+    def calibration_path(self, filename: str) -> Path:
+        return Path(self.calibration_dir) / filename
 
     @property
     def ground_truth_path(self) -> Path:
         """Where the tidy ground-truth table lives (explicit input, else compiled)."""
         if self.inputs.measurements is not None:
             return Path(self.inputs.measurements)
-        return self.work_path(self.ground_truth_xlsx)
+        return self.preprocessing_path(self.ground_truth_xlsx)
 
     def validate(self) -> None:
         self.telemac.validate()
         self.inputs.validate()
+        cond = self.hydrodynamics.outflow_condition
+        if cond not in ("stage_discharge", "elevation", "free"):
+            raise ValueError(
+                "hydrodynamics.outflow_condition must be 'stage_discharge', "
+                f"'elevation', or 'free', got {cond!r}"
+            )
+        if cond == "stage_discharge" and self.inputs.stage_discharge is None:
+            raise ValueError(
+                "outflow_condition: stage_discharge requires inputs.stage_discharge "
+                "(a Q-h rating CSV alongside the config). Generate one from a "
+                "Manning/Strickler value and channel geometry with `hydromate rating`."
+            )
+        if cond == "elevation" and self.hydrodynamics.prescribed_elevation is None:
+            raise ValueError(
+                "outflow_condition: elevation requires hydrodynamics.prescribed_elevation"
+            )
+        if self.hydrodynamics.prewet_depth is not None and self.inputs.mesh_zones is None:
+            raise ValueError(
+                "hydrodynamics.prewet_depth needs inputs.mesh_zones (with a "
+                "'*channel*' Zone Name) to define the region to pre-wet."
+            )
         if self.morphodynamics.enabled and self.inputs.dem_target is None \
                 and self.inputs.dem_of_difference is None:
             raise ValueError(
@@ -324,12 +416,9 @@ class Config:
             )
 
     def ensure_dirs(self) -> None:
-        for d in (self.work_dir, self.model_dir, self.results_dir):
+        for d in (self.preprocessing_dir, self.model_dir,
+                  self.postprocessing_dir, self.calibration_dir):
             Path(d).mkdir(parents=True, exist_ok=True)
-
-    # convenience absolute paths ---------------------------------------------
-    def model_path(self, filename: str) -> Path:
-        return Path(self.model_dir) / filename
 
 
 def load_config(path: str | os.PathLike) -> Config:
@@ -340,9 +429,17 @@ def load_config(path: str | os.PathLike) -> Config:
         raw = yaml.safe_load(fh) or {}
 
     project = raw.get("project", {})
-    work_dir = _resolve(cfg_dir, project.get("work_dir", "case")) or (cfg_dir / "case")
-    model_dir = _resolve(cfg_dir, project.get("model_dir")) or (work_dir / "simulation")
-    results_dir = _resolve(cfg_dir, project.get("results_dir")) or (work_dir / "results")
+    sim_dir = project.get("sim_dir", "tm-simulation")
+    # per-phase output dirs under tm-simulation/ (older work_dir/results_dir accepted)
+    preprocessing_dir = _resolve(
+        cfg_dir, project.get("preprocessing_dir") or project.get("work_dir")
+        or f"{sim_dir}/preprocessing")
+    model_dir = _resolve(cfg_dir, project.get("model_dir") or f"{sim_dir}/simulation")
+    postprocessing_dir = _resolve(
+        cfg_dir, project.get("postprocessing_dir") or f"{sim_dir}/postprocessing")
+    calibration_dir = _resolve(
+        cfg_dir, project.get("calibration_dir") or project.get("results_dir")
+        or f"{sim_dir}/calibration-validation")
 
     # telemac env
     tdict = dict(raw.get("telemac", {}))
@@ -375,9 +472,10 @@ def load_config(path: str | os.PathLike) -> Config:
         name=project.get("name", path.stem),
         crs_epsg=int(project.get("crs_epsg", 25832)),
         config_dir=cfg_dir,
-        work_dir=work_dir,
+        preprocessing_dir=preprocessing_dir,
         model_dir=model_dir,
-        results_dir=results_dir,
+        postprocessing_dir=postprocessing_dir,
+        calibration_dir=calibration_dir,
         telemac=telemac,
         inputs=inputs,
         mesh=mesh,

@@ -26,4 +26,4 @@ Numerical model results can be sensitive to choices made during setup. Generated
 Third-party software
 --------------------
 
-``hydromate`` orchestrates and depends on independent third-party software — including TELEMAC, GAIA, gmsh, GDAL and HydroBayesCal — each distributed under its own license and terms. Installing and using those tools is subject to their respective licenses.
+``hydromate`` orchestrates and depends on independent third-party software - including TELEMAC, GAIA, gmsh, GDAL and HydroBayesCal - each distributed under its own license and terms. Installing and using those tools is subject to their respective licenses.

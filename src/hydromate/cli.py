@@ -2,10 +2,13 @@
 
 Two forms:
 
-* ``hydromate <config.yml> [--check|--dry-run]`` — build a full TELEMAC case
+* ``hydromate <config.yml> [--check|--dry-run]`` - build a full TELEMAC case
   (default; the configuration path is positional).
-* ``hydromate clip <raster> -b <boundary> -o <out>`` — clip a single raster to a
+* ``hydromate clip <raster> -b <boundary> -o <out>`` - clip a single raster to a
   region-of-interest polygon, without needing a full configuration.
+* ``hydromate rating -o <out.csv> --manning <n>|--strickler <Kst> --slope <S0>
+  --width <b> [--side-slope <m>] [--bed-elevation <z>] --q <Q...>`` - synthesise a
+  normal-flow outflow stage-discharge curve to use as ``inputs.stage_discharge``.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from pathlib import Path
 
 from hydromate import __version__, pipeline
 from hydromate.config import load_config
+from hydromate.logsetup import setup_logging
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -58,16 +62,61 @@ def _clip_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _rating_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="hydromate rating",
+        description="Generate a normal-flow (uniform Manning/Strickler) outflow "
+                    "stage-discharge curve for a prismatic trapezoidal channel and "
+                    "write it as a Q,WSE,depth CSV to use as inputs.stage_discharge.",
+    )
+    p.add_argument("-o", "--out", type=Path, required=True, help="output CSV path")
+    rough = p.add_mutually_exclusive_group(required=True)
+    rough.add_argument("--manning", type=float, help="Manning's n (e.g. 0.03)")
+    rough.add_argument("--strickler", type=float, help="Strickler Kst = 1/n (e.g. 33)")
+    p.add_argument("--slope", type=float, required=True,
+                   help="longitudinal bed slope S0 (m/m, > 0)")
+    p.add_argument("--width", type=float, required=True,
+                   help="channel bottom width b (m)")
+    p.add_argument("--side-slope", type=float, default=0.0,
+                   help="bank side slope m = horizontal:vertical (0 = rectangular)")
+    p.add_argument("--bed-elevation", type=float, default=0.0,
+                   help="outflow bed elevation z (m a.s.l.); WSE = z + normal depth")
+    p.add_argument("--q", type=float, nargs="+", required=True,
+                   help="discharge(s) m3/s; one (the steady Q) is enough for a steady run")
+    p.add_argument("-v", "--verbose", action="store_true")
+    return p
+
+
+def _run_rating(argv: list[str]) -> int:
+    args = _rating_parser().parse_args(argv)
+    setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
+    log = logging.getLogger("hydromate")
+    from hydromate.rating import generate_stage_discharge
+
+    try:
+        out = generate_stage_discharge(
+            args.out, args.q, manning=args.manning, strickler=args.strickler,
+            slope=args.slope, bottom_width=args.width, side_slope=args.side_slope,
+            bed_elevation=args.bed_elevation,
+        )
+    except Exception as exc:
+        log.error("%s: %s", type(exc).__name__, exc)
+        if args.verbose:
+            raise
+        return 1
+    log.info("wrote stage-discharge rating -> %s", out)
+    return 0
+
+
 def _run_build(argv: list[str] | None) -> int:
     args = _build_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(levelname)s %(message)s",
-    )
+    level = logging.DEBUG if args.verbose else logging.INFO
+    setup_logging(level=level)            # console now; compound logfile once config loads
     log = logging.getLogger("hydromate")
 
     try:
         cfg = load_config(args.config)
+        setup_logging(cfg.model_path(cfg.log_file), level=level)  # -> <model_dir>/hydromate.log
         if args.check:
             cfg.validate()
             log.info("config OK: case '%s', model_dir=%s", cfg.name, cfg.model_dir)
@@ -82,8 +131,8 @@ def _run_build(argv: list[str] | None) -> int:
         return 1
 
     log.info("done. Produced case in %s", cfg.model_dir)
-    for name in ("geometry_slf", "boundary_cli", "friction_tbl", "cas_file",
-                 "gaia_cas", "ground_truth", "calibration_csv", "hbc_config"):
+    for name in ("geometry_slf", "boundary_cli", "friction_tbl", "initial_conditions",
+                 "cas_file", "gaia_cas", "ground_truth", "calibration_csv", "hbc_config"):
         value = getattr(art, name)
         if value:
             log.info("  %-16s %s", name, value)
@@ -94,10 +143,7 @@ def _run_build(argv: list[str] | None) -> int:
 
 def _run_clip(argv: list[str]) -> int:
     args = _clip_parser().parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(levelname)s %(message)s",
-    )
+    setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
     log = logging.getLogger("hydromate")
     from hydromate.dem import clip_to_roi
 
@@ -119,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "clip":
         return _run_clip(argv[1:])
+    if argv and argv[0] == "rating":
+        return _run_rating(argv[1:])
     return _run_build(argv)
 
 

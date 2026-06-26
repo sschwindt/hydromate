@@ -87,9 +87,7 @@ def _write_fixtures(d: Path) -> Path:
 project:
   name: inn-test
   crs_epsg: 25832
-  work_dir: case
-  model_dir: case/sim
-  results_dir: case/res
+  sim_dir: tm-simulation
 telemac:
   pysource: {geo / "boundary.shp"}   # not sourced in this test (validate_env=False)
   solver: telemac2d
@@ -114,6 +112,7 @@ friction:
 hydrodynamics:
   regime: steady
   n_time_steps: 200
+  outflow_condition: elevation
   prescribed_elevation: 379.5
 calibration:
   calibration_quantities: ["WATER DEPTH"]
@@ -145,6 +144,10 @@ def run_pipeline_test(tmp: Path) -> None:
 
     cas = Path(art.cas_file).read_text()
     assert "PRESCRIBED FLOWRATES" in cas and "FRICTION DATA FILE" in cas
+    # SCALAR VELOCITY ('M') is output so HydroBayesCal can read it from the results
+    printouts = next(line for line in cas.splitlines()
+                     if line.startswith("VARIABLES FOR GRAPHIC PRINTOUTS"))
+    assert "M" in [c.strip() for c in printouts.split("'")[1].split(",")]
 
     import pandas as pd
     csv = pd.read_csv(art.calibration_csv)
@@ -156,6 +159,9 @@ def run_pipeline_test(tmp: Path) -> None:
 
     hbc = Path(art.hbc_config).read_text()
     assert "'parameters': ['zone1', 'zone5']" in hbc
+    # bal_telemac.py reads config.morphodynamic_simulation['gaia_cas'] unconditionally,
+    # so the block must always exist (None values when morphodynamics is off).
+    assert "morphodynamic_simulation = {" in hbc and "'gaia_cas': None" in hbc
     print("INTEGRATION TEST PASSED")
     print(f"  geometry: {art.geometry_slf}")
     print(f"  boundary nodes coded inflow/outflow present in {art.boundary_cli.name}")

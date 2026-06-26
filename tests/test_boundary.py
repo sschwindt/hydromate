@@ -1,0 +1,142 @@
+"""Liquid-boundary classification, outflow type, and node-balance warning.
+
+Builds a rectangular contour mesh plus an ``inputs.liquid_boundaries`` line layer
+with a ``Type (inflow/outflow)`` field (left edge = inflow, right edge =
+outflow), then checks:
+
+* the type column is detected and lines tagged inflow/outflow (regression: the
+  literal ``Type (inflow/outflow)`` header must not fall back to "all inflow");
+* every non-liquid contour node is a solid wall (``2 2 2``);
+* the default outflow is free / Neumann (``4 4 4``); ``outflow_condition:
+  elevation`` switches it to ``5 4 4``;
+* a >10% inflow/outflow node-count imbalance logs a STABILITY RISK warning.
+
+Requires the ``hydromate-env`` environment (geopandas). No TELEMAC needed.
+
+Run directly:  mamba run -n hydromate-env python tests/test_boundary.py
+Or via pytest: mamba run -n hydromate-env pytest tests/test_boundary.py
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import numpy as np
+
+X0, Y0, W, H = 700000.0, 5340000.0, 200.0, 60.0
+
+
+def _rect_mesh(n_left: int, n_right: int, n_horiz: int = 9):
+    """Rectangular contour: *n_left* inflow nodes on the left edge, *n_right*
+    outflow nodes on the right edge, walls top/bottom. Returns a Mesh whose
+    boundary_nodes are ordered around the loop."""
+    from hydromate.mesh import Mesh
+
+    bottom = [(x, Y0) for x in np.linspace(X0, X0 + W, n_horiz)[1:-1]]
+    right = [(X0 + W, y) for y in np.linspace(Y0, Y0 + H, n_right)]
+    top = [(x, Y0 + H) for x in np.linspace(X0 + W, X0, n_horiz)[1:-1]]
+    left = [(X0, y) for y in np.linspace(Y0 + H, Y0, n_left)]
+    ring = bottom + right + top + left            # loop order
+    xy = np.array(ring)
+    npoin = len(ring)
+    return Mesh(
+        x=xy[:, 0], y=xy[:, 1],
+        triangles=np.array([[0, 1, 2]]),          # unused by classification
+        bottom=np.zeros(npoin), ipobo=np.arange(1, npoin + 1),
+        boundary_nodes=np.arange(npoin),
+        element_matid=np.ones(1, dtype=int), node_matid=np.ones(npoin, dtype=int),
+    )
+
+
+def _write_cfg(d: Path, outflow_condition: str = "free") -> Path:
+    import geopandas as gpd
+    from shapely.geometry import LineString
+
+    geo = d / "geo"
+    geo.mkdir(parents=True, exist_ok=True)
+    inflow = LineString([(X0, Y0), (X0, Y0 + H)])           # left edge
+    outflow = LineString([(X0 + W, Y0), (X0 + W, Y0 + H)])  # right edge
+    gpd.GeoDataFrame(
+        {"Type (inflow/outflow)": ["inflow", "outflow"]},
+        geometry=[inflow, outflow], crs="EPSG:25832",
+    ).to_file(geo / "liquid-boundaries.gpkg", driver="GPKG")
+
+    cfg_yaml = d / f"bnd-{outflow_condition}.yml"
+    cfg_yaml.write_text(f"""
+project:
+  name: bnd-test
+  crs_epsg: 25832
+telemac:
+  pysource: {geo / "liquid-boundaries.gpkg"}   # not sourced here
+inputs:
+  dem_initial: geo/dem.tif            # dummy (existence not checked here)
+  boundary: geo/boundary.shp
+  liquid_boundaries: geo/liquid-boundaries.gpkg
+  inflow: geo/inflow.csv
+hydrodynamics:
+  outflow_condition: {outflow_condition}
+""")
+    return cfg_yaml
+
+
+def run_boundary_test(tmp: Path) -> None:
+    from hydromate import boundary
+    from hydromate.config import load_config
+
+    cfg = load_config(_write_cfg(tmp, "free"))
+    cfg.ensure_dirs()
+
+    # balanced contour (7 inflow / 7 outflow nodes) -> classification
+    mesh = _rect_mesh(n_left=7, n_right=7)
+    kinds, liquids = boundary.classify_nodes(cfg, mesh)
+
+    assert kinds.count("inflow") == 7, f"inflow nodes: {kinds.count('inflow')}"
+    assert kinds.count("outflow") == 7, f"outflow nodes: {kinds.count('outflow')}"
+    assert kinds.count("wall") == 14, f"wall nodes: {kinds.count('wall')}"  # 7 top + 7 bottom
+    assert {lb.kind for lb in liquids} == {"inflow", "outflow"}
+
+    # default outflow is free / Neumann -> 4 4 4
+    cli_path, _ = boundary.write_cli(cfg, mesh)
+    cli = Path(cli_path).read_text()
+    assert "5 5 5" in cli, "no inflow nodes coded 5 5 5"
+    assert "4 4 4" in cli, "free outflow not coded 4 4 4"
+    assert "5 4 4" not in cli, "free outflow should not prescribe elevation (5 4 4)"
+
+    # opt-in prescribed-elevation outflow -> 5 4 4
+    cfg_elev = load_config(_write_cfg(tmp / "elev", "elevation"))
+    cfg_elev.ensure_dirs()
+    cli_elev = Path(boundary.write_cli(cfg_elev, mesh)[0]).read_text()
+    assert "5 4 4" in cli_elev and "4 4 4" not in cli_elev
+
+    print("BOUNDARY TEST PASSED (classification + outflow codes)")
+
+
+def test_classification(tmp_path):
+    run_boundary_test(tmp_path)
+
+
+def test_node_balance_warning(tmp_path, caplog):
+    from hydromate import boundary
+    from hydromate.config import load_config
+
+    cfg = load_config(_write_cfg(tmp_path, "free"))
+
+    # balanced: no stability warning
+    with caplog.at_level(logging.WARNING, logger="hydromate"):
+        boundary.classify_nodes(cfg, _rect_mesh(n_left=8, n_right=8))
+    assert "STABILITY RISK" not in caplog.text
+
+    # imbalanced (>10%): 9 inflow vs 5 outflow -> warning
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="hydromate"):
+        boundary.classify_nodes(cfg, _rect_mesh(n_left=9, n_right=5))
+    assert "STABILITY RISK" in caplog.text, "expected a node-imbalance warning"
+    print("NODE-BALANCE WARNING TEST PASSED")
+
+
+if __name__ == "__main__":
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp())
+    run_boundary_test(tmp)

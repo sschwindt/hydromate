@@ -1,4 +1,4 @@
-"""Stage 1 — DEM ingest, reprojection and clipping to the region of interest.
+"""Stage 1 - DEM ingest, reprojection and clipping to the region of interest.
 
 Takes the user's initial (and optional target) DEM, reprojects to the project
 CRS if needed, and clips it to the ROI boundary polygon. The clipped initial DEM
@@ -170,7 +170,7 @@ def clip_dem(cfg: Config, dem_path: Path, out_name: str) -> ClippedDEM:
 
     cfg.ensure_dirs()
     out_path = clip_to_roi(
-        dem_path, cfg.inputs.boundary, Path(cfg.work_dir) / out_name,
+        dem_path, cfg.inputs.boundary, Path(cfg.preprocessing_dir) / out_name,
         target_epsg=cfg.crs_epsg,
     )
     with rasterio.open(out_path) as src:
@@ -196,7 +196,7 @@ def dem_of_difference(cfg: Config, initial: ClippedDEM, target: ClippedDEM) -> P
             )
     tgt_m = np.ma.masked_equal(tgt, ref.nodata)
     diff = (tgt_m - ref_data).filled(meta["nodata"])
-    out_path = Path(cfg.work_dir) / "dem-of-difference.tif"
+    out_path = Path(cfg.preprocessing_dir) / "dem-of-difference.tif"
     meta.update(dtype="float32", count=1)
     with rasterio.open(out_path, "w", **meta) as dst:
         dst.write(diff.astype("float32"), 1)

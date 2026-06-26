@@ -1,24 +1,44 @@
-# --- Co-development data / example dataset (NOT part of the package) --------
-# Real Inn data we develop against; lives here for co-development only.
-# (Previously /geodata/, /stage-discharge/ and /geoVis.qgz at the repo root;
-#  now consolidated under example-Inn/.)
-# Ignore everything under example-Inn/ EXCEPT the top-level example scripts/docs.
-/example-Inn/*
-!/example-Inn/*.py
-!/example-Inn/*.md
+# --- Worked-example cases (data + produced artifacts; NOT in the package) --
+# Each case lives under cases/<name>/ and keeps ONLY its case-config.yml, the
+# example scripts (*.py) and docs (*.md) in version control. The large source
+# data go in cases/<name>/user-sources/ and the produced artifacts in
+# cases/<name>/tm-simulation/ (preprocessing/ simulation/ postprocessing/
+# calibration-validation/) - both kept out of git (well over the 20 MB push limit).
+# ignore all case user-sources contents (real data), but keep the template's
+# README that documents the expected data layout.
+/cases/*/user-sources/**
+!/cases/case-template/user-sources/README.md
+/cases/*/tm-simulation/
 /projection.info
 
 # --- Build outputs / generated TELEMAC cases -------------------------------
+tm-simulation/
 case/
 *.slf
+*.log
 
-# --- Heavy / geospatial data (safety net, >20 MB and binary GIS) -----------
+# --- Heavy / geospatial / tabular data (safety net for the 20 MB limit) -----
+# Belt-and-suspenders so large binaries never get committed even outside the
+# case folders above. The CI workflow (.github/workflows/file-size-limit.yml)
+# additionally fails any push/PR carrying a tracked file larger than 20 MB.
 *.tif
 *.tiff
 *.tfw
 *.gpkg
 *.gpkg-shm
 *.gpkg-wal
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.sbn
+*.sbx
+*.qgz
+*.qgs
+*.xlsx
+*.las
+*.laz
 
 # --- Python ----------------------------------------------------------------
 __pycache__/

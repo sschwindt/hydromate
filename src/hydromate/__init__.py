@@ -1,4 +1,4 @@
-"""hydromate — automated setup of calibration-ready TELEMAC + GAIA cases.
+"""hydromate - automated setup of calibration-ready TELEMAC + GAIA cases.
 
 The package turns user-provided geodata and hydraulic data (DEM, ROI boundary,
 inflow/outflow, measurements) into a production-ready TELEMAC-2D (optionally
@@ -22,10 +22,22 @@ from hydromate.config import Config, load_config
 from hydromate.dem import clip_dem_to_roi, clip_to_roi
 from hydromate.ground_truth import compile_ground_truth, read_tidy
 from hydromate.mesh import (
-    build_mesh, interpolate_elevations, interpolate_roughness, write_mesh,
+    build_mesh, channel_node_mask, interpolate_elevations, interpolate_roughness,
+    write_mesh,
 )
+from hydromate.mesh_quality import assess_quality
+from hydromate.rating import (
+    generate_stage_discharge, normal_depth, synthesize_outflow_rating,
+)
+from hydromate.convergence import percent_levels, run_mesh_convergence
+from hydromate.flux_convergence import analyze_flux_convergence, FluxConvergence
+from hydromate.logsetup import setup_logging, log_step, logging_to
 
 __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "compile_ground_truth", "read_tidy",
-           "build_mesh", "interpolate_elevations", "interpolate_roughness",
-           "write_mesh", "__version__"]
+           "build_mesh", "channel_node_mask", "interpolate_elevations",
+           "interpolate_roughness", "write_mesh", "assess_quality",
+           "generate_stage_discharge", "normal_depth", "synthesize_outflow_rating",
+           "run_mesh_convergence", "percent_levels",
+           "analyze_flux_convergence", "FluxConvergence",
+           "setup_logging", "log_step", "logging_to", "__version__"]

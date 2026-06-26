@@ -3,7 +3,7 @@
 # This environment runs the *case-building* pipeline (DEM clipping, gmsh meshing,
 # SELAFIN/CLI/CAS/TBL generation, calibration CSV + hydrobayescal config emit).
 # The actual TELEMAC solver is invoked by *sourcing* the TELEMAC pysource shell
-# script defined in the user config (see config/inn.yml -> telemac.pysource), so
+# script defined in the user config (see cases/example-Inn/case-config.yml -> telemac.pysource), so
 # this env only needs the geospatial/meshing stack, not TELEMAC's Python.
 #
 # Create with:
