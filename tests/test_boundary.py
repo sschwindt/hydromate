@@ -27,10 +27,14 @@ import numpy as np
 X0, Y0, W, H = 700000.0, 5340000.0, 200.0, 60.0
 
 
-def _rect_mesh(n_left: int, n_right: int, n_horiz: int = 9):
+def _rect_mesh(n_left: int, n_right: int, n_horiz: int = 9, roll: int = 0):
     """Rectangular contour: *n_left* inflow nodes on the left edge, *n_right*
     outflow nodes on the right edge, walls top/bottom. Returns a Mesh whose
-    boundary_nodes are ordered around the loop."""
+    boundary_nodes are ordered around the loop.
+
+    *roll* rotates the loop start by that many nodes, so a single liquid edge can
+    be made to straddle the loop start (boundary_nodes index 0) - the wrap-around
+    that used to split one boundary into two."""
     from hydromate.mesh import Mesh
 
     bottom = [(x, Y0) for x in np.linspace(X0, X0 + W, n_horiz)[1:-1]]
@@ -38,6 +42,8 @@ def _rect_mesh(n_left: int, n_right: int, n_horiz: int = 9):
     top = [(x, Y0 + H) for x in np.linspace(X0 + W, X0, n_horiz)[1:-1]]
     left = [(X0, y) for y in np.linspace(Y0 + H, Y0, n_left)]
     ring = bottom + right + top + left            # loop order
+    if roll:
+        ring = ring[roll:] + ring[:roll]
     xy = np.array(ring)
     npoin = len(ring)
     return Mesh(
@@ -46,6 +52,7 @@ def _rect_mesh(n_left: int, n_right: int, n_horiz: int = 9):
         bottom=np.zeros(npoin), ipobo=np.arange(1, npoin + 1),
         boundary_nodes=np.arange(npoin),
         element_matid=np.ones(1, dtype=int), node_matid=np.ones(npoin, dtype=int),
+        boundary_loops=np.array([npoin]),
     )
 
 
@@ -99,7 +106,7 @@ def run_boundary_test(tmp: Path) -> None:
     # default outflow is free / Neumann -> 4 4 4
     cli_path, _ = boundary.write_cli(cfg, mesh)
     cli = Path(cli_path).read_text()
-    assert "5 5 5" in cli, "no inflow nodes coded 5 5 5"
+    assert "4 5 5" in cli, "no inflow nodes coded 4 5 5"
     assert "4 4 4" in cli, "free outflow not coded 4 4 4"
     assert "5 4 4" not in cli, "free outflow should not prescribe elevation (5 4 4)"
 
@@ -114,6 +121,34 @@ def run_boundary_test(tmp: Path) -> None:
 
 def test_classification(tmp_path):
     run_boundary_test(tmp_path)
+
+
+def test_wraparound_not_split(tmp_path):
+    """A liquid edge straddling the loop start is ONE boundary, not two.
+
+    Regression for the case where the inflow run wrapped boundary_nodes index 0
+    and was emitted as two liquid boundaries (PRESCRIBED FLOWRATES with a spurious
+    third value), so TELEMAC - which numbers cyclically (FRONT2) - saw a different
+    count and no inflow established."""
+    from hydromate import boundary
+    from hydromate.config import load_config
+
+    cfg = load_config(_write_cfg(tmp_path, "free"))
+    cfg.ensure_dirs()
+
+    # roll the loop so the start falls in the middle of the (inflow) left edge
+    mesh = _rect_mesh(n_left=8, n_right=7, roll=-4)
+    kinds, liquids = boundary.classify_nodes(cfg, mesh)
+
+    assert kinds.count("inflow") == 8 and kinds.count("outflow") == 7
+    kinds_seen = sorted(lb.kind for lb in liquids)
+    assert kinds_seen == ["inflow", "outflow"], f"expected 2 boundaries, got {liquids}"
+    assert sum(lb.n_nodes for lb in liquids if lb.kind == "inflow") == 8
+    # numbering is FRONT2 (SW-most start, domain-on-left): the SW corner sits on
+    # the inflow (left) edge, so the inflow boundary is encountered first
+    by_index = {lb.index: lb.kind for lb in liquids}
+    assert by_index == {1: "inflow", 2: "outflow"}, by_index
+    print("WRAP-AROUND TEST PASSED (single boundary, FRONT2 order)")
 
 
 def test_node_balance_warning(tmp_path, caplog):

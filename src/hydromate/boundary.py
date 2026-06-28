@@ -4,7 +4,7 @@ Classifies each contour node (in IPOBO order) against the user's liquid-boundary
 lines and writes the TELEMAC boundary-conditions file. Codes:
 
 * solid wall                       -> ``2 2 2``  (every non-liquid outer bound)
-* inflow  (prescribed flowrate)    -> ``5 5 5``
+* inflow  (prescribed flowrate)    -> ``4 5 5``  (depth free, velocity from Q)
 * outflow, prescribed elevation    -> ``5 4 4``  (``outflow_condition: stage_discharge``
                                                   [default] or ``elevation``)
 * outflow, free / Neumann          -> ``4 4 4``  (``outflow_condition: free``)
@@ -13,8 +13,11 @@ The liquid-boundary lines come from ``inputs.liquid_boundaries`` (a line layer
 whose ``Type (inflow/outflow)`` field tags each line ``inflow`` or ``outflow``;
 there may be several of each). They **must coincide with the outer bounds of the
 mesh zones** so that contour nodes fall on them. Liquid boundaries are numbered
-by first appearance along the contour, matching the order TELEMAC expects for
-PRESCRIBED FLOWRATES / PRESCRIBED ELEVATIONS.
+exactly the way TELEMAC's ``FRONT2`` does - per contour loop, starting at the
+south-westernmost node and walking the contour with the domain on its left,
+merging a run that wraps the loop start (see :func:`_front2_runs`) - so the
+PRESCRIBED FLOWRATES / PRESCRIBED ELEVATIONS line up with the boundary numbering
+TELEMAC derives from the geometry.
 
 For numerical stability the total inflow-node count should be within ~10% of the
 total outflow-node count; otherwise a stability-risk warning is logged (raise the
@@ -33,7 +36,12 @@ from hydromate.mesh import Mesh, _anisotropic_enabled
 log = logging.getLogger("hydromate")
 
 WALL = (2, 2, 2)
-INFLOW = (5, 5, 5)
+# prescribed-discharge inflow: LIHBOR=4 (depth FREE, computed), LIUBOR/LIVBOR=5
+# (velocity prescribed from the imposed Q + profile). LIHBOR must be 4, not 5:
+# a 5 prescribes the depth from PRESCRIBED ELEVATIONS, which is 0 for an inflow,
+# so the inflow would be forced to a zero water surface (dry) and TELEMAC's
+# DEBIMP aborts ("PROBLEM ON BOUNDARY ... CHECK THE WATER DEPTHS").
+INFLOW = (4, 5, 5)
 OUTFLOW_FREE = (4, 4, 4)   # Neumann / free outflow: nothing prescribed
 OUTFLOW_ELEV = (5, 4, 4)   # prescribed downstream water level
 
@@ -143,8 +151,85 @@ def _warn_node_balance(liquids: list[LiquidBoundary]) -> None:
                  "(%.0f%% difference)", n_in, n_out, imbalance * 100)
 
 
+def _front2_runs(loop_nodes, loop_kinds: list[str], x, y) -> list[tuple[str, int]]:
+    """Liquid/wall runs of one closed contour loop, in TELEMAC ``FRONT2`` order.
+
+    TELEMAC numbers liquid boundaries (``bief/front2.f``) by starting at each
+    loop's **south-westernmost** node (min ``x+y``, ties broken by min ``y``) and
+    walking the contour with the domain on its left (the outer loop is traversed
+    counter-clockwise, as ``KP1BOR`` follows the CCW element node order), counting
+    a new liquid boundary at every transition into a liquid segment and merging a
+    run that wraps the loop start. We replay exactly that here so our liquid-
+    boundary numbering matches the order TELEMAC assigns - otherwise the
+    PRESCRIBED FLOWRATES / ELEVATIONS land on the wrong boundary (inflow Q and
+    outflow H swapped) or a single boundary that straddles the loop start is split
+    into two.
+    """
+    import numpy as np
+
+    n = len(loop_nodes)
+    if n == 0:
+        return []
+    xs = np.asarray(x)[loop_nodes]
+    ys = np.asarray(y)[loop_nodes]
+
+    # orient domain-on-left (outer loop CCW, signed area > 0); islands are all
+    # wall, so their orientation does not affect liquid numbering.
+    area2 = float(np.sum(xs * np.roll(ys, -1) - np.roll(xs, -1) * ys))
+    order = np.arange(n)[::-1] if area2 < 0 else np.arange(n)
+    oxs, oys = xs[order], ys[order]
+    okinds = [loop_kinds[i] for i in order]
+
+    # south-westernmost start (FRONT2's IDEP): min x+y, ties broken by min y
+    key = oxs + oys
+    eps = (key.max() - key.min()) * 1e-4
+    cand = np.flatnonzero(np.abs(key - key.min()) <= eps)
+    start = int(cand[np.argmin(oys[cand])])
+    rkinds = [okinds[(start + j) % n] for j in range(n)]
+
+    runs: list[list] = []
+    for k in rkinds:
+        if runs and runs[-1][0] == k:
+            runs[-1][1] += 1
+        else:
+            runs.append([k, 1])
+    # the loop is cyclic: a run that wraps the start is one boundary, not two
+    if len(runs) > 1 and runs[0][0] == runs[-1][0]:
+        runs[0][1] += runs[-1][1]
+        runs.pop()
+    return [(k, c) for k, c in runs]
+
+
+def _number_liquid_boundaries(mesh: Mesh, kinds: list[str]) -> list[LiquidBoundary]:
+    """Number the liquid boundaries per contour loop in TELEMAC ``FRONT2`` order."""
+    import numpy as np
+
+    bn = np.asarray(mesh.boundary_nodes)
+    loops = getattr(mesh, "boundary_loops", None)
+    loop_lengths = ([int(bn.size)] if loops is None or len(loops) == 0
+                    else [int(n) for n in loops])
+
+    liquids: list[LiquidBoundary] = []
+    off = 0
+    for length in loop_lengths:
+        loop_nodes = bn[off:off + length]
+        loop_kinds = kinds[off:off + length]
+        off += length
+        for kind, count in _front2_runs(loop_nodes, loop_kinds, mesh.x, mesh.y):
+            if kind in ("inflow", "outflow"):
+                liquids.append(LiquidBoundary(len(liquids) + 1, kind, count))
+    return liquids
+
+
 def classify_nodes(cfg: Config, mesh: Mesh) -> tuple[list[str], list[LiquidBoundary]]:
-    """Classify contour nodes; return per-node kind list and liquid boundaries."""
+    """Classify contour nodes; return per-node kind list and liquid boundaries.
+
+    ``kinds`` stays in ``mesh.boundary_nodes`` order (so it drives the ``.cli`` row
+    order, which must match the geometry's IPOBO). The returned ``LiquidBoundary``
+    list is numbered the way TELEMAC's ``FRONT2`` does (see
+    :func:`_front2_runs`), so the steering file's per-boundary prescribed values
+    line up with the boundary numbering TELEMAC derives from the geometry.
+    """
     from shapely.geometry import Point
 
     lines = _load_liquid_lines(cfg)
@@ -160,28 +245,8 @@ def classify_nodes(cfg: Config, mesh: Mesh) -> tuple[list[str], list[LiquidBound
                 best_kind, best_dist = kind, d
         kinds.append(best_kind)
 
-    # number contiguous liquid runs by first appearance
-    liquids: list[LiquidBoundary] = []
-    seen_run = False
-    idx = 0
-    run_kind = None
-    run_len = 0
-    for k in kinds + ["wall"]:  # sentinel to flush last run
-        if k in ("inflow", "outflow"):
-            if k == run_kind:
-                run_len += 1
-            else:
-                if run_kind is not None:
-                    idx += 1
-                    liquids.append(LiquidBoundary(idx, run_kind, run_len))
-                run_kind, run_len = k, 1
-            seen_run = True
-        else:
-            if run_kind is not None:
-                idx += 1
-                liquids.append(LiquidBoundary(idx, run_kind, run_len))
-                run_kind, run_len = None, 0
-    if not seen_run:
+    liquids = _number_liquid_boundaries(mesh, kinds)
+    if not liquids:
         raise ValueError(
             "No contour nodes matched the liquid-boundary lines. Check that the "
             "liquid_boundaries lines coincide with the mesh-zone outer bounds and "

@@ -139,7 +139,7 @@ def run_pipeline_test(tmp: Path) -> None:
         assert p and Path(p).stat().st_size > 0, f"missing/empty artifact: {name}"
 
     cli = Path(art.boundary_cli).read_text()
-    assert "5 5 5" in cli, "no inflow nodes coded in .cli"
+    assert "4 5 5" in cli, "no inflow nodes coded in .cli"
     assert "5 4 4" in cli, "no outflow nodes coded in .cli"
 
     cas = Path(art.cas_file).read_text()

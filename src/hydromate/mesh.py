@@ -40,6 +40,7 @@ class Mesh:
     boundary_nodes: np.ndarray # ordered 0-based node indices along the contour
     element_matid: np.ndarray  # (NELEM,) MATID per element
     node_matid: np.ndarray     # (NPOIN,) MATID per node (-> FRIC_ID in geometry)
+    boundary_loops: np.ndarray | None = None  # per-loop node counts in boundary_nodes
     roughness: np.ndarray | None = None  # (NPOIN,) per-node roughness value (e.g. ks)
     quality: object | None = None        # mesh_quality.QualityReport (set by build_mesh)
 
@@ -238,8 +239,32 @@ def _read_mesh_zones(cfg: Config):
                       _prio=[_ZONE_PRIORITY[zt] for zt in ztypes])
 
 
+def _fill_holes(geom):
+    """Return *geom* with all interior rings removed (only the exterior kept).
+
+    A mesh-zone author commonly carves holes into the channel polygon so a finer
+    ``refinement`` zone can be nested inside (e.g. around a structure). Such a hole
+    is enclosed by channel on every side, so it *is* channel - just meshed finer.
+    Dropping the holes keeps those nested pockets part of the channel footprint so
+    they are pre-wetted with the rest of the channel (otherwise the refinement
+    zones start dry and look walled off; see :func:`channel_node_mask`).
+    """
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+
+    if geom.geom_type == "Polygon":
+        return Polygon(geom.exterior)
+    if geom.geom_type == "MultiPolygon":
+        return unary_union([Polygon(p.exterior) for p in geom.geoms])
+    return geom
+
+
 def _channel_union(cfg: Config):
-    """Union of the mesh-zone polygons whose name contains 'channel'."""
+    """Channel footprint: union of the '*channel*' mesh zones, holes filled.
+
+    Holes are filled (:func:`_fill_holes`) so refinement zones nested inside the
+    channel polygon count as channel for pre-wetting and quality reporting.
+    """
     from shapely.ops import unary_union
 
     zones = _read_mesh_zones(cfg)
@@ -249,7 +274,7 @@ def _channel_union(cfg: Config):
             f"no mesh zone named '*channel*' in {Path(cfg.inputs.mesh_zones).name!r}; "
             f"found {sorted(zones['_zone_type'].unique())}"
         )
-    return unary_union(channel.geometry.values)
+    return _fill_holes(unary_union(channel.geometry.values))
 
 
 def _centerline_tangents(cfg: Config, spacing: float):
@@ -524,8 +549,13 @@ def _flip_sharp_edges(triangles, x, y, max_ratio, *, max_passes: int = 12):
 # --------------------------------------------------------------------------- #
 
 
-def _order_boundary(triangles: np.ndarray, npoin: int) -> np.ndarray:
-    """Return boundary node indices ordered along the (single) outer contour.
+def _order_boundary(triangles: np.ndarray, npoin: int) -> tuple[np.ndarray, np.ndarray]:
+    """Return ``(boundary_nodes, loop_lengths)``.
+
+    ``boundary_nodes`` are the boundary node indices ordered along the contour;
+    ``loop_lengths`` gives the node count of each loop (in the same order they
+    appear in ``boundary_nodes``), so callers can segment the flat array back into
+    its individual closed loops.
 
     Boundary edges occur in exactly one triangle. We chain them into a loop. For
     a domain with islands there are several loops; we return the longest one
@@ -566,7 +596,9 @@ def _order_boundary(triangles: np.ndarray, npoin: int) -> np.ndarray:
         loops.append(loop)
 
     loops.sort(key=len, reverse=True)
-    return np.array([n for loop in loops for n in loop], dtype=int)
+    flat = np.array([n for loop in loops for n in loop], dtype=int)
+    loop_lengths = np.array([len(loop) for loop in loops], dtype=int)
+    return flat, loop_lengths
 
 
 # --------------------------------------------------------------------------- #
@@ -625,16 +657,26 @@ def _assign_matid(cfg: Config, points: np.ndarray) -> np.ndarray:
 
 
 def channel_node_mask(cfg: Config, mesh: "Mesh") -> np.ndarray:
-    """Boolean (NPOIN,) flag of mesh nodes inside the ``*channel*`` mesh-zones.
+    """Boolean (NPOIN,) flag of mesh nodes on/inside the ``*channel*`` mesh-zones.
 
     Uses the same ``inputs.mesh_zones`` polygons (``Zone Name`` contains
     ``channel``) that drive the anisotropic mesh, so the pre-wetting region
     coincides with the meshed channel. Raises if no channel zones are configured.
+
+    The footprint is buffered by ~one cell before the point-in-polygon test so
+    that boundary nodes lying *on* the channel's outer edge are included. The
+    inflow/outflow liquid boundaries coincide with that edge, and strict
+    containment would drop those nodes - leaving the prescribed-discharge inflow
+    cross-section dry, which makes TELEMAC's ``DEBIMP`` abort at t=0 ("PROBLEM ON
+    BOUNDARY NUMBER ... CHECK THE WATER DEPTHS"). The seeded depth is still
+    ``max(water_level - bed, 0)``, so the buffer only wets nodes actually below
+    the warm-start surface; the dry banks stay dry.
     """
     from shapely import contains_xy
 
     channel = _channel_union(cfg)
-    return np.asarray(contains_xy(channel, mesh.x, mesh.y), dtype=bool)
+    tol = max(cfg.mesh.channel_size, cfg.mesh.floodplain_size)
+    return np.asarray(contains_xy(channel.buffer(tol), mesh.x, mesh.y), dtype=bool)
 
 
 def _channel_centroid_mask(cfg: Config, centroids: np.ndarray) -> np.ndarray | None:
@@ -728,7 +770,7 @@ def build_mesh(cfg: Config, dem_initial_roi: Path | None = None) -> Mesh:
         log.info("  aspect-ratio cap %.1f:1 (worst %.2f:1 -> %.2f:1 after flips)",
                  cfg.mesh.max_aspect_ratio, before, after)
 
-    boundary_nodes = _order_boundary(triangles, npoin)
+    boundary_nodes, boundary_loops = _order_boundary(triangles, npoin)
     ipobo = np.zeros(npoin, dtype=int)
     ipobo[boundary_nodes] = np.arange(1, boundary_nodes.size + 1)
 
@@ -743,7 +785,7 @@ def build_mesh(cfg: Config, dem_initial_roi: Path | None = None) -> Mesh:
     mesh = Mesh(
         x=x, y=y, triangles=triangles, bottom=bottom, ipobo=ipobo,
         boundary_nodes=boundary_nodes, element_matid=element_matid,
-        node_matid=node_matid,
+        node_matid=node_matid, boundary_loops=boundary_loops,
     )
 
     # quality assessment + validity gate (channel reported separately, its

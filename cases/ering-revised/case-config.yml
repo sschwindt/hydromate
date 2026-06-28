@@ -1,23 +1,22 @@
 # =============================================================================
-# hydromate case configuration - TEMPLATE
+# hydromate configuration - TEMPLATE
 # =============================================================================
-# Copy the whole cases/case-template/ folder to cases/<your-case>/, drop your
-# data into user-sources/, edit the paths/values below, then:
-#   hydromate cases/<your-case>/case-config.yml --check    # validate first
-#   hydromate cases/<your-case>/case-config.yml            # build the case
-# or run the two example scripts (see USAGE.info).
+# Copy this file, point the paths at your own data, and build with:
+#   hydromate path/to/your-config.yml --check    # validate first
+#   hydromate path/to/your-config.yml            # build the case
 #
 # Conventions:
 #   * All relative paths are resolved against THIS file's directory.
 #   * Lines marked  [REQUIRED]  must be set; everything else has a sensible
 #     default and may be omitted or left commented.
-#   * Your source data lives in this case's user-sources/ folder (gitignored).
-#   * A fully worked, filled-in example is in cases/example-Inn/.
+#   * Values shown are a worked example for a reach of the Inn river (Bavaria);
+#     replace them with your own. The matching co-development dataset lives in
+#     this case's user-sources/ folder (kept out of version control).
 # -----------------------------------------------------------------------------
 
 project:
-  name: my-case                # case name; used in titles and file headers
-  crs_epsg: 25832              # [REQUIRED] project CRS, metric (e.g. UTM). 25832 = ETRS89/UTM32N
+  name: ering                    # case name; used in titles and file headers
+  crs_epsg: 25833              # [REQUIRED] project CRS, metric (e.g. UTM). 25832 = ETRS89/UTM32N
   # all produced artifacts live under sim_dir, split by workflow phase. Each
   # phase's script writes its outputs and its hydromate.log into its own folder.
   sim_dir: tm-simulation
@@ -29,41 +28,40 @@ project:
 telemac:
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported)
   # whenever the solver or SELAFIN tooling is needed. Machine-specific.
-  pysource: /path/to/telemac/configs/pysource.sh
+  pysource: /home/schwindt/opt/telemac/configs/pysource.mint22.sh
   solver: telemac2d            # telemac2d | telemac3d
   n_processors: 4
 
 inputs:
-  # Paths resolve relative to THIS file. Put your data under user-sources/.
+  # Paths resolve relative to THIS file (cases/example-Inn/). The Inn example data
+  # lives under user-sources/ (co-development dataset, not in version control).
   # ---- required -----------------------------------------------------------
-  dem_initial: user-sources/geodata/dem-initial.tif      # [REQUIRED] baseline terrain (GeoTIFF)
-  boundary: user-sources/geodata/roi.gpkg                # [REQUIRED] ROI / max wetted extent polygon
+  dem_initial: user-sources/geodata/dem-afterflush-interpolated-measuredZ.tif       # [REQUIRED] baseline terrain (GeoTIFF)
+  boundary: user-sources/geodata/roi-ering.gpkg         # [REQUIRED] ROI / max wetted extent polygon
   # liquid boundaries: a LINE layer whose 'Type (inflow/outflow)' field tags each
   # line 'inflow' or 'outflow' (you may have several of each). The lines MUST
   # coincide with the OUTER BOUNDS of the mesh zones so the contour nodes fall on
-  # them. Contour nodes on an inflow line get a prescribed-Q boundary (4 5 5),
+  # them. Contour nodes on an inflow line get a prescribed-Q boundary (5 5 5),
   # those on an outflow line a free/Neumann (4 4 4) or prescribed-elevation
   # (5 4 4) boundary (see hydrodynamics.outflow_condition); every other outer
   # node is a solid wall (2 2 2). For stability the total inflow-node count
   # should be within ~10% of the total outflow-node count (else a warning fires).
   liquid_boundaries: user-sources/geodata/liquid-boundaries.gpkg  # [REQUIRED for a build]
-  inflow: user-sources/hydraulics/inflow.csv   # [REQUIRED for a build] discharge value or time series
+  inflow: user-sources/inflow.csv                   # [REQUIRED for a build] discharge value or time series (TODO: prepare)
 
   # ---- optional -----------------------------------------------------------
-  dem_target: user-sources/geodata/dem-target.tif        # 2nd DEM, enables morphodynamic target
+  # dem_target: user-sources/geodata/DEM-2025-20cm.tif   # 2nd DEM, enables morphodynamic target
   # mesh zones (polygons with a 'Zone Name' of channel/floodplain) + the channel
   # centerline drive the anisotropic, flow-aligned meshing (see the `mesh` block).
   mesh_zones: user-sources/geodata/mesh-zones.gpkg
   channel_centerline: user-sources/geodata/channel-centerline.gpkg
   # roughness zones: polygons with an integer 'Zone ID', plus a CSV mapping each
   # id to a roughness value (e.g. Nikuradse ks). The value is interpolated onto
-  # the mesh nodes (per-node FRIC_ID + BOTTOM FRICTION) and later adjusted by
-  # HydroBayesCal. Typical: zone 1 = channel (ks ~0.2 m), zone 2 = floodplain (~0.5 m).
+  # the mesh nodes and later adjusted by HydroBayesCal. For the Inn example,
+  # zone 1 = channel (ks ~0.2 m), zone 2 = floodplain (ks ~0.5 m).
   roughness_zones: user-sources/geodata/roughness-zones.gpkg
   roughness_table: user-sources/geodata/roughness-table.csv
-  # breaklines: user-sources/geodata/breaklines.shp     # internal constraint lines (mesh + zone edges)
-  # region_points: user-sources/geodata/region-points.shp  # seed points carrying a MATID field
-  # region_table: user-sources/geodata/region-pts-table.txt  # legend mapping MATID -> material/roughness
+  # breaklines: path/to/breaklines.shp         # internal constraint lines (mesh + zone edges)
   # outlet rating curve (drives the outflow boundary when
   # hydrodynamics.outflow_condition = stage_discharge, the default): a CSV with
   # Q [m3/s] and WSE [m] columns. One Q-h pair at the steady discharge is enough;
@@ -71,9 +69,9 @@ inputs:
   # the channel geometry (normal-flow conditions) with, e.g.:
   #   hydromate rating -o user-sources/geodata/rating-curve.csv \
   #       --manning 0.035 --slope 0.0012 --width 80 --side-slope 2 \
-  #       --bed-elevation <outflow bed z> --q <steady Q>
-  stage_discharge: user-sources/geodata/rating-curve.csv
-  # dem_of_difference: user-sources/geodata/dod.tif     # precomputed bed-change raster (else derived from DEMs)
+  #       --bed-elevation <outflow bed z> --q 47
+  stage_discharge: user-sources/rating-curve.csv
+  # dem_of_difference: path/to/dod.tif         # precomputed bed-change raster (else derived from DEMs)
 
   # ---- ground truth (calibration targets) ---------------------------------
   # The calibration consumes a tidy, multi-tab "measurements" table: one tab per
@@ -82,32 +80,38 @@ inputs:
   #
   #   (a) author it yourself and point `measurements` at the .xlsx (general case);
   #   (b) declare raw sources under `ground_truth` and hydromate compiles the
-  #       tidy table for you. Compiled to preprocessing/ground-truth.xlsx unless
-  #       `measurements` gives an explicit output path.
+  #       tidy table for you (this Inn showcase). Compiled to work_dir/ground-truth.xlsx
+  #       unless `measurements` gives an explicit output path.
   #
-  # measurements: user-sources/ground-truth/ground-truth.xlsx   # (a) user-authored tidy table
-  # ground_truth:                                # (b) raw sources -> compiled tidy table
-  #   # e.g. FlowTracker velocities (values) joined by ID to DGPS survey points
-  #   # (positions, reprojected to the project CRS); one entry per source/tab.
-  #   - { category: hydraulics, kind: flowtracker, join_key: ID,
-  #       values: user-sources/ground-truth/hydraulics/flowtracker-day1.xlsx,
-  #       positions: user-sources/geodata/flowtracker/dgps-day1.shp }
+  # measurements: path/to/ground-truth.xlsx    # (a) user-authored tidy table
+  ground_truth:                                 # (b) raw sources -> compiled tidy table
+    # FlowTracker velocities (values) joined by ID to the DGPS survey points
+    # (positions, reprojected to the project CRS); two survey days -> one tab.
+    - { category: hydraulics, kind: flowtracker, join_key: ID,
+        values: user-sources/ground-truth/hydraulics/DOWNSTREAM_20220330-tke-stats-withXY.xlsx,
+        positions: user-sources/geodata/flowtracker2/FT-DOWNSTREAM_20220320-tke-stats-withXY.shp }
+    - { category: hydraulics, kind: flowtracker, join_key: ID,
+        values: user-sources/ground-truth/hydraulics/UPSTREAM_20220330-tke-stats-with-XY.xlsx,
+        positions: user-sources/geodata/flowtracker2/FT-UPSTREAM_20220320-tke-stats-withXY.shp }
 
 mesh:
   # Anisotropic, flow-aligned strategy (used when inputs.mesh_zones +
   # inputs.channel_centerline are set). Each polygon in the mesh-zones layer is
   # classified by its 'Zone Name' (case-insensitive substring) into one of THREE
   # types and sized by its own 'Max Edge Length (m)' field:
-  #   * "channel"     -> triangles elongated ALONG the centerline
-  #   * "floodplain"  -> near-equilateral triangles
-  #   * "refinement"  -> near-equilateral triangles at a (smaller) edge length, for
-  #                      LOCAL refinement (e.g. around a structure)
-  # Overlaps resolve finest-first (refinement > channel > floodplain). The
-  # 'Max Edge Length (m)' field is read per polygon (decimal point or German comma
-  # accepted); the *_size values below are FALLBACKS for polygons without it.
-  channel_size: 0.5            # fallback channel edge length (m)
-  floodplain_size: 1.5         # fallback floodplain edge length (m); default outside zones
-  refinement_size: 0.5         # fallback 'refinement' zone edge length (m)
+  #   * "channel"     -> triangles elongated ALONG the centerline (cross-channel
+  #                      edge = the zone's max edge length, x channel_anisotropy along)
+  #   * "floodplain"  -> near-equilateral triangles at the zone's edge length
+  #   * "refinement"  -> near-equilateral triangles at the zone's (smaller) edge
+  #                      length, for LOCAL refinement (e.g. around a structure)
+  # The size blends smoothly between zones; where they overlap the finest wins
+  # (refinement > channel > floodplain). The 'Max Edge Length (m)' field is read
+  # per polygon (decimal point or German comma both accepted); the *_size values
+  # below are only FALLBACKS used when that field is absent/blank for a polygon.
+  channel_size: 0.25            # fallback channel edge length (m)
+  floodplain_size: 1.3         # fallback floodplain edge length (m); also the default outside all zones
+  refinement_size: 0.15         # fallback 'refinement' zone edge length (m)
+  zone_size_field: "Max Edge Length (m)"  # per-polygon edge length field (default shown)
   growth_ratio: 1.2            # max edge-size growth per element (channel -> floodplain)
   channel_anisotropy: 4.0      # along-flow / cross-flow edge ratio in the channel
   max_aspect_ratio: 4.0        # hard cap on cell aspect ratio (longest:shortest edge);
@@ -131,39 +135,34 @@ friction:
   # The friction .tbl is derived, in priority order, from: explicit `zones`
   # below (MATID scheme) -> else the roughness zones (inputs.roughness_zones +
   # roughness_table: one row per Zone ID with its ks under `roughness_law`) ->
-  # else a single uniform default. With roughness zones the .tbl gets rows like
-  # `1 NIKU 0.2000 NULL` / `2 NIKU 0.5000 NULL` matching the geometry's per-node
-  # FRIC_ID; HydroBayesCal perturbs the ks via zone1/zone2 (see calibration).
+  # else a single uniform default. For the Inn case the roughness zones drive it,
+  # so the .tbl gets rows `1 NIKU 0.2000 NULL` / `2 NIKU 0.5000 NULL` matching the
+  # geometry's per-node FRIC_ID; HydroBayesCal perturbs the ks via zone1/zone2.
   roughness_law: 5             # law for roughness-zone rows (5 = NIKU, ks in m)
   default_law: 4               # 4 = Manning (0 NOFR, 1 HAAL, 2 CHEZ, 3 STRI, 5 NIKU, 7 COWH)
   default_coefficient: 0.03
   # lateral (wall) boundary friction -> TELEMAC LAW OF FRICTION ON LATERAL
   # BOUNDARIES / ROUGHNESS COEFFICIENT OF BOUNDARIES. Also the roughness used to
   # synthesise the outflow stage-discharge curve (initial_run.py) when missing.
-  boundary_law: 4              # 3 = Strickler (Kst), 4 = Manning (n)
-  boundary_coefficient: 0.03
-  # explicit per-MATID zones (override the roughness zones; "matid" must equal the
-  # MATID in region_points). The coefficient is the initial guess calibration perturbs.
-  # zones:
-  #   - { matid: 1, name: riverbed,   law: 4, coefficient: 0.030 }
-  #   - { matid: 5, name: floodplain, law: 4, coefficient: 0.060 }
+  boundary_law: 3              # 3 = Strickler
+  boundary_coefficient: 38     # Strickler Kst
 
 hydrodynamics:
   regime: steady               # steady | unsteady
-  time_step: 1.0               # initial/max step; CFL-adapted (variable_timestep on)
+  time_step: 1.0               # initial/max step; CFL-adapted (variable_timestep)
   n_time_steps: 15000
   graphic_printout_period: 500
   listing_printout_period: 500
-  # Numerics: finite volumes (default) - the HLLC scheme is robust for transcritical,
-  # wetting/drying flow on steep bathymetry; the time step is CFL-bound. Set
-  # finite_volumes: false for the classic finite-element kernel.
-  finite_volumes: true
+  # Numerics: finite volumes (default) - the HLLC scheme is robust for this
+  # transcritical, wetting/drying reach on steep bathymetry. The time step is then
+  # CFL-bound by the variable-time-step / desired-courant settings.
+  finite_volumes: true         # false -> classic finite-element kernel
   # finite_volume_scheme: 5    # 5 = HLLC (default); 0 Roe, 1 kinetic, 6 WAF
   # fv_space_order: 2          # 2 = MUSCL (2nd order); 1 = 1st order
-  # Turbulence: finite volumes accept ONLY model 1 (constant viscosity). For
+  # Turbulence: finite volumes accept ONLY model 1 (constant viscosity). To use
   # k-epsilon (3) or Spalart-Allmaras (6) you must set finite_volumes: false.
   turbulence_model: 1          # 1 const viscosity | 3 k-epsilon | 6 Spalart-Allmaras (3/6 need FE)
-  velocity_diffusivity: 1.0e-6 # constant eddy viscosity [m2/s] (model 1)
+  velocity_diffusivity: 2.0    # constant eddy viscosity [m2/s] (model 1)
   # outflow (downstream) boundary type:
   #   stage_discharge -> prescribed water level (cli 5 4 4) read from the
   #                      inputs.stage_discharge rating curve at the simulated Q
@@ -171,7 +170,8 @@ hydrodynamics:
   #                      at the steady discharge suffices.
   #   elevation       -> prescribed water level (cli 5 4 4) fixed at
   #                      prescribed_elevation below.
-  #   free            -> Neumann / free outflow (cli 4 4 4); nothing prescribed.
+  #   free            -> Neumann / free outflow (cli 4 4 4); nothing prescribed,
+  #                      no downstream water level needed.
   outflow_condition: stage_discharge
   # fixed downstream water level, only used when outflow_condition: elevation:
   # prescribed_elevation: 0.0  # m a.s.l.
@@ -179,7 +179,9 @@ hydrodynamics:
   # pre-wetting (warm start): seed this water depth [m] on the channel mesh-zone
   # nodes (dry elsewhere) and continue the run from it, so wetting need not start
   # from a dry bed. Speeds up steady runs; the mesh-convergence study sets it.
-  # prewet_depth: 0.5
+  # 1.0 m comfortably wets the ~130 m channel (normal depth ~0.5 m at Q=47) so the
+  # prescribed inflow can establish without the dry-bed deadlock.
+  prewet_depth: 1.0
 
 # morphodynamics:              # optional GAIA extension (v1 focuses on 2D hydraulics)
 #   enabled: true
@@ -197,7 +199,7 @@ calibration:
   # calibration parameters forwarded to HydroBayesCal. Names follow its prefix
   # convention: zone<N> (friction zone N in the .tbl), gaiaCLASSES SHIELDS
   # PARAMETERS <n> (GAIA), vg_zone<N>-<p> (vegetation), or any literal TELEMAC
-  # keyword. zone1/zone2 here perturb the Nikuradse ks of two roughness zones
+  # keyword. zone1/zone2 here perturb the Nikuradse ks of the two roughness zones
   # (channel / floodplain); ranges are ks bounds in metres.
   parameters:
     - { name: zone1, min: 0.05, max: 0.50, comment: "channel ks [m] (Nikuradse)" }
