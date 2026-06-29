@@ -238,19 +238,32 @@ class Hydrodynamics:
 
     regime: str = "steady"             # steady | unsteady
     time_step: float = 1.0
-    n_time_steps: int = 15000
+    n_time_steps: int = 15000          # max steps; the steady run usually auto-stops sooner
     graphic_printout_period: int = 500
     listing_printout_period: int = 500
+    # auto-stop the STEADY run when it reaches a steady state (TELEMAC's STOP IF A
+    # STEADY STATE IS REACHED) instead of grinding through all n_time_steps; the run
+    # halts once the relative change in (U,V), H and tracers all fall below the three
+    # stop_criteria. Applies to the steady run only - the unsteady hydrograph run must
+    # march its full duration, and TELEMAC-3D has no such keyword.
+    stop_if_steady: bool = True
+    stop_criteria: str = "1.E-4;1.E-4;1.E-4"   # rel-change thresholds: (U,V); H; tracers
     # let TELEMAC adapt the time step to the CFL condition (DESIRED COURANT NUMBER):
     # a fixed time_step on a fine channel mesh (sub-metre cells) is a CFL violation
     # that diverges; with this on, time_step is only the initial/maximum step.
+    # 0.6 is a conservative, stable target on the fine channel mesh (matching the 3D
+    # run); raise it toward ~0.9 to march to steady state in fewer steps, or raise
+    # n_time_steps if a run has not converged within the budget.
     variable_timestep: bool = True
-    desired_courant: float = 0.9
-    # discretisation: finite volumes (default) are robust for transcritical, wetting/
-    # drying flow on steep terrain; finite_volume_scheme 5 = HLLC Riemann solver,
-    # fv_space_order 2 = 2nd-order (MUSCL). Set finite_volumes=False for the classic
-    # finite-element kernel (then the solver/* and tidal-flats keywords below apply).
-    finite_volumes: bool = True
+    desired_courant: float = 0.6
+    # discretisation: the classic finite-element kernel is the DEFAULT - it supports
+    # the k-epsilon / Spalart-Allmaras / Smagorinski turbulence closures auto-selected
+    # by turbulence_model below (the solver/* and tidal-flats keywords then apply).
+    # Set finite_volumes=True for the HLLC finite-volume kernel instead - robust for
+    # transcritical wetting/drying flow on steep terrain, but it accepts ONLY
+    # turbulence model 1 (constant viscosity). finite_volume_scheme 5 = HLLC Riemann
+    # solver, fv_space_order 2 = 2nd-order (MUSCL).
+    finite_volumes: bool = False
     finite_volume_scheme: int = 5      # 0 Roe, 1 kinetic, 3 Zokagoa, 4 Tchamen, 5 HLLC, 6 WAF
     fv_space_order: int = 2
     free_surface_gradient_compat: float = 0.1   # damps free-surface wiggles (FE; default 1.0)
@@ -259,10 +272,27 @@ class Hydrodynamics:
     solver: int = 2
     preconditioning: int = 2
     solver_accuracy: float = 1.0e-5
-    # turbulence closure. NOTE: finite volumes accept ONLY model 1 (constant
-    # viscosity); k-epsilon (3) and Spalart-Allmaras (6) require finite_volumes=False.
-    turbulence_model: int = 1          # 1 const-visc, 3 k-epsilon, 6 Spalart-Allmaras
-    velocity_diffusivity: float | None = None   # constant eddy viscosity [m2/s] for model 1
+    # turbulence-transport solver accuracy (ACCURACY OF K / EPSILON / SPALART-ALLMARAS):
+    # TELEMAC's 1e-9 default is far tighter than the turbulence quantities need and is
+    # unreachable within the 50-iteration cap while the dry-start domain is still
+    # ill-conditioned - that is the transient "GRACJG: EXCEEDING MAXIMUM ITERATIONS 50"
+    # warning. 1e-6 converges quickly (fewer iterations) with no loss of meaning.
+    turbulence_solver_accuracy: float = 1.0e-6
+    # turbulence closure. "auto" (the default) picks among k-epsilon (3),
+    # Spalart-Allmaras (6) and Smagorinski LES (4) from the channel mesh resolution
+    # relative to the turbulence length scale (the flow depth) and the velocity guess
+    # below, applying the 80%-TKE LES criterion - see steering.select_turbulence_model.
+    # A literal int or name (1 const-visc, 3 k-epsilon, 4 Smagorinski, 6
+    # Spalart-Allmaras) overrides the auto choice. NOTE: finite volumes accept ONLY
+    # model 1; "auto"/3/4/6 require finite_volumes=False (the default kernel).
+    turbulence_model: int | str = "auto"
+    # mean-flow velocity guess [m/s] - the assumed initial average flow used to size
+    # the turbulent eddy viscosity and feed the turbulence-model selection criteria.
+    initial_velocity_guess: float = 1.0
+    # turbulence integral length scale [m] for the resolution criterion; defaults to
+    # the flow depth scale (prewet_depth, else 1.0 m) when left None.
+    turbulence_length_scale: float | None = None
+    velocity_diffusivity: float | None = None   # eddy viscosity [m2/s]; auto from U for model 1
     # downstream (outflow) boundary type:
     #   "stage_discharge" -> prescribed water level (cli 5 4 4) read from the
     #                        inputs.stage_discharge rating curve at the simulated
@@ -273,9 +303,18 @@ class Hydrodynamics:
     prescribed_flowrate: float | None = None   # upstream Q (m3/s); else from inflow
     prescribed_elevation: float | None = None  # downstream WSE (m); only for outflow_condition=elevation
     initial_conditions: str = "ZERO DEPTH"
-    # pre-wetting: when set, write a warm-start SELAFIN seeding this water depth
-    # (m) on the channel mesh-zone nodes (dry elsewhere) and continue the run from
-    # it, so wetting need not advance from a dry bed (speeds up steady runs)
+    # DRY START (the default initial condition for the initial run): a fully dry bed
+    # makes TELEMAC's DEBIMP abort at a prescribed-Q inflow, so instead of wetting the
+    # whole channel we seed only a thin water plug on the nodes within dry_start_extent
+    # of the inflow line(s) - deep enough (dry_start_depth, kept >= the normal depth so
+    # the inflow stays subcritical) for the discharge to establish - and leave the rest
+    # of the domain DRY. The flow then wets the reach from the inflow.
+    dry_start_depth: float = 0.5          # inflow-plug seed depth [m]
+    dry_start_extent: float | None = None  # plug buffer around the inflow line [m]; default ~5 cells
+    # pre-wetting (warm start): when set, instead of the dry start above, seed this
+    # water depth (m) on the *channel mesh-zone* nodes (dry elsewhere) and continue
+    # from it - wets the whole low-flow channel up front (the mesh-convergence study
+    # uses it to skip advancing the wetting front per mesh). Needs inputs.mesh_zones.
     prewet_depth: float | None = None
     extra_keywords: dict[str, Any] = field(default_factory=dict)  # raw .cas overrides
 
@@ -353,12 +392,18 @@ class Config:
     # canonical output filenames inside model_dir -----------------------------
     geometry_slf: str = "geometry.slf"
     boundary_cli: str = "boundaries.cli"
-    cas_file: str = "steady2d.cas"
+    cas_file: str = "steady2d.cas"           # the initial run - always steady
+    # additional hydrograph-driven run, written only when the inflow carries a
+    # varying time series (otherwise a constant-Q inflow needs no unsteady case)
+    unsteady_cas_file: str = "unsteady2d.cas"
+    liquid_boundaries_file: str = "inflow-hydrograph.liq"  # Q(t)/SL(t) for unsteady2d.cas
     ic_slf: str = "initial-conditions.slf"   # warm-start file when prewet_depth is set
     friction_tbl: str = "friction.tbl"
     zones_file: str = "zones.bfr"
     gaia_cas: str = "gaia.cas"
     results_slf: str = "r2d.slf"
+    results3d_slf: str = "r3d.slf"          # TELEMAC-3D 3D RESULT FILE (add3d.py)
+    results2d_from_3d_slf: str = "r3d-2d.slf"  # TELEMAC-3D depth-averaged 2D RESULT FILE
     ground_truth_xlsx: str = "ground-truth.xlsx"  # compiled tidy table (in preprocessing_dir)
     calibration_csv: str = "measurements-calibration.csv"
     hbc_config: str = "config_Telemac.py"

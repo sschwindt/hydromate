@@ -81,10 +81,10 @@ def test_prescribed_flowrates_split_across_inflows(tmp_path):
     assert elev.split(";")[1] == "373.8000"       # outflow stage on the outflow slot
 
 
-def test_steering_finite_volume_vs_finite_element(tmp_path):
-    """Default steering is finite volumes (HLLC + constant viscosity, no FE-only
-    keywords); finite_volumes=False emits the FE numerics instead. FV forces
-    turbulence model 1 even if another is configured."""
+def test_steering_finite_element_default_vs_finite_volume(tmp_path):
+    """Default steering is now finite elements (the FE numerics + lateral wall
+    friction + the configured turbulence model); opting into finite_volumes=True
+    emits the HLLC FV numerics and forces turbulence model 1 instead."""
     from hydromate.boundary import LiquidBoundary
     from hydromate.steering import write_cas
 
@@ -92,27 +92,83 @@ def test_steering_finite_volume_vs_finite_element(tmp_path):
     liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=10),
                LiquidBoundary(index=2, kind="outflow", n_nodes=10)]
 
-    cfg.hydrodynamics.turbulence_model = 3            # FV must override this to 1
-    fv = write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=373.8).read_text()
-    assert "EQUATIONS : 'SAINT-VENANT FV'" in fv
-    assert "FINITE VOLUME SCHEME : 5" in fv and "FINITE VOLUME SCHEME SPACE ORDER : 2" in fv
-    assert "TURBULENCE MODEL : 1" in fv                # forced (constant viscosity)
-    assert "FREE SURFACE GRADIENT COMPATIBILITY : 0.1" in fv
-    assert "PRINTING CUMULATED FLOWRATES : YES" in fv
-    assert "VARIABLE TIME-STEP : YES" in fv
-    # FE-only keywords must be absent under finite volumes (incl. lateral-boundary
-    # wall friction, which the FV kernel rejects)
-    assert "SCHEME FOR ADVECTION OF VELOCITIES" not in fv
-    assert "TIDAL FLATS" not in fv and "SOLVER :" not in fv
-    assert "LAW OF FRICTION ON LATERAL BOUNDARIES" not in fv
-
-    cfg.hydrodynamics.finite_volumes = False
-    fe = write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=373.8).read_text()
+    # default kernel: finite elements with the resolved turbulence model (here 3)
+    fe = write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=373.8,
+                   turbulence_model=3).read_text()
     assert "SAINT-VENANT FV" not in fe
     assert "SCHEME FOR ADVECTION OF VELOCITIES : 14" in fe
     assert "TIDAL FLATS : YES" in fe and "SOLVER : 2" in fe
     assert "LAW OF FRICTION ON LATERAL BOUNDARIES" in fe   # FE supports wall friction
-    assert "TURBULENCE MODEL : 3" in fe                # FE keeps the configured model
+    assert "TURBULENCE MODEL : 3" in fe                    # FE keeps the resolved model
+    assert "PRINTING CUMULATED FLOWRATES : YES" in fe
+    assert "VARIABLE TIME-STEP : YES" in fe
+
+    # opting into finite volumes: HLLC + constant viscosity, no FE-only keywords
+    cfg.hydrodynamics.finite_volumes = True
+    fv = write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=373.8,
+                   turbulence_model=3).read_text()
+    assert "EQUATIONS : 'SAINT-VENANT FV'" in fv
+    assert "FINITE VOLUME SCHEME : 5" in fv and "FINITE VOLUME SCHEME SPACE ORDER : 2" in fv
+    assert "TURBULENCE MODEL : 1" in fv                    # forced (constant viscosity)
+    assert "SCHEME FOR ADVECTION OF VELOCITIES" not in fv
+    assert "TIDAL FLATS" not in fv and "SOLVER :" not in fv
+    assert "LAW OF FRICTION ON LATERAL BOUNDARIES" not in fv
+
+
+def test_turbulence_model_auto_selection(tmp_path):
+    """'auto' picks Smagorinski LES / k-epsilon / Spalart-Allmaras from the channel
+    cell size relative to the turbulence length scale; an explicit setting overrides."""
+    from hydromate.steering import select_turbulence_model
+
+    cfg = _minimal_cfg(tmp_path)
+    cfg.hydrodynamics.turbulence_length_scale = 1.0     # L = 1 m
+
+    cfg.mesh.channel_size = 0.05                         # dx/L <= 0.2**1.5 -> >=80% TKE
+    assert select_turbulence_model(cfg, None)[0] == 4   # Smagorinski LES
+    cfg.mesh.channel_size = 0.2                          # ~5 cells/L
+    assert select_turbulence_model(cfg, None)[0] == 3   # k-epsilon
+    cfg.mesh.channel_size = 0.5                          # ~2 cells/L (coarse)
+    assert select_turbulence_model(cfg, None)[0] == 6   # Spalart-Allmaras
+
+    cfg.hydrodynamics.turbulence_model = "k-epsilon"    # explicit name overrides
+    assert select_turbulence_model(cfg, None)[0] == 3
+    cfg.hydrodynamics.turbulence_model = 6              # explicit int overrides
+    assert select_turbulence_model(cfg, None)[0] == 6
+
+
+def test_unsteady_cas_and_liquid_boundaries(tmp_path):
+    """A hydrograph yields a liquid-boundaries file (Q(t)/SL(t)) and an unsteady
+    cas referencing it with a DURATION; the steady writer is unaffected."""
+    import numpy as np
+
+    from hydromate import steering
+    from hydromate.boundary import LiquidBoundary
+    from hydromate.hydraulics import Inflow
+
+    cfg = _minimal_cfg(tmp_path)
+    liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=30),
+               LiquidBoundary(index=2, kind="outflow", n_nodes=10),
+               LiquidBoundary(index=3, kind="inflow", n_nodes=10)]
+    inflow = Inflow(times_s=np.array([0.0, 3600.0, 7200.0]),
+                    discharge=np.array([40.0, 60.0, 50.0]), steady_value=50.0)
+
+    lb = steering.write_liquid_boundaries(cfg, liquids, inflow,
+                                          outflow_wse_fn=lambda q: 373.0 + 0.01 * q)
+    txt = lb.read_text()
+    assert lb.name == cfg.liquid_boundaries_file
+    header = txt.splitlines()[1].split()
+    assert header == ["T", "Q(1)", "SL(2)", "Q(3)"]     # boundary-index order
+    # total reach Q split across the two inflows by node share (30:10 of 40 at t=0)
+    first = txt.splitlines()[3].split()
+    assert float(first[1]) == 30.0 and float(first[3]) == 10.0
+
+    cas = steering.write_cas(
+        cfg, liquids, inflow_q=40.0, outflow_wse=373.4, turbulence_model=3,
+        unsteady=True, liquid_boundaries_file=lb.name, duration=7200.0,
+        out_name=cfg.unsteady_cas_file).read_text()
+    assert f"LIQUID BOUNDARIES FILE : {cfg.liquid_boundaries_file}" in cas
+    assert "DURATION : 7200.0" in cas and "NUMBER OF TIME STEPS" not in cas
+    assert "TITLE : 'prewet-test unsteady'" in cas
 
 
 def _minimal_cfg(tmp_path):
@@ -159,3 +215,29 @@ def test_write_cas_warm_start_keywords(tmp_path):
     assert "PREVIOUS COMPUTATION FILE : initial-conditions.slf" in warm
     assert "INITIAL TIME SET TO ZERO : YES" in warm
     assert "INITIAL CONDITIONS :" not in warm
+
+
+def test_steady_state_auto_stop(tmp_path):
+    """The steady run auto-stops at steady state (STOP IF A STEADY STATE IS REACHED +
+    STOP CRITERIA); the unsteady hydrograph run must NOT (it runs its full duration),
+    and the feature can be switched off."""
+    from hydromate import steering
+    from hydromate.boundary import LiquidBoundary
+
+    cfg = _minimal_cfg(tmp_path)
+    liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=5),
+               LiquidBoundary(index=2, kind="outflow", n_nodes=5)]
+
+    steady = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5).read_text()
+    assert "STOP IF A STEADY STATE IS REACHED : YES" in steady
+    assert "STOP CRITERIA : 1.E-4;1.E-4;1.E-4" in steady
+
+    uns = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5,
+                             unsteady=True, duration=3600.0,
+                             liquid_boundaries_file="hg.liq",
+                             out_name=cfg.unsteady_cas_file).read_text()
+    assert "STOP IF A STEADY STATE IS REACHED" not in uns
+
+    cfg.hydrodynamics.stop_if_steady = False
+    off = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5).read_text()
+    assert "STOP IF A STEADY STATE IS REACHED" not in off

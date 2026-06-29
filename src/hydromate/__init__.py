@@ -26,6 +26,13 @@ from hydromate.mesh import (
     write_mesh,
 )
 from hydromate.mesh_quality import assess_quality
+from hydromate.steering import select_turbulence_model, eddy_viscosity_estimate
+from hydromate.threed import (
+    build_3d_cas, infer_vertical_layers, select_3d_turbulence,
+)
+from hydromate.vertical_convergence import (
+    layer_levels, run_vertical_convergence,
+)
 from hydromate.rating import (
     generate_stage_discharge, normal_depth, synthesize_outflow_rating,
 )
@@ -37,6 +44,9 @@ __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "compile_ground_truth", "read_tidy",
            "build_mesh", "channel_node_mask", "interpolate_elevations",
            "interpolate_roughness", "write_mesh", "assess_quality",
+           "select_turbulence_model", "eddy_viscosity_estimate",
+           "build_3d_cas", "infer_vertical_layers", "select_3d_turbulence",
+           "layer_levels", "run_vertical_convergence",
            "generate_stage_discharge", "normal_depth", "synthesize_outflow_rating",
            "run_mesh_convergence", "percent_levels",
            "analyze_flux_convergence", "FluxConvergence",

@@ -28,7 +28,7 @@ project:
 telemac:
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported)
   # whenever the solver or SELAFIN tooling is needed. Machine-specific.
-  pysource: /home/schwindt/opt/telemac/configs/pysource.mint22.sh
+  pysource: /home/schwindt/opt/telemac-v911/telemac-mascaret/configs/pysource.mint22.sh
   solver: telemac2d            # telemac2d | telemac3d
   n_processors: 4
 
@@ -148,21 +148,39 @@ friction:
   boundary_coefficient: 38     # Strickler Kst
 
 hydrodynamics:
+  # the initial run (steady2d.cas) is ALWAYS steady; when inputs.inflow carries a
+  # varying hydrograph an additional unsteady2d.cas (+ liquid-boundaries file) is
+  # written too. 'regime' is kept for provenance/labelling.
   regime: steady               # steady | unsteady
   time_step: 1.0               # initial/max step; CFL-adapted (variable_timestep)
-  n_time_steps: 15000
+  n_time_steps: 15000          # max steps; the steady run usually auto-stops sooner
+  # auto-stop the STEADY run at steady state (relative change in (U,V), H, tracers
+  # all below stop_criteria) instead of running all n_time_steps - the main lever
+  # for a fast steady run. Off for the unsteady run; TELEMAC-3D has no equivalent.
+  # stop_if_steady: true
+  # stop_criteria: "1.E-4;1.E-4;1.E-4"   # thresholds for (U,V); H; tracers
   graphic_printout_period: 500
   listing_printout_period: 500
-  # Numerics: finite volumes (default) - the HLLC scheme is robust for this
-  # transcritical, wetting/drying reach on steep bathymetry. The time step is then
-  # CFL-bound by the variable-time-step / desired-courant settings.
-  finite_volumes: true         # false -> classic finite-element kernel
+  # Numerics: the classic finite-element kernel is the default (it supports the
+  # turbulence closures auto-selected below). Set finite_volumes: true for the HLLC
+  # finite-volume kernel instead - robust for transcritical wetting/drying flow, but
+  # it accepts ONLY turbulence model 1 (constant viscosity).
+  finite_volumes: false        # true -> HLLC finite-volume kernel (const viscosity only)
   # finite_volume_scheme: 5    # 5 = HLLC (default); 0 Roe, 1 kinetic, 6 WAF
   # fv_space_order: 2          # 2 = MUSCL (2nd order); 1 = 1st order
-  # Turbulence: finite volumes accept ONLY model 1 (constant viscosity). To use
-  # for k-epsilon (3) or Spalart-Allmaras (6) set finite_volumes: false.
-  turbulence_model: 1          # 1 const viscosity | 3 k-epsilon | 6 Spalart-Allmaras (3/6 need FE)
-  velocity_diffusivity: 2.0    # constant eddy viscosity [m2/s] (model 1)
+  # Turbulence: "auto" picks k-epsilon (3) / Spalart-Allmaras (6) / Smagorinski LES
+  # (4) from the channel mesh resolution vs the turbulence length scale (the flow
+  # depth) and the velocity guess, applying the 80%-TKE LES criterion. A literal
+  # int/name overrides. (Finite volumes force model 1 regardless.)
+  turbulence_model: auto       # auto | 1 const | 3 k-epsilon | 4 Smagorinski | 6 Spalart-Allmaras
+  initial_velocity_guess: 1.0  # assumed mean flow [m/s]; sizes eddy viscosity + model choice
+  # turbulence_length_scale: 1.0  # integral length scale [m]; defaults to prewet_depth
+  # velocity_diffusivity: 2.0  # constant eddy viscosity [m2/s]; auto from U for model 1
+  # CFL-adaptive marching to steady state (variable_timestep true by default): the
+  # desired_courant sets the target Courant number. 0.6 (the default) is conservative
+  # and stable on the fine channel mesh; raise it toward ~0.9 to converge in fewer
+  # steps, or raise n_time_steps if a run has not converged within the budget.
+  # desired_courant: 0.6
   # outflow (downstream) boundary type:
   #   stage_discharge -> prescribed water level (cli 5 4 4) read from the
   #                      inputs.stage_discharge rating curve at the simulated Q
@@ -176,12 +194,16 @@ hydrodynamics:
   # fixed downstream water level, only used when outflow_condition: elevation:
   # prescribed_elevation: 0.0  # m a.s.l.
   # prescribed_flowrate: 47.2  # override the upstream Q; else the mean of the inflow series
-  # pre-wetting (warm start): seed this water depth [m] on the channel mesh-zone
-  # nodes (dry elsewhere) and continue the run from it, so wetting need not start
-  # from a dry bed. Speeds up steady runs; the mesh-convergence study sets it.
-  # 1.0 m comfortably wets the ~130 m channel (normal depth ~0.5 m at Q=47) so the
-  # prescribed inflow can establish without the dry-bed deadlock.
-  prewet_depth: 1.0
+  # INITIAL CONDITION = dry start (default): the domain starts dry except a thin
+  # water plug at the inflow line (a fully dry bed makes DEBIMP abort at the
+  # prescribed-Q inflow). Tune the plug if needed:
+  # dry_start_depth: 0.5    # inflow-plug seed depth [m]; raise if DEBIMP reports a
+  #                         # supercritical entrance, lower for a thinner plug
+  # dry_start_extent: 7.5   # plug buffer around the inflow line [m] (default ~5 cells)
+  # pre-wetting (warm start) - the ALTERNATIVE to the dry start: wet the whole
+  # channel mesh-zone to this depth [m] up front (needs inputs.mesh_zones). The
+  # mesh-convergence study sets it internally; leave it off for a dry initial run.
+  # prewet_depth: 1.0
 
 # morphodynamics:              # optional GAIA extension (v1 focuses on 2D hydraulics)
 #   enabled: true

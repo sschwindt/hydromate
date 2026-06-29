@@ -144,10 +144,22 @@ def run_pipeline_test(tmp: Path) -> None:
 
     cas = Path(art.cas_file).read_text()
     assert "PRESCRIBED FLOWRATES" in cas and "FRICTION DATA FILE" in cas
+    # the steady run auto-stops at steady state instead of running all the time steps
+    assert "STOP IF A STEADY STATE IS REACHED : YES" in cas
     # SCALAR VELOCITY ('M') is output so HydroBayesCal can read it from the results
     printouts = next(line for line in cas.splitlines()
                      if line.startswith("VARIABLES FOR GRAPHIC PRINTOUTS"))
     assert "M" in [c.strip() for c in printouts.split("'")[1].split(",")]
+
+    # dry start (default): the run continues from a dry-start IC whose only wet nodes
+    # are the inflow plug (so DEBIMP can establish the inflow), dry everywhere else.
+    assert "PREVIOUS COMPUTATION FILE" in cas, "dry start should continue from the IC"
+    assert art.initial_conditions and Path(art.initial_conditions).exists()
+    from hydromate import selafin
+    ic = selafin.read_slf(art.initial_conditions)
+    wet = ic["values"]["WATER DEPTH"] > 0
+    assert wet.any(), "dry start must wet the inflow plug"
+    assert wet.mean() < 0.5, "dry start must leave most of the domain dry"
 
     import pandas as pd
     csv = pd.read_csv(art.calibration_csv)

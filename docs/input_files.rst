@@ -221,19 +221,30 @@ Graphical configurator
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
 Instead of hand-editing YAML you can fill in the configuration as a browser form
-(built with Streamlit). Install the ``gui`` extra and launch it:
+(built with Streamlit). Install the ``gui`` extra and launch it with the
+``hydromate-gui`` console script:
 
 .. code-block:: bash
 
    pip install -e ".[gui]"
-   hydromate-gui
+   hydromate-gui                      # opens a local app in your browser
+   # hydromate-gui --server.port 8600 # extra arguments are forwarded to Streamlit
 
-This opens a local app in your browser (nothing leaves your machine). The form
-mirrors the configuration sections; friction zones and calibration parameters are
-edited as tables. You can load an existing YAML, preview and download the generated
-YAML, save it to a path, and run validation (``--check``) or a full build directly
-- the same actions as the command line. Validation and build operate on the saved
-file, so its relative input paths resolve correctly.
+This opens a local app in your browser (nothing leaves your machine). The form has
+one tab per configuration section - **Project, TELEMAC, Inputs, Mesh, Friction,
+Hydrodynamics, Morphodynamics, Calibration** - mirroring the dataclass schema (the
+anisotropic mesh sizes, the finite-element / ``turbulence_model: auto`` numerics,
+the ``outflow_condition`` and pre-wetting, the roughness/MATID friction, the GAIA
+block), plus a **Workflow** tab summarising the steps. Friction zones, calibration
+parameters, ground-truth sources and sediment classes are edited as tables.
+
+You can load an existing YAML, preview and download the generated YAML, save it to a
+path, and run **Validate** (``--check``) or **Build** directly - the same actions as
+the command line, operating on the saved file so its relative input paths resolve.
+The **Build** button runs the case build (``hydromate <config>``), i.e. workflow
+**step 1**; the later steps (``initial_run.py`` test run, the mesh-convergence study,
+HydroBayesCal, and the optional 3D extension) are run from the per-case scripts - see
+:doc:`usage`.
 
 .. _input-ground-truth:
 

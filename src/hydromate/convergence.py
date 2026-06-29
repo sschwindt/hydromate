@@ -399,7 +399,10 @@ def default_probes(cfg: Config, n: int = 40) -> np.ndarray:
         gdf = gpd.read_file(cfg.inputs.channel_centerline)
         if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
             gdf = gdf.to_crs(epsg=cfg.crs_epsg)
-        line = linemerge(unary_union(gdf.geometry.values))
+        merged = unary_union(gdf.geometry.values)
+        # linemerge only accepts a MultiLineString; a single merged LineString is
+        # already the line (passing it to linemerge raises "Cannot linemerge")
+        line = linemerge(merged) if merged.geom_type == "MultiLineString" else merged
         if line.geom_type == "MultiLineString":
             line = max(line.geoms, key=lambda g: g.length)
         d = np.linspace(0, line.length, n)
@@ -416,18 +419,24 @@ def make_telemac_simulator(cfg: Config, discharge: float, *, base_dir: Path,
     import copy
     import time
 
-    from hydromate import pipeline
+    from hydromate import pipeline, steering
 
     base_dir = Path(base_dir)
+    # pin the turbulence closure to the baseline choice across all grid levels, so
+    # the study isolates the discretization error (per-level auto-selection would
+    # otherwise switch closures as the cell size changes and confound the comparison)
+    pinned_turbulence = steering.select_turbulence_model(cfg)[0]
 
     def simulate(label, ch, fp, probes, quantities):
         lc = copy.deepcopy(cfg)
         lc.mesh.channel_size, lc.mesh.floodplain_size = ch, fp
+        lc.hydrodynamics.turbulence_model = pinned_turbulence
         lc.hydrodynamics.prescribed_flowrate = discharge
         # let TELEMAC pick a CFL-admissible dt for this mesh (iterative convergence
-        # to steady state must be reached before meshes are compared)
+        # to steady state must be reached before meshes are compared); 0.6 is the
+        # conservative, stable target used across the project
         lc.hydrodynamics.variable_timestep = True
-        lc.hydrodynamics.desired_courant = 0.9
+        lc.hydrodynamics.desired_courant = 0.6
         if n_processors:
             lc.telemac.n_processors = n_processors
         # filesystem-safe per-level folder (labels carry spaces/%/+/- that TELEMAC

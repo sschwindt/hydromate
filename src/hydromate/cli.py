@@ -132,7 +132,8 @@ def _run_build(argv: list[str] | None) -> int:
 
     log.info("done. Produced case in %s", cfg.model_dir)
     for name in ("geometry_slf", "boundary_cli", "friction_tbl", "initial_conditions",
-                 "cas_file", "gaia_cas", "ground_truth", "calibration_csv", "hbc_config"):
+                 "cas_file", "unsteady_cas", "liquid_boundaries", "gaia_cas",
+                 "ground_truth", "calibration_csv", "hbc_config"):
         value = getattr(art, name)
         if value:
             log.info("  %-16s %s", name, value)

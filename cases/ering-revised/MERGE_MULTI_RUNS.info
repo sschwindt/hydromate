@@ -1,0 +1,1 @@
+runcode.py --merge   -w steady2d.cas_2026-06-29-17h28min17s   --ncsize 8   telemac2d steady2d.cas

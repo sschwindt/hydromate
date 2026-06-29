@@ -37,7 +37,11 @@ inflow / outflow / measurements ───┤
 
 **Workflow (run in order):** 1. `preprocessing.py` builds the complete TELEMAC case into `tm-simulation/simulation/` (final mesh, `.cli`, `.tbl`, `.cas`, plus the synthesised inflow + outflow rating curve); 1b. `initial_run.py` test-runs exactly that case once to confirm it does not crash (this ends preprocessing); 2. `mesh_convergence_study.py` runs the grid-independence study; 3. `run_Bayes_cal.py` calibrates the built case with HydroBayesCal against the FlowTracker velocity ground truth (the velocity measured at 0.6·h ≈ depth-averaged, compared to `SCALAR VELOCITY`), writing the calibration artifacts into `tm-simulation/calibration-validation/`.
 
+**Optional 3D extension (after the 2D path):** the 2D simulation is the foundation - a 3D run is only built *once the 2D run has produced its hotstart result* (`initial_run.py` → `r2d.slf`) and *after the 2D mesh-convergence study has settled the horizontal resolution*. Then `add3d.py` writes a non-hydrostatic TELEMAC-3D case hotstarted from the 2D result, and - because the vertical discretization `dz` (the number of sigma layers) is a **new** discretization choice that the 2D study never touched - `vertical_convergence_3d.py` runs a **second, separate grid-independence study over the number of vertical layers**, the 3D analogue of step 2.
+
 **Mesh-convergence study** (`hydromate/convergence.py`, step 2) - a grid-independence check: the same steady simulation at a constant discharge on five meshes (the configured baseline plus two coarser at +40%/+20% cell size and two finer at -20%/-40%, each with TELEMAC's variable time step for its own CFL-admissible dt), sampling water depth and scalar velocity at the ground-truth probe points and reporting the relative change between successive refinements, an observed order of convergence and a Grid Convergence Index against a tolerance (default 2%). It writes a **styled `.xlsx` report** to `tm-simulation/postprocessing/` with a **recommended cell size** balancing grid independence against compute time. Results are read back with a small SELAFIN reader (`selafin.read_slf`).
+
+**3D extension & vertical-layer convergence** (`hydromate/threed.py`, `vertical_convergence.py`) - optional, and strictly *after* the 2D path. A 3D run needs the converged 2D result as its hotstart, so it follows `initial_run.py`; and you only build it on a horizontal mesh whose resolution the 2D mesh-convergence study (step 2) has already vouched for - the 3D case reuses that same horizontal mesh. `add3d.py` writes `<case-name>3d.cas` (non-hydrostatic, sigma layers, with the turbulence model and an initial layer count inferred from the 2D result and the time step sized for Courant 0.6). The vertical discretization `dz` is then its **own** discretization question - varying the horizontal cell size in step 2 tells you nothing about how many vertical layers you need - so `vertical_convergence_3d.py` re-runs the 3D case over a ladder of vertical-layer counts on the same horizontal mesh and reports the relative change / observed order / GCI against `dz`, recommending the **fewest grid-independent number of layers**. Outputs go to `tm-simulation/postprocessing/vertical-convergence/`.
 
 ## Install
 
@@ -48,6 +52,18 @@ mamba env create -f environment.yml
 mamba activate hydromate-env
 pip install -e .
 ```
+
+### Configuration editor (GUI)
+
+Instead of hand-editing the YAML you can fill the configuration in as a browser form (Streamlit). Install the `gui` extra and launch it:
+
+```bash
+pip install -e ".[gui]"
+hydromate-gui                 # opens a local app in your browser; nothing leaves your machine
+# hydromate-gui --server.port 8600   # extra args are forwarded to Streamlit
+```
+
+The form mirrors every config section (Project, TELEMAC, Inputs, Mesh, Friction, Hydrodynamics, Morphodynamics, Calibration) plus a **Workflow** tab summarising the steps; friction zones, calibration parameters, ground-truth sources and sediment classes are edited as tables. You can load an existing YAML, preview/download the generated YAML, save it, and run **Validate** (`--check`) or **Build** (the case build = workflow step 1) directly - the later steps (test run, mesh convergence, calibration, the 3D extension) are run from the per-case scripts.
 
 ## Case layout
 
@@ -60,12 +76,15 @@ cases/example-Inn/
   initial_run.py              # step 1b: test-run the built case (tracked)
   mesh_convergence_study.py   # step 2: grid-independence study + xlsx report (tracked)
   run_Bayes_cal.py            # step 3: HydroBayesCal calibration (velocity ground truth) (tracked)
+  add3d.py                    # optional (after 2D): non-hydrostatic 3D case, hotstart from 2D (tracked)
+  vertical_convergence_3d.py  # optional (after 3D): vertical-layer (dz) convergence study (tracked)
   user-sources/        # your large source data - DEMs, GeoPackages, ground truth (gitignored)
   tm-simulation/       # produced artifacts, by workflow phase (gitignored):
     preprocessing/         # DEM clips, meshes, ground-truth table + its hydromate.log
     simulation/            # the TELEMAC case (geometry.slf, .cli, .cas, .tbl, results) + its hydromate.log
     postprocessing/        # general post-processing
     mesh-convergence/      # convergence study: mesh-convergence.xlsx/.txt, per-mesh runs, log
+    vertical-convergence/  # 3D vertical-layer (dz) study: vertical-convergence.xlsx/.txt, per-level runs
     calibration-validation/  # HydroBayesCal artifacts (measurements-calibration.csv, config_Telemac.py)
 ```
 
@@ -88,6 +107,17 @@ python cases/example-Inn/initial_run.py
 python cases/example-Inn/mesh_convergence_study.py
 # step 3 - Bayesian calibration with HydroBayesCal (velocity ground truth)
 python cases/example-Inn/run_Bayes_cal.py            # --prepare-only writes CSV+config without launching
+```
+
+Optional 3D extension - only **after** the 2D hotstart exists (step 1b) and the 2D mesh-convergence study has fixed the horizontal resolution (step 2):
+
+```bash
+# write a non-hydrostatic TELEMAC-3D case, hotstarted from the 2D result (reuses the
+# 2D horizontal mesh; turbulence + initial layer count inferred; Courant 0.6)
+python cases/example-Inn/add3d.py                    # --run also launches telemac3d.py
+# then a SEPARATE grid-independence study for the vertical discretization dz: how many
+# sigma layers are needed (the 2D study only covered the horizontal cell size)
+python cases/example-Inn/vertical_convergence_3d.py
 ```
 
    (A one-shot build without the scripts: `hydromate cases/example-Inn/case-config.yml` - or `--check` to validate, `--dry-run` to also run the solver once.)

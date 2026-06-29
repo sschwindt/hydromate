@@ -9,7 +9,7 @@ hand off to HydroBayesCal.
 Because this steady result is also the **hotstart** seed for the HydroBayesCal
 calibration, the run then gets a flux / mass-balance convergence analysis (via the
 ``pythomac`` package): it finds the simulation time at which the boundary fluxes
-reach mass balance to a tight hotstart tolerance (1e-6), writes ``flux-convergence.png``
+reach mass balance to the hotstart tolerance (1e-4; 0.01% imbalance), writes ``flux-convergence.png``
 and ``convergence-rate.png`` into the simulation folder, and recommends the
 ``NUMBER OF TIME STEPS`` to use for the hotstart so the calibration is not seeded
 with a transient. See ``hydromate.flux_convergence`` for the criterion.

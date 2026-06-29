@@ -27,6 +27,31 @@ chain - each step only makes sense once the previous one has succeeded:
    python cases/example-Inn/initial_run.py              # test-run + hotstart convergence
    python cases/example-Inn/mesh_convergence_study.py   # grid-independence study
 
+Prefer a form to hand-editing the YAML? Launch the browser-based configuration
+editor with ``hydromate-gui`` (see :ref:`the graphical configurator <input-config>`);
+its **Build** button is the same build step as above.
+
+Optional 3D extension (after the 2D path)
+-----------------------------------------
+
+A 3D simulation builds on the 2D one and is run **only after it**: it needs the 2D
+**hotstart** result (``r2d.slf`` from the initial run) and reuses the horizontal mesh
+whose resolution the mesh-convergence study has already validated.
+
+#. **3D case** (``add3d.py``) - write a non-hydrostatic TELEMAC-3D case
+   (``<case-name>3d.cas``) hotstarted from the 2D result; the number of sigma layers
+   and the turbulence model are inferred from ``r2d.slf`` and the time step is sized
+   for a Courant number of 0.6 (``--run`` also launches ``telemac3d.py``).
+#. **Vertical-layer convergence** (``vertical_convergence_3d.py``) - the number of
+   vertical layers (``dz``) is a *new* discretization choice the 2D mesh-convergence
+   study never covered, so it gets its **own** grid-independence study over the layer
+   count, the 3D analogue of the mesh-convergence step.
+
+.. code-block:: bash
+
+   python cases/example-Inn/add3d.py                    # write (and --run) the 3D case
+   python cases/example-Inn/vertical_convergence_3d.py  # vertical-layer convergence
+
 The ``cases/example-Inn/`` scripts drive the worked Inn example from its
 ``case-config.yml``; copy the data-free ``cases/case-template/`` folder to start
 your own case.
@@ -152,9 +177,18 @@ reach (set in the ``hydrodynamics`` config block):
   steep bathymetry; ``CONTROL OF LIMITS`` clips H/U/V as a divergence guard;
   ``PRINTING CUMULATED FLOWRATES : YES`` writes the per-boundary fluxes the
   hotstart convergence check reads.
-* **Pre-wetting** (``prewet_depth``) seeds the channel with a smooth, thalweg-
-  following water surface and continues the run from it, so the prescribed inflow
-  establishes without advancing the wetting front from a dry bed.
+* **Steady-state auto-stop** (``stop_if_steady``, default on) - the steady run emits
+  ``STOP IF A STEADY STATE IS REACHED : YES`` with ``STOP CRITERIA`` (the relative
+  change thresholds for ``(U,V)``, ``H`` and tracers, default ``1.E-4``), so it halts
+  as soon as the solution stops changing rather than running all ``n_time_steps``.
+  Omitted for the unsteady hydrograph run; TELEMAC-3D has no such keyword.
+* **Dry start (default)** - the initial run starts dry except a thin water plug on
+  the nodes near the inflow line (``dry_start_depth`` over ``dry_start_extent``), so
+  the prescribed-Q inflow can establish (a fully dry bed makes TELEMAC's ``DEBIMP``
+  abort) while the rest of the domain wets from the inflow. **Pre-wetting**
+  (``prewet_depth``) is the alternative: it seeds the whole channel with a smooth,
+  thalweg-following surface up front (used by the mesh-convergence study to skip the
+  wetting front per mesh), and needs ``inputs.mesh_zones``.
 
 Boundary conditions come from the :ref:`liquid-boundary lines <input-geodata>`:
 inflow nodes get a prescribed discharge (the total reach Q split across inflow

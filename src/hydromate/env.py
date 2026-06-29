@@ -47,8 +47,16 @@ class TelemacRuntime:
 
     def run_solver(self, cas_file: str | Path, cwd: str | Path,
                    ncsize: int | None = None,
-                   sortie: bool = True) -> subprocess.CompletedProcess:
-        """Launch the configured solver on *cas_file* (used for the dry test run).
+                   sortie: bool = True,
+                   solver: str | None = None,
+                   check: bool = True) -> subprocess.CompletedProcess:
+        """Launch a TELEMAC solver on *cas_file* (used for the dry test run).
+
+        *solver* overrides the configured solver launcher (default
+        ``self.env.solver``, e.g. ``telemac2d``); pass ``"telemac3d"`` to run the
+        3D case written by ``add3d.py``. With ``check=False`` a non-zero exit is
+        returned (in ``returncode``) instead of raising, so a caller running several
+        cases (e.g. the vertical convergence study) can report which one failed.
 
         *sortie* (default True) adds ``-s --nozip`` so TELEMAC writes a plain-text
         ``<cas>_<timestamp>.sortie`` listing next to the case. That listing carries
@@ -59,8 +67,9 @@ class TelemacRuntime:
         ncsize = ncsize or self.env.n_processors
         parallel = f" --ncsize={ncsize}" if ncsize and ncsize > 1 else ""
         sortie_flags = " -s --nozip" if sortie else ""
-        cmd = f"{self.env.solver}.py {shlex.quote(str(cas_file))}{parallel}{sortie_flags}"
-        return self.run(cmd, cwd=cwd)
+        launcher = solver or self.env.solver
+        cmd = f"{launcher}.py {shlex.quote(str(cas_file))}{parallel}{sortie_flags}"
+        return self.run(cmd, cwd=cwd, check=check)
 
     def check_available(self) -> str:
         """Return the TELEMAC python version string, raising if the env is broken."""
