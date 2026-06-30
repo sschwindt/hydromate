@@ -33,15 +33,17 @@ inflow / outflow / measurements ───┤
 * **Stage 4** (`hydromate/steering.py`) - friction `.tbl` (one row per friction zone, perturbed by HydroBayesCal) and the `.cas`; GAIA `.cas` when morphodynamics on. Zones come from `friction.zones` (MATID) or, for the Inn case, are derived from the roughness table (`<Zone ID> NIKU <ks> NULL`) so they match the geometry's per-node `FRIC_ID`.
 * **Stage 5** (`hydromate/calibration.py`) - calibration CSV from measurements and the HydroBayesCal `config_Telemac.py`.
 
-**Logging** - each script/phase writes a compound, timestamped `hydromate.log` into its own output folder (the build by `preprocessing.py`/`initial_run.py` -> `tm-simulation/simulation/`, the mesh-convergence study -> `tm-simulation/mesh-convergence/`), capturing all actions, the elapsed time of each calculation step (`START`/`DONE ... in N.NNs`), and every warning and error. The console mirrors it; pass `-v` for DEBUG.
+**Logging** - each script/phase writes a compound, timestamped `hydromate.log` into its own output folder (the build by `preprocessing.py`/`initial_run.py` -> `hydromate-case/simulation/`, the mesh-convergence study -> `hydromate-case/mesh-convergence/`), capturing all actions, the elapsed time of each calculation step (`START`/`DONE ... in N.NNs`), and every warning and error. The console mirrors it; pass `-v` for DEBUG.
 
-**Workflow (run in order):** 1. `preprocessing.py` builds the complete TELEMAC case into `tm-simulation/simulation/` (final mesh, `.cli`, `.tbl`, `.cas`, plus the synthesised inflow + outflow rating curve); 1b. `initial_run.py` test-runs exactly that case once to confirm it does not crash (this ends preprocessing); 2. `mesh_convergence_study.py` runs the grid-independence study; 3. `run_Bayes_cal.py` calibrates the built case with HydroBayesCal against the FlowTracker velocity ground truth (the velocity measured at 0.6·h ≈ depth-averaged, compared to `SCALAR VELOCITY`), writing the calibration artifacts into `tm-simulation/calibration-validation/`.
+**Workflow (run in order):** 1. `preprocessing.py` builds the complete TELEMAC case into `hydromate-case/simulation/` (final mesh, `.cli`, `.tbl`, `.cas`) at the inflow Q (`hydrodynamics.prescribed_flowrate`) and outflow stage prescription read from **this case's** config - the shared `hydromate.prepare_steady_inputs` helper synthesises a constant inflow series / outflow rating only when those inputs are missing; 1b. `initial_run.py` test-runs exactly that case once to confirm it does not crash, then runs a boundary-flux convergence analysis via **pythomac** that writes the same four files as pythomac's example into `simulation/` (`extracted-fluxes.csv` + `flux-convergence.png`, `convergence-rate.csv` + `convergence-rate.png`) - this ends preprocessing; 2. `mesh_convergence_study.py` runs the grid-independence study; 3. `run_Bayes_cal.py` calibrates the built case with HydroBayesCal against the FlowTracker velocity ground truth (the velocity measured at 0.6·h ≈ depth-averaged, compared to `SCALAR VELOCITY`), writing the calibration artifacts into `hydromate-case/calibration-validation/`.
+
+**Initial-run numerics** - the 2D case uses the finite-element kernel with an auto-selected turbulence model (k-epsilon / Smagorinski / Spalart-Allmaras by mesh resolution) and a CFL-adaptive time step. The steering ships **compute-stable defaults** so the wetting/drying steady march does not explode: target Courant 0.30 (`time_step: 0.25` is only the start step), `IMPLICITATION FOR DEPTH/VELOCITY 0.80`, `FREE SURFACE GRADIENT COMPATIBILITY 0.9`, `DISCRETIZATIONS IN SPACE 11;11`, `H CLIPPING : NO` and a raised k-epsilon solve budget; the graphic printout is `'U,V,S,B,H,M,Q,F'` plus `K,E` (TKE + dissipation) for k-epsilon. It is a **dry start**: only a thin water plug at the inflow line is seeded so the prescribed-Q boundary can establish (a fully dry bed makes TELEMAC's `DEBIMP` abort), and the rest of the domain wets from the inflow - set `hydrodynamics.prewet_depth` to warm-start the whole channel instead. With the variable time step the run is bounded by `DURATION` (`hydrodynamics.duration`, seconds), and **convergence is judged by the boundary-flux balance**, not by the unreliable steady-state auto-stop (off by default). All of this is emitted by `preprocessing.py` (via `pipeline.run`); the mesh-convergence study reuses the same numerics per mesh.
 
 **Optional 3D extension (after the 2D path):** the 2D simulation is the foundation - a 3D run is only built *once the 2D run has produced its hotstart result* (`initial_run.py` → `r2d.slf`) and *after the 2D mesh-convergence study has settled the horizontal resolution*. Then `add3d.py` writes a non-hydrostatic TELEMAC-3D case hotstarted from the 2D result, and - because the vertical discretization `dz` (the number of sigma layers) is a **new** discretization choice that the 2D study never touched - `vertical_convergence_3d.py` runs a **second, separate grid-independence study over the number of vertical layers**, the 3D analogue of step 2.
 
-**Mesh-convergence study** (`hydromate/convergence.py`, step 2) - a grid-independence check: the same steady simulation at a constant discharge on five meshes (the configured baseline plus two coarser at +40%/+20% cell size and two finer at -20%/-40%, each with TELEMAC's variable time step for its own CFL-admissible dt), sampling water depth and scalar velocity at the ground-truth probe points and reporting the relative change between successive refinements, an observed order of convergence and a Grid Convergence Index against a tolerance (default 2%). It writes a **styled `.xlsx` report** to `tm-simulation/postprocessing/` with a **recommended cell size** balancing grid independence against compute time. Results are read back with a small SELAFIN reader (`selafin.read_slf`).
+**Mesh-convergence study** (`hydromate/convergence.py`, step 2) - a grid-independence check: the same steady simulation at a constant discharge on five meshes (the configured baseline plus two coarser at +40%/+20% cell size and two finer at -20%/-40%, each with TELEMAC's variable time step for its own CFL-admissible dt), sampling water depth and scalar velocity at the ground-truth probe points and reporting the relative change between successive refinements, an observed order of convergence and a Grid Convergence Index against a tolerance (default 2%). It writes a **styled `.xlsx` report** to `hydromate-case/postprocessing/` with a **recommended cell size** balancing grid independence against compute time. Results are read back with a small SELAFIN reader (`selafin.read_slf`).
 
-**3D extension & vertical-layer convergence** (`hydromate/threed.py`, `vertical_convergence.py`) - optional, and strictly *after* the 2D path. A 3D run needs the converged 2D result as its hotstart, so it follows `initial_run.py`; and you only build it on a horizontal mesh whose resolution the 2D mesh-convergence study (step 2) has already vouched for - the 3D case reuses that same horizontal mesh. `add3d.py` writes `<case-name>3d.cas` (non-hydrostatic, sigma layers, with the turbulence model and an initial layer count inferred from the 2D result and the time step sized for Courant 0.6). The vertical discretization `dz` is then its **own** discretization question - varying the horizontal cell size in step 2 tells you nothing about how many vertical layers you need - so `vertical_convergence_3d.py` re-runs the 3D case over a ladder of vertical-layer counts on the same horizontal mesh and reports the relative change / observed order / GCI against `dz`, recommending the **fewest grid-independent number of layers**. Outputs go to `tm-simulation/postprocessing/vertical-convergence/`.
+**3D extension & vertical-layer convergence** (`hydromate/threed.py`, `vertical_convergence.py`) - optional, and strictly *after* the 2D path. A 3D run needs the converged 2D result as its hotstart, so it follows `initial_run.py`; and you only build it on a horizontal mesh whose resolution the 2D mesh-convergence study (step 2) has already vouched for - the 3D case reuses that same horizontal mesh. `add3d.py` writes `<case-name>3d.cas` (non-hydrostatic, sigma layers, with the turbulence model and an initial layer count inferred from the 2D result and the time step sized for Courant 0.6). The vertical discretization `dz` is then its **own** discretization question - varying the horizontal cell size in step 2 tells you nothing about how many vertical layers you need - so `vertical_convergence_3d.py` re-runs the 3D case over a ladder of vertical-layer counts on the same horizontal mesh and reports the relative change / observed order / GCI against `dz`, recommending the **fewest grid-independent number of layers**. Outputs go to `hydromate-case/postprocessing/vertical-convergence/`.
 
 ## Install
 
@@ -79,7 +81,7 @@ cases/example-Inn/
   add3d.py                    # optional (after 2D): non-hydrostatic 3D case, hotstart from 2D (tracked)
   vertical_convergence_3d.py  # optional (after 3D): vertical-layer (dz) convergence study (tracked)
   user-sources/        # your large source data - DEMs, GeoPackages, ground truth (gitignored)
-  tm-simulation/       # produced artifacts, by workflow phase (gitignored):
+  hydromate-case/       # produced artifacts, by workflow phase (gitignored):
     preprocessing/         # DEM clips, meshes, ground-truth table + its hydromate.log
     simulation/            # the TELEMAC case (geometry.slf, .cli, .cas, .tbl, results) + its hydromate.log
     postprocessing/        # general post-processing
@@ -88,7 +90,7 @@ cases/example-Inn/
     calibration-validation/  # HydroBayesCal artifacts (measurements-calibration.csv, config_Telemac.py)
 ```
 
-Config paths resolve relative to `case-config.yml`, so `user-sources/...` points at your data and the build writes into `tm-simulation/`. Each script logs into its own output folder (`preprocessing/`, `simulation/`, `postprocessing/`). Only the config, scripts and docs are version-controlled; `user-sources/` and `tm-simulation/` stay out of git (they run to gigabytes - see the 20 MB CI guard in `.github/workflows/`).
+Config paths resolve relative to `case-config.yml`, so `user-sources/...` points at your data and the build writes into `hydromate-case/`. Each script logs into its own output folder (`preprocessing/`, `simulation/`, `postprocessing/`). Only the config, scripts and docs are version-controlled; `user-sources/` and `hydromate-case/` stay out of git (they run to gigabytes - see the 20 MB CI guard in `.github/workflows/`).
 
 ## Use
 
@@ -99,7 +101,7 @@ Config paths resolve relative to `case-config.yml`, so `user-sources/...` points
 5. Run the workflow, in order:
 
 ```bash
-# step 1 - build the complete TELEMAC case into tm-simulation/simulation/
+# step 1 - build the complete TELEMAC case into hydromate-case/simulation/
 python cases/example-Inn/preprocessing.py
 # step 1b - test-run the built case once (confirms it does not crash; ends preprocessing)
 python cases/example-Inn/initial_run.py
@@ -124,7 +126,7 @@ python cases/example-Inn/vertical_convergence_3d.py
 6. **Step 3 - calibrate** (in the HydroBayesCal clone, with its env):
 
 ```bash
-cd cases/example-Inn/tm-simulation/calibration-validation
+cd cases/example-Inn/hydromate-case/calibration-validation
 python /home/schwindt/github/hydrobayescal/bal_telemac.py --config config_Telemac.py
 ```
 

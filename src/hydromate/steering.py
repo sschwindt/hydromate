@@ -437,6 +437,19 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
     regime = "unsteady" if unsteady else "steady"
     if turbulence_model is None:
         turbulence_model = select_turbulence_model(cfg, None)[0]
+    # finalise the turbulence model up front (finite volumes accept only model 1) so
+    # the graphic-printout list and every block below agree on the same model.
+    turb_model = turbulence_model
+    if h.finite_volumes and turb_model != 1:
+        # FV's init_fv.f rejects ITURB>=2 ('TURBULENCE MODEL NOT TAKEN INTO ACCOUNT');
+        # k-epsilon (3) / Smagorinski (4) / Spalart-Allmaras (6) need finite elements.
+        log.warning("finite volumes accept only TURBULENCE MODEL 1 (constant "
+                    "viscosity); overriding the selected model %d (%s)",
+                    turb_model, TURB_NAMES.get(turb_model, "?"))
+        turb_model = 1
+    # K (TKE) and E (its dissipation) only exist for the k-epsilon model (3); request
+    # them as graphic outputs there so the results carry the turbulence fields too.
+    printvars = "U,V,S,B,H,M,Q,F" + (",K,E" if turb_model == 3 else "")
 
     if previous_computation:
         # since TELEMAC release 9.0 the boolean COMPUTATION CONTINUED keyword is
@@ -449,10 +462,21 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
     else:
         initial_conditions = [f"INITIAL CONDITIONS : '{h.initial_conditions}'"]
 
-    # total simulated time: DURATION (seconds) for a hydrograph run, else a fixed
-    # NUMBER OF TIME STEPS for the steady march to equilibrium.
-    duration_line = (f"DURATION : {duration:.1f}" if duration is not None
-                     else f"NUMBER OF TIME STEPS : {h.n_time_steps}")
+    # how the run is bounded. A hydrograph run uses DURATION (seconds). For the steady
+    # march, NUMBER OF TIME STEPS bounds a FIXED-step run - but it does NOT bound a
+    # VARIABLE TIME-STEP run (the CFL-driven dt is unknown a priori, so TELEMAC needs a
+    # simulated DURATION; with NUMBER OF TIME STEPS the run never terminates). So cap a
+    # variable-step run by DURATION = n_time_steps * time_step; the steady-state
+    # auto-stop ends it at equilibrium well before this generous fallback.
+    if duration is not None:
+        duration_line = f"DURATION : {duration:.1f}"
+    elif h.variable_timestep:
+        # explicit hydrodynamics.duration decouples the simulated time from the small
+        # CFL start step; else fall back to n_time_steps * time_step.
+        sim_duration = h.duration if h.duration is not None else h.n_time_steps * h.time_step
+        duration_line = f"DURATION : {sim_duration:.1f}"
+    else:
+        duration_line = f"NUMBER OF TIME STEPS : {h.n_time_steps}"
 
     lines: list[str] = [
         "/" + "-" * 68,
@@ -470,7 +494,8 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         "MASS-BALANCE : YES",
         # M = scalar velocity (sqrt(u^2+v^2)); written so the results carry
         # SCALAR VELOCITY directly, which HydroBayesCal reads as a calibration QoI.
-        "VARIABLES FOR GRAPHIC PRINTOUTS : 'U,V,S,B,H,M,Q,F'",
+        # K,E (TKE + dissipation) are appended for the k-epsilon model (see above).
+        f"VARIABLES FOR GRAPHIC PRINTOUTS : '{printvars}'",
         "PRINTING CUMULATED FLOWRATES : YES",
         "/",
         "/ TIME",
@@ -484,28 +509,20 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         duration_line,
         f"GRAPHIC PRINTOUT PERIOD : {h.graphic_printout_period}",
         f"LISTING PRINTOUT PERIOD : {h.listing_printout_period}",
-        # auto-stop the STEADY march as soon as the solution stops changing (relative
-        # change in (U,V), H and tracers all below STOP CRITERIA) instead of running
-        # all NUMBER OF TIME STEPS - this is what makes a steady run finish in far
-        # fewer steps. Omitted for the unsteady hydrograph run (must run its full
-        # duration); TELEMAC-3D has no equivalent keyword (see hydromate.threed).
+        # OPT-IN steady-state auto-stop (off by default, steady run only). TELEMAC's
+        # steady.f stops when |X - X_prev| over two CONSECUTIVE TIME STEPS falls below
+        # STOP CRITERIA - an ABSOLUTE per-step change. With VARIABLE TIME-STEP the dt is
+        # tiny, so this triggers during a slow transient (still-filling reach) long
+        # before the fluxes balance; convergence is judged by the flux balance instead
+        # (hydromate.flux_convergence). Only emit it for a steady, FIXED-step run.
         *(["STOP IF A STEADY STATE IS REACHED : YES",
            f"STOP CRITERIA : {h.stop_criteria}"]
-          if (h.stop_if_steady and not unsteady) else []),
+          if (h.stop_if_steady and not unsteady and not h.variable_timestep) else []),
         "/",
     ]
 
     # numerics: finite elements (default) vs finite volumes ------------------
-    turb_model = turbulence_model
     if h.finite_volumes:
-        # FV accepts only constant viscosity (TELEMAC's init_fv.f rejects ITURB>=2:
-        # 'TURBULENCE MODEL NOT TAKEN INTO ACCOUNT'); k-epsilon (3) / Smagorinski (4)
-        # / Spalart-Allmaras (6) require the finite-element kernel.
-        if turb_model != 1:
-            log.warning("finite volumes accept only TURBULENCE MODEL 1 (constant "
-                        "viscosity); overriding the selected model %d (%s)",
-                        turb_model, TURB_NAMES.get(turb_model, "?"))
-            turb_model = 1
         lines += [
             "/ NUMERICS (finite volumes: robust for transcritical wetting/drying;",
             "/ explicit scheme -> time step is CFL-bound via VARIABLE TIME-STEP above)",
@@ -518,9 +535,16 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
             "/ NUMERICS (finite elements)",
             "ADVECTION : YES",
             "TREATMENT OF THE LINEAR SYSTEM : 2",
+            # LINEAR elements for H and U,V - required by the distributive advection
+            # scheme 14 (else TELEMAC stops on quasi-bubble/quadratic elements).
+            f"DISCRETIZATIONS IN SPACE : {h.discretizations_in_space}",
             "SCHEME FOR ADVECTION OF VELOCITIES : 14",
-            "IMPLICITATION FOR DEPTH : 0.55",
-            "IMPLICITATION FOR VELOCITY : 0.55",
+            f"MAXIMUM NUMBER OF ITERATIONS FOR ADVECTION SCHEMES : {h.max_advection_iterations}",
+            f"NUMBER OF SUB-ITERATIONS FOR NON-LINEARITIES : {h.advection_sub_iterations}",
+            # more-implicit depth/velocity update (0.80 > the explicit 0.55 default)
+            # keeps the wetting front from oscillating into divergence.
+            f"IMPLICITATION FOR DEPTH : {h.implicitation:.2f}",
+            f"IMPLICITATION FOR VELOCITY : {h.implicitation:.2f}",
             "MASS-LUMPING ON H : 1.",
             "MASS-LUMPING ON VELOCITY : 1.",
             # a preconditioned solver (2 + PRECONDITIONING 2) converges where the
@@ -556,6 +580,9 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
             "CONTINUITY CORRECTION : YES",
             "OPTION FOR THE TREATMENT OF TIDAL FLATS : 1",
             "TREATMENT OF NEGATIVE DEPTHS : 2",
+            # leave H unclipped so drying is handled by the treatment above, not by a
+            # hard depth clip that would inject mass and destabilise the wetting front.
+            f"H CLIPPING : {'YES' if h.h_clipping else 'NO'}",
         ]
 
     lines += [
@@ -593,7 +620,10 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         # ill-conditioned -> the transient "GRACJG: EXCEEDING MAXIMUM ITERATIONS 50"
         # warning); 1e-6 is plenty for k/epsilon and converges in fewer iterations.
         *([f"ACCURACY OF K : {h.turbulence_solver_accuracy}",
-           f"ACCURACY OF EPSILON : {h.turbulence_solver_accuracy}"]
+           f"ACCURACY OF EPSILON : {h.turbulence_solver_accuracy}",
+           # raise the k-epsilon solve budget (default 50 is too few on the
+           # ill-conditioned dry-start domain) without relaxing the accuracy above.
+           f"MAXIMUM NUMBER OF ITERATIONS FOR K AND EPSILON : {h.max_keps_iterations}"]
           if turb_model == 3 else []),
         *([f"ACCURACY OF SPALART-ALLMARAS : {h.turbulence_solver_accuracy}"]
           if turb_model == 6 else []),

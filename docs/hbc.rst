@@ -10,7 +10,7 @@ What hydromate hands over
 -------------------------
 
 Pipeline stage 5 writes two artifacts into the calibration directory
-(``tm-simulation/calibration-validation/``):
+(``hydromate-case/calibration-validation/``):
 
 * ``measurements-calibration.csv`` - the calibration points, one row per
   measurement location: ``id, x, y, z, <QTY>_DATA, <QTY>_ERROR`` for each
@@ -54,7 +54,7 @@ Running the calibration
 
 .. code-block:: bash
 
-   cd cases/<your-case>/tm-simulation/calibration-validation
+   cd cases/<your-case>/hydromate-case/calibration-validation
    python /path/to/hydrobayescal/bal_telemac.py --config config_Telemac.py
 
 HydroBayesCal then builds a Gaussian-process surrogate over the parameter space,

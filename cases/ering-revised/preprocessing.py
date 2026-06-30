@@ -1,19 +1,22 @@
-"""Preprocessing + case build for the Inn case (workflow step 1).
+"""Preprocessing + case build (TEMPLATE, workflow step 1).
 
-Assembles a complete, ready-to-run TELEMAC-2D case at a constant discharge:
-clips the DEM(s), builds the mesh (anisotropic + roughness), classifies the
-liquid boundaries and writes the case into ``tm-simulation/simulation/`` -- the
-final mesh ``geometry.slf``, the boundary-conditions ``boundaries.cli``, the
-friction ``friction.tbl`` and the steering ``steady2d.cas`` -- plus the
-HydroBayesCal artifacts in ``calibration-validation/`` and the ground-truth /
-DEM-clip products in ``preprocessing/``. A constant inflow and the outflow
-stage-discharge rating curve are synthesised if missing.
+Assembles a complete, ready-to-run TELEMAC-2D case at the steady discharge set in
+``case-config.yml`` (``hydrodynamics.prescribed_flowrate``): clips the DEM(s), builds
+the mesh (anisotropic + roughness), classifies the liquid boundaries and writes the
+case into ``hydromate-case/simulation/`` -- the final mesh ``geometry.slf``, the
+boundary-conditions ``boundaries.cli``, the friction ``friction.tbl`` and the steering
+``steady2d.cas`` -- plus the HydroBayesCal artifacts in ``calibration-validation/`` and
+the ground-truth / DEM-clip products in ``preprocessing/``. A constant inflow series and
+the outflow stage-discharge rating curve are synthesised if missing.
+
+The inflow Q (m3/s) and the outflow stage (H) prescription come from THIS case's
+config, never from a value hard-coded here (see ``hydromate.prepare_steady_inputs``).
 
 It does NOT launch the solver: run ``initial_run.py`` next to test-run the built
 case (that confirms it does not crash, ending the preprocessing step). Then run
 ``mesh_convergence_study.py``, and finally HydroBayesCal.
 
-Run: mamba run -n hydromate-env python cases/example-Inn/preprocessing.py
+Run: mamba run -n hydromate-env python cases/<your-case>/preprocessing.py
 """
 
 from __future__ import annotations
@@ -21,49 +24,25 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from hydromate import pipeline, setup_logging, synthesize_outflow_rating
+from hydromate import pipeline, prepare_steady_inputs, setup_logging
 from hydromate.config import load_config
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)
 
-DISCHARGE = 2.0        # constant steady discharge [m3/s] the case is built for
-BANK_SLOPE = 1.0        # trapezoidal channel banks (H:V) for the synthesised rating
-
-
-def prepare_constant_discharge(cfg, q: float) -> None:
-    """Prescribe a constant discharge and synthesise a tiny inflow series if none."""
-    cfg.hydrodynamics.prescribed_flowrate = q
-    if cfg.inputs.inflow is None or not Path(cfg.inputs.inflow).exists():
-        path = cfg.preprocessing_path("inflow-constant.csv")
-        path.write_text(f"datetime,Q\n2020-11-01 00:00,{q}\n2020-11-01 01:00,{q}\n")
-        cfg.inputs.inflow = path
-        print(f"using synthesised constant inflow Q={q:g} m3/s -> {path.name}")
-
-
-def prepare_outflow_rating(cfg, q: float) -> None:
-    """Synthesise the outflow stage-discharge curve from the geodata if missing
-    (width from the outflow boundary line, bed + reach slope from the DEM,
-    trapezoidal banks BANK_SLOPE, roughness from friction.boundary_*)."""
-    if cfg.hydrodynamics.outflow_condition != "stage_discharge":
-        return
-    sd = cfg.inputs.stage_discharge
-    if sd is None or not Path(sd).exists():
-        path = synthesize_outflow_rating(cfg, q, side_slope=BANK_SLOPE)
-        cfg.inputs.stage_discharge = path
-        print(f"generated outflow rating curve at Q={q:g} m3/s -> {path}")
-
 
 def main() -> None:
     cfg.ensure_dirs()
     # the mesh-convergence study (step 2) writes into this folder; create it now
-    # so it already exists in the produced tm-simulation/ tree after preprocessing
+    # so it already exists in the produced hydromate-case/ tree after preprocessing
     cfg.postprocessing_path("mesh-convergence").mkdir(parents=True, exist_ok=True)
     setup_logging(cfg.model_path(cfg.log_file))   # build log in simulation/
     print(f"case '{cfg.name}' -> building into {cfg.model_dir}")
 
-    prepare_constant_discharge(cfg, DISCHARGE)
-    prepare_outflow_rating(cfg, DISCHARGE)
+    # steady discharge + outflow rating from THIS case's config (inflow/rating
+    # synthesised only if missing); dry start left untouched (production initial run)
+    q = prepare_steady_inputs(cfg)
+    print(f"building at the configured steady discharge Q={q:g} m3/s")
 
     try:
         art = pipeline.run(cfg, validate_env=False, dry_run=False)
@@ -83,7 +62,7 @@ def main() -> None:
     print(f"  steering  : {art.cas_file.name}")
     print(f"  HBC config: {art.hbc_config}")
     print(f"  convergence dir ready: {cfg.postprocessing_path('mesh-convergence')}")
-    print("next: test-run it with  python cases/example-Inn/initial_run.py")
+    print("next: test-run it with  python cases/<your-case>/initial_run.py")
 
 
 if __name__ == "__main__":

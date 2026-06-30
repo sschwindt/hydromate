@@ -237,17 +237,31 @@ class Hydrodynamics:
     """Telemac2d steering knobs and prescribed boundary values."""
 
     regime: str = "steady"             # steady | unsteady
-    time_step: float = 1.0
-    n_time_steps: int = 15000          # max steps; the steady run usually auto-stops sooner
+    # initial / maximum step. With variable_timestep on, TELEMAC shrinks it to hold
+    # DESIRED COURANT NUMBER, so this is only the conservative starting step (0.25 s
+    # keeps the first transient stable on a dry/wetting bed); the Courant target drives
+    # the marching step thereafter.
+    time_step: float = 0.25
+    n_time_steps: int = 15000          # caps a FIXED-step run; for the variable-step run see duration
+    # total simulated time [s] for the steady (variable-timestep) march. When None it
+    # falls back to n_time_steps * time_step. Set it explicitly so the simulated
+    # duration is decoupled from the (small) CFL start step above.
+    duration: float | None = None
     graphic_printout_period: int = 500
     listing_printout_period: int = 500
-    # auto-stop the STEADY run when it reaches a steady state (TELEMAC's STOP IF A
-    # STEADY STATE IS REACHED) instead of grinding through all n_time_steps; the run
-    # halts once the relative change in (U,V), H and tracers all fall below the three
-    # stop_criteria. Applies to the steady run only - the unsteady hydrograph run must
-    # march its full duration, and TELEMAC-3D has no such keyword.
-    stop_if_steady: bool = True
-    stop_criteria: str = "1.E-4;1.E-4;1.E-4"   # rel-change thresholds: (U,V); H; tracers
+    # OPT-IN steady-state auto-stop (TELEMAC's STOP IF A STEADY STATE IS REACHED).
+    # OFF by default because it is UNRELIABLE with the variable time step: TELEMAC's
+    # steady.f compares two CONSECUTIVE TIME STEPS with an ABSOLUTE per-step threshold
+    # (|H - H_prev| < stop_criteria etc.), and the CFL-driven dt is tiny, so during a
+    # slow transient (e.g. a low-discharge reach still filling from a dry start) the
+    # per-step change drops below 1.E-4 m long before the boundary fluxes balance -
+    # halting the run far from steady state. Convergence is judged instead by the
+    # boundary-flux balance (hydromate.flux_convergence). Enable this only with a
+    # FIXED time step (variable_timestep: false), where a per-step change is meaningful.
+    # stop_criteria order is H ; (U,V) ; tracers (TELEMAC's steady.f; the dico's English
+    # help listing (U,V) first is wrong) - absolute changes in m, m/s, tracer units.
+    stop_if_steady: bool = False
+    stop_criteria: str = "1.E-4;1.E-4;1.E-4"   # absolute per-step change: H; (U,V); tracers
     # let TELEMAC adapt the time step to the CFL condition (DESIRED COURANT NUMBER):
     # a fixed time_step on a fine channel mesh (sub-metre cells) is a CFL violation
     # that diverges; with this on, time_step is only the initial/maximum step.
@@ -255,7 +269,10 @@ class Hydrodynamics:
     # run); raise it toward ~0.9 to march to steady state in fewer steps, or raise
     # n_time_steps if a run has not converged within the budget.
     variable_timestep: bool = True
-    desired_courant: float = 0.6
+    # 0.30 is a conservative, explosion-safe Courant target for the wetting/drying
+    # steady march with k-epsilon on the fine channel mesh; raise it toward ~0.6-0.9
+    # to reach steady state in fewer steps once a case is known to be stable.
+    desired_courant: float = 0.30
     # discretisation: the classic finite-element kernel is the DEFAULT - it supports
     # the k-epsilon / Spalart-Allmaras / Smagorinski turbulence closures auto-selected
     # by turbulence_model below (the solver/* and tidal-flats keywords then apply).
@@ -266,7 +283,26 @@ class Hydrodynamics:
     finite_volumes: bool = False
     finite_volume_scheme: int = 5      # 0 Roe, 1 kinetic, 3 Zokagoa, 4 Tchamen, 5 HLLC, 6 WAF
     fv_space_order: int = 2
-    free_surface_gradient_compat: float = 0.1   # damps free-surface wiggles (FE; default 1.0)
+    # 0.9 strongly damps free-surface wiggles over steep bed gradients (FE; TELEMAC
+    # default 1.0). Lower values (e.g. 0.1) under-damp and let the surface oscillate
+    # into divergence on the high-aspect channel mesh.
+    free_surface_gradient_compat: float = 0.9
+    # FE advection robustness for the distributive velocity scheme (14):
+    #   implicitation 0.80 -> more implicit (stable) depth/velocity update (TELEMAC
+    #     default 0.55, which is too explicit for the wetting front here);
+    #   discretizations_in_space "11;11" -> LINEAR elements for H and U,V, required so
+    #     the distributive scheme 14 is not rejected ("DISTRIBUTIVE SCHEMES NOT
+    #     IMPLEMENTED FOR QUASI-BULLE AND QUADRATIC ELEMENTS");
+    #   advection_sub_iterations / max_advection_iterations -> non-linearity sub-cycles
+    #     and the per-step advection solve budget that keep the scheme converging.
+    implicitation: float = 0.80
+    discretizations_in_space: str = "11;11"
+    advection_sub_iterations: int = 2       # NUMBER OF SUB-ITERATIONS FOR NON-LINEARITIES
+    max_advection_iterations: int = 100     # MAXIMUM NUMBER OF ITERATIONS FOR ADVECTION SCHEMES
+    # keep H unclipped (H CLIPPING : NO) so the tidal-flat / negative-depth treatment,
+    # not a hard clip, handles drying - clipping H injects mass and destabilises the
+    # wetting front. Set True only to hard-floor the depth as a last resort.
+    h_clipping: bool = False
     # finite-element linear solver: 2 = preconditioned CG (robust where plain CG,
     # solver 1, stalls); preconditioning 2 = diagonal; solver_accuracy = tolerance.
     solver: int = 2
@@ -278,6 +314,10 @@ class Hydrodynamics:
     # ill-conditioned - that is the transient "GRACJG: EXCEEDING MAXIMUM ITERATIONS 50"
     # warning. 1e-6 converges quickly (fewer iterations) with no loss of meaning.
     turbulence_solver_accuracy: float = 1.0e-6
+    # solve budget for the k-epsilon step (MAXIMUM NUMBER OF ITERATIONS FOR K AND
+    # EPSILON). TELEMAC's default 50 is too few while the dry-start domain is still
+    # ill-conditioned; 120 lets the turbulence solve converge without relaxing accuracy.
+    max_keps_iterations: int = 120
     # turbulence closure. "auto" (the default) picks among k-epsilon (3),
     # Spalart-Allmaras (6) and Smagorinski LES (4) from the channel mesh resolution
     # relative to the turbulence length scale (the flow depth) and the velocity guess
@@ -376,7 +416,7 @@ class Config:
     name: str
     crs_epsg: int
     config_dir: Path
-    # all produced artifacts live under tm-simulation/, split by workflow phase
+    # all produced artifacts live under hydromate-case/, split by workflow phase
     preprocessing_dir: Path   # preprocessing.py products (DEM clips, meshes, ground truth)
     model_dir: Path           # the TELEMAC case (build): geometry/cli/cas/tbl + results
     postprocessing_dir: Path  # mesh-convergence study and other post-processing
@@ -474,8 +514,8 @@ def load_config(path: str | os.PathLike) -> Config:
         raw = yaml.safe_load(fh) or {}
 
     project = raw.get("project", {})
-    sim_dir = project.get("sim_dir", "tm-simulation")
-    # per-phase output dirs under tm-simulation/ (older work_dir/results_dir accepted)
+    sim_dir = project.get("sim_dir", "hydromate-case")
+    # per-phase output dirs under hydromate-case/ (older work_dir/results_dir accepted)
     preprocessing_dir = _resolve(
         cfg_dir, project.get("preprocessing_dir") or project.get("work_dir")
         or f"{sim_dir}/preprocessing")

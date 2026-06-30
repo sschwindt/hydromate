@@ -217,10 +217,10 @@ def test_write_cas_warm_start_keywords(tmp_path):
     assert "INITIAL CONDITIONS :" not in warm
 
 
-def test_steady_state_auto_stop(tmp_path):
-    """The steady run auto-stops at steady state (STOP IF A STEADY STATE IS REACHED +
-    STOP CRITERIA); the unsteady hydrograph run must NOT (it runs its full duration),
-    and the feature can be switched off."""
+def test_steady_state_auto_stop_is_opt_in_and_fixed_step_only(tmp_path):
+    """The steady-state auto-stop is OFF by default. Even opted in it is suppressed
+    with a variable time step (TELEMAC's absolute per-step STOP CRITERIA false-fires on
+    the tiny CFL dt); it is emitted only for a steady, fixed-step run, never unsteady."""
     from hydromate import steering
     from hydromate.boundary import LiquidBoundary
 
@@ -228,16 +228,66 @@ def test_steady_state_auto_stop(tmp_path):
     liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=5),
                LiquidBoundary(index=2, kind="outflow", n_nodes=5)]
 
-    steady = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5).read_text()
-    assert "STOP IF A STEADY STATE IS REACHED : YES" in steady
-    assert "STOP CRITERIA : 1.E-4;1.E-4;1.E-4" in steady
+    # off by default
+    default = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5).read_text()
+    assert "STOP IF A STEADY STATE IS REACHED" not in default
 
+    # opted in but still variable time step -> suppressed (the unreliable case)
+    cfg.hydrodynamics.stop_if_steady = True
+    var = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5).read_text()
+    assert "STOP IF A STEADY STATE IS REACHED" not in var
+
+    # opted in with a fixed time step -> emitted
+    cfg.hydrodynamics.variable_timestep = False
+    fixed = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5).read_text()
+    assert "STOP IF A STEADY STATE IS REACHED : YES" in fixed
+    assert "STOP CRITERIA : 1.E-4;1.E-4;1.E-4" in fixed
+
+    # never on the unsteady hydrograph run, even fixed-step + opted in
     uns = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5,
                              unsteady=True, duration=3600.0,
                              liquid_boundaries_file="hg.liq",
                              out_name=cfg.unsteady_cas_file).read_text()
     assert "STOP IF A STEADY STATE IS REACHED" not in uns
 
-    cfg.hydrodynamics.stop_if_steady = False
-    off = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5).read_text()
-    assert "STOP IF A STEADY STATE IS REACHED" not in off
+
+def test_turbulence_solver_accuracy(tmp_path):
+    """The turbulence-transport solver accuracy is loosened from TELEMAC's tight 1e-9
+    default (ACCURACY OF K/EPSILON for k-epsilon, ACCURACY OF SPALART-ALLMARAS for S-A);
+    constant viscosity / Smagorinski solve no transport equation, so none is written."""
+    from hydromate import steering
+    from hydromate.boundary import LiquidBoundary
+
+    cfg = _minimal_cfg(tmp_path)
+    liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=5),
+               LiquidBoundary(index=2, kind="outflow", n_nodes=5)]
+
+    keps = steering.write_cas(cfg, liquids, 47.0, 379.5, turbulence_model=3).read_text()
+    assert "ACCURACY OF K : 1e-06" in keps and "ACCURACY OF EPSILON : 1e-06" in keps
+
+    sa = steering.write_cas(cfg, liquids, 47.0, 379.5, turbulence_model=6).read_text()
+    assert "ACCURACY OF SPALART-ALLMARAS : 1e-06" in sa and "ACCURACY OF K" not in sa
+
+    const = steering.write_cas(cfg, liquids, 47.0, 379.5, turbulence_model=1).read_text()
+    assert "ACCURACY OF" not in const
+
+
+def test_variable_timestep_steady_run_bounded_by_duration(tmp_path):
+    """A VARIABLE TIME-STEP steady run is bounded by DURATION (NUMBER OF TIME STEPS
+    does not terminate a CFL-driven variable-dt run); a fixed-step run keeps using
+    NUMBER OF TIME STEPS."""
+    from hydromate import steering
+    from hydromate.boundary import LiquidBoundary
+
+    cfg = _minimal_cfg(tmp_path)
+    cfg.hydrodynamics.n_time_steps = 15000
+    cfg.hydrodynamics.time_step = 1.0
+    liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=5),
+               LiquidBoundary(index=2, kind="outflow", n_nodes=5)]
+
+    var = steering.write_cas(cfg, liquids, 47.0, 379.5).read_text()
+    assert "DURATION : 15000.0" in var and "NUMBER OF TIME STEPS" not in var
+
+    cfg.hydrodynamics.variable_timestep = False
+    fix = steering.write_cas(cfg, liquids, 47.0, 379.5).read_text()
+    assert "NUMBER OF TIME STEPS : 15000" in fix and "DURATION" not in fix

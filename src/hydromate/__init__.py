@@ -38,6 +38,10 @@ from hydromate.rating import (
 )
 from hydromate.convergence import percent_levels, run_mesh_convergence
 from hydromate.flux_convergence import analyze_flux_convergence, FluxConvergence
+from hydromate.workflow import (
+    format_flux_convergence, prepare_steady_inputs, resolve_discharge,
+    synthesize_constant_inflow, synthesize_rating_if_missing,
+)
 from hydromate.logsetup import setup_logging, log_step, logging_to
 
 __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
@@ -50,4 +54,6 @@ __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "generate_stage_discharge", "normal_depth", "synthesize_outflow_rating",
            "run_mesh_convergence", "percent_levels",
            "analyze_flux_convergence", "FluxConvergence",
+           "format_flux_convergence", "prepare_steady_inputs", "resolve_discharge",
+           "synthesize_constant_inflow", "synthesize_rating_if_missing",
            "setup_logging", "log_step", "logging_to", "__version__"]

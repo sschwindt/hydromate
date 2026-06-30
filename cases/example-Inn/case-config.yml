@@ -19,11 +19,11 @@ project:
   crs_epsg: 25832              # [REQUIRED] project CRS, metric (e.g. UTM). 25832 = ETRS89/UTM32N
   # all produced artifacts live under sim_dir, split by workflow phase. Each
   # phase's script writes its outputs and its hydromate.log into its own folder.
-  sim_dir: tm-simulation
-  preprocessing_dir: tm-simulation/preprocessing          # preprocessing.py products (DEM clips, meshes, ground truth)
-  model_dir: tm-simulation/simulation                     # the TELEMAC case (build): geometry/cli/cas/tbl + results
-  postprocessing_dir: tm-simulation/postprocessing        # mesh-convergence study and other post-processing
-  calibration_dir: tm-simulation/calibration-validation   # HydroBayesCal artifacts (calibration CSV, config_Telemac.py)
+  sim_dir: hydromate-case
+  preprocessing_dir: hydromate-case/preprocessing          # preprocessing.py products (DEM clips, meshes, ground truth)
+  model_dir: hydromate-case/simulation                     # the TELEMAC case (build): geometry/cli/cas/tbl + results
+  postprocessing_dir: hydromate-case/postprocessing        # mesh-convergence study and other post-processing
+  calibration_dir: hydromate-case/calibration-validation   # HydroBayesCal artifacts (calibration CSV, config_Telemac.py)
 
 telemac:
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported)
@@ -152,13 +152,22 @@ hydrodynamics:
   # varying hydrograph an additional unsteady2d.cas (+ liquid-boundaries file) is
   # written too. 'regime' is kept for provenance/labelling.
   regime: steady               # steady | unsteady
-  time_step: 1.0               # initial/max step; CFL-adapted (variable_timestep)
-  n_time_steps: 15000          # max steps; the steady run usually auto-stops sooner
-  # auto-stop the STEADY run at steady state (relative change in (U,V), H, tracers
-  # all below stop_criteria) instead of running all n_time_steps - the main lever
-  # for a fast steady run. Off for the unsteady run; TELEMAC-3D has no equivalent.
-  # stop_if_steady: true
-  # stop_criteria: "1.E-4;1.E-4;1.E-4"   # thresholds for (U,V); H; tracers
+  # Stable-numerics defaults (see steady2d.cas). With variable_timestep on, time_step
+  # is only the conservative CFL START step; the run is marched to steady state for
+  # `duration` seconds of simulated time (decoupled from the small start step) while
+  # TELEMAC holds desired_courant. These, plus implicitation 0.80, free-surface
+  # gradient compatibility 0.9, H CLIPPING NO, DISCRETIZATIONS IN SPACE 11;11 and the
+  # k-epsilon solve budget, are the explosion-safe solver settings hydromate writes.
+  time_step: 0.25              # conservative CFL start step [s]; CFL-adapted thereafter
+  duration: 5000.0            # simulated time [s] for the steady march to convergence
+  n_time_steps: 15000          # only bounds a FIXED-step run (variable_timestep: false)
+  # Steady-state auto-stop is OFF by default and ONLY honoured with a fixed time
+  # step. TELEMAC's STOP CRITERIA is an ABSOLUTE per-step change; with the variable
+  # (CFL) time step the per-step change is tiny, so it false-fires during a slow
+  # transient (e.g. a low-Q reach still filling) long before the fluxes balance.
+  # Convergence is judged by the boundary-flux balance (initial_run.py / pythomac).
+  # stop_if_steady: true          # only takes effect with variable_timestep: false
+  # stop_criteria: "1.E-4;1.E-4;1.E-4"   # absolute per-step change: H; (U,V); tracers
   graphic_printout_period: 500
   listing_printout_period: 500
   # Numerics: the classic finite-element kernel is the default (it supports the
@@ -177,10 +186,14 @@ hydrodynamics:
   # turbulence_length_scale: 1.0  # integral length scale [m]; defaults to prewet_depth
   # velocity_diffusivity: 2.0  # constant eddy viscosity [m2/s]; auto from U for model 1
   # CFL-adaptive marching to steady state (variable_timestep true by default): the
-  # desired_courant sets the target Courant number. 0.6 (the default) is conservative
-  # and stable on the fine channel mesh; raise it toward ~0.9 to converge in fewer
-  # steps, or raise n_time_steps if a run has not converged within the budget.
-  # desired_courant: 0.6
+  # desired_courant sets the target Courant number. 0.30 (the default) is the
+  # explosion-safe target on the fine channel mesh; raise it toward ~0.6-0.9 to
+  # converge in fewer steps once the case is known to be stable, or extend `duration`
+  # if a run has not converged within the budget.
+  # desired_courant: 0.30
+  # the inflow Q (m3/s) and the outflow stage (H) prescription below are THIS case's
+  # steady boundary conditions, read straight from here for steady2d.cas (the
+  # preprocessing / mesh-convergence scripts no longer hard-code a discharge).
   # outflow (downstream) boundary type:
   #   stage_discharge -> prescribed water level (cli 5 4 4) read from the
   #                      inputs.stage_discharge rating curve at the simulated Q
@@ -193,7 +206,7 @@ hydrodynamics:
   outflow_condition: stage_discharge
   # fixed downstream water level, only used when outflow_condition: elevation:
   # prescribed_elevation: 0.0  # m a.s.l.
-  # prescribed_flowrate: 47.2  # override the upstream Q; else the mean of the inflow series
+  prescribed_flowrate: 47.2  # inflow Q [m3/s] for steady2d.cas (this case's discharge)
   # INITIAL CONDITION = dry start (default): the domain starts dry except a thin
   # water plug at the inflow line (a fully dry bed makes DEBIMP abort at the
   # prescribed-Q inflow). Tune the plug if needed:

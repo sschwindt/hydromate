@@ -160,28 +160,41 @@ Numerics
 The steering (``.cas``) defaults are tuned for a real, steep, wetting/drying river
 reach (set in the ``hydrodynamics`` config block):
 
-* **Finite volumes** (``finite_volumes: true``, the default) - ``EQUATIONS :
-  'SAINT-VENANT FV'`` with the **HLLC** scheme (``FINITE VOLUME SCHEME : 5``,
-  2nd-order in space). The finite-volume kernel is robust for transcritical flow
-  and handles wetting/drying intrinsically (no tidal-flat treatment needed). The
-  scheme is explicit, so the time step is **CFL-bound**: ``VARIABLE TIME-STEP : YES``
-  + ``DESIRED COURANT NUMBER : 0.9`` let TELEMAC adapt the step to the (sub-metre)
-  channel cells. Set ``finite_volumes: false`` for the classic finite-element
-  kernel (which then uses an advection scheme, a preconditioned linear solver and
-  an explicit tidal-flats treatment).
-* **Turbulence.** Finite volumes accept **only constant viscosity**
-  (``TURBULENCE MODEL : 1``); ``VELOCITY DIFFUSIVITY`` sets the eddy viscosity.
-  k-epsilon (3) and Spalart-Allmaras (6) are rejected by the FV kernel - to use
-  them, switch to finite elements (``finite_volumes: false``).
-* ``FREE SURFACE GRADIENT COMPATIBILITY : 0.1`` damps free-surface wiggles over
-  steep bathymetry; ``CONTROL OF LIMITS`` clips H/U/V as a divergence guard;
+* **Finite elements** (``finite_volumes: false``, the default) - the classic kernel,
+  with an advection scheme, a preconditioned linear solver and an explicit tidal-flats
+  treatment, written **compute-stable by default** to keep the wetting/drying steady
+  march from exploding. The time step is **CFL-bound** on the sub-metre channel cells,
+  so ``VARIABLE TIME-STEP : YES`` + ``DESIRED COURANT NUMBER : 0.30`` let TELEMAC adapt
+  the step (``time_step: 0.25`` is only the conservative start step). The robustness
+  knobs are ``IMPLICITATION FOR DEPTH/VELOCITY : 0.80`` (config ``implicitation``),
+  ``DISCRETIZATIONS IN SPACE : 11;11`` (linear FE, required by the distributive
+  advection scheme 14), ``NUMBER OF SUB-ITERATIONS FOR NON-LINEARITIES`` /
+  ``MAXIMUM NUMBER OF ITERATIONS FOR ADVECTION SCHEMES``, ``H CLIPPING : NO``, and a
+  raised k-epsilon solve budget (``MAXIMUM NUMBER OF ITERATIONS FOR K AND EPSILON``,
+  config ``max_keps_iterations``). Set ``finite_volumes: true`` for the **HLLC
+  finite-volume** kernel (``EQUATIONS : 'SAINT-VENANT FV'``, ``FINITE VOLUME SCHEME :
+  5``): robust for transcritical flow and intrinsic wetting/drying, but **constant
+  viscosity only**.
+* **Turbulence** is auto-selected (``turbulence_model: auto``) from the channel cell
+  size vs. the flow depth and the velocity guess: Smagorinski LES (4) when the mesh
+  resolves >=80% of the TKE, k-epsilon (3) at moderate resolution, Spalart-Allmaras (6)
+  on coarse meshes. The finite-volume kernel forces constant viscosity (model 1;
+  ``VELOCITY DIFFUSIVITY`` sets it) - k-epsilon / Spalart-Allmaras need finite elements.
+* ``FREE SURFACE GRADIENT COMPATIBILITY : 0.9`` strongly damps free-surface wiggles
+  over steep bathymetry; ``CONTROL OF LIMITS`` clips H/U/V as a divergence guard;
   ``PRINTING CUMULATED FLOWRATES : YES`` writes the per-boundary fluxes the
-  hotstart convergence check reads.
-* **Steady-state auto-stop** (``stop_if_steady``, default on) - the steady run emits
-  ``STOP IF A STEADY STATE IS REACHED : YES`` with ``STOP CRITERIA`` (the relative
-  change thresholds for ``(U,V)``, ``H`` and tracers, default ``1.E-4``), so it halts
-  as soon as the solution stops changing rather than running all ``n_time_steps``.
-  Omitted for the unsteady hydrograph run; TELEMAC-3D has no such keyword.
+  hotstart convergence check reads. The graphic printout is ``'U,V,S,B,H,M,Q,F'``,
+  plus ``K,E`` (TKE + dissipation) for the k-epsilon model.
+* **Time bound & convergence.** With the variable time step the steady run is capped
+  by ``DURATION`` - the explicit ``hydrodynamics.duration`` (seconds), else the
+  ``n_time_steps * time_step`` fallback, so the small CFL start step no longer shrinks
+  the simulated time; ``NUMBER OF TIME STEPS`` does **not** terminate a variable-dt run. Convergence is judged afterwards from the **boundary-flux
+  balance** (``initial_run.py`` / pythomac), not by the solver. The **steady-state
+  auto-stop** (``stop_if_steady``) is **off by default** and only honoured with a fixed
+  time step: TELEMAC's ``STOP CRITERIA`` is an *absolute per-step* change, which with the
+  tiny CFL dt false-fires during a slow transient (a still-filling reach) long before the
+  fluxes balance - stopping the run far from steady state. Never on the unsteady run;
+  TELEMAC-3D has no such keyword.
 * **Dry start (default)** - the initial run starts dry except a thin water plug on
   the nodes near the inflow line (``dry_start_depth`` over ``dry_start_extent``), so
   the prescribed-Q inflow can establish (a fully dry bed makes TELEMAC's ``DEBIMP``

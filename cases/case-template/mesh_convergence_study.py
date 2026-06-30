@@ -1,15 +1,22 @@
 """Mesh-convergence (grid-independence) study (TEMPLATE, workflow step 2).
 
 Run after preprocessing.py + initial_run.py (which build and test-run the case).
-Runs the SAME steady simulation at a constant discharge on five meshes -- the
+Runs the SAME steady simulation at the configured discharge on five meshes -- the
 configured baseline plus two coarser (+40% / +20% cell size) and two finer
 (-20% / -40%) -- samples water depth and scalar velocity at the ground-truth
 probe points, and quantifies the relative change between successive refinements
-(plus an observed order of convergence and a Grid Convergence Index). Everything
-lands in the produced ``tm-simulation/postprocessing/mesh-convergence/`` folder
-(created during preprocessing.py): a styled .xlsx report with a recommended cell
-size balancing grid independence against compute time, the per-mesh runs, and the
-study log.
+(plus an observed order of convergence and a Grid Convergence Index). The study
+creates and works in its own ``hydromate-case/mesh-convergence/`` folder: a styled
+.xlsx report with a recommended cell size balancing grid independence against
+compute time, the per-mesh runs, and the study log.
+
+The discharge and the outflow stage prescription come from ``case-config.yml``
+(same source as preprocessing.py); each mesh is **pre-wetted**: the channel is
+seeded with ``INITIAL_DEPTH`` (0.5 m by default) of water on the nodes inside the
+``channel`` mesh-zones, and the run is continued from that warm start so the solver
+need not advance the wetting front from the inflow (a large time saving across the
+five runs). The IC does not affect the steady result the study compares, only its
+speed. Set ``INITIAL_DEPTH = None`` to use the production dry start instead.
 
 This runs TELEMAC five times (the finer meshes are large and slow); it is a
 deliberate, one-off discretization-error study. Results inform the resolution to
@@ -22,51 +29,40 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hydromate import convergence, logging_to, synthesize_outflow_rating
+from hydromate import convergence, logging_to, prepare_steady_inputs
 from hydromate.config import load_config
 
 # case-config.yml lives next to this script (in the case folder)
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)
 
-DISCHARGE = 47.0        # constant steady discharge [m3/s] for every mesh
 CONV_TOLERANCE = 0.02   # convergence tolerance on the QoI (2%)
-BANK_SLOPE = 1.0        # trapezoidal channel banks (H:V) for the synthesised rating
+INITIAL_DEPTH = 0.5     # pre-wet the channel nodes to this depth [m] (None = dry bed)
 # five meshes as fractional cell-size offsets from the config size (coarse->fine)
 PERCENTS = (0.40, 0.20, 0.0, -0.20, -0.40)
 
 
-def prepare_inputs(cfg, q: float) -> None:
-    """Prescribe the discharge and synthesise the inflow + outflow rating if missing
-    (so every mesh in the study builds from the same boundary conditions)."""
-    cfg.hydrodynamics.prescribed_flowrate = q
-    if cfg.inputs.inflow is None or not Path(cfg.inputs.inflow).exists():
-        p = cfg.preprocessing_path("inflow-constant.csv")
-        p.write_text(f"datetime,Q\n2020-11-01 00:00,{q}\n2020-11-01 01:00,{q}\n")
-        cfg.inputs.inflow = p
-    sd = cfg.inputs.stage_discharge
-    if cfg.hydrodynamics.outflow_condition == "stage_discharge" \
-            and (sd is None or not Path(sd).exists()):
-        cfg.inputs.stage_discharge = synthesize_outflow_rating(cfg, q, side_slope=BANK_SLOPE)
-
-
 def main() -> None:
     cfg.ensure_dirs()
-    # the mesh-convergence folder is normally created by preprocessing.py;
-    # double-check it exists (e.g. if the study is run on its own).
-    mc_dir = cfg.postprocessing_path("mesh-convergence")
+    # the study creates and works in its own hydromate-case/mesh-convergence/ folder
+    # (a sibling of the preprocessing/ simulation/ postprocessing/ phase dirs)
+    mc_dir = Path(cfg.postprocessing_dir).parent / "mesh-convergence"
     mc_dir.mkdir(parents=True, exist_ok=True)
 
-    prepare_inputs(cfg, DISCHARGE)
+    # discharge + outflow rating from the config; pre-wet the channel for speed
+    q = prepare_steady_inputs(cfg, prewet_depth=INITIAL_DEPTH)
     levels = convergence.percent_levels(cfg, PERCENTS)
-    print(f"mesh-convergence study at Q={DISCHARGE:g} m3/s over {len(levels)} meshes "
-          f"(+40%/+20% coarser, baseline, -20%/-40% finer) - this runs TELEMAC "
-          f"{len(levels)} times and is slow...")
+    prewet = (f"channel pre-wetted to {INITIAL_DEPTH:g} m" if INITIAL_DEPTH is not None
+              else "dry-bed start")
+    print(f"mesh-convergence study at Q={q:g} m3/s over {len(levels)} meshes "
+          f"(+40%/+20% coarser, baseline, -20%/-40% finer; {prewet}) - this runs "
+          f"TELEMAC {len(levels)} times and is slow...")
+    print(f"working in {mc_dir}")
 
     # everything (per-mesh runs, report, log) goes into mesh-convergence/
     with logging_to(mc_dir / cfg.log_file):
         report = convergence.run_mesh_convergence(
-            cfg, discharge=DISCHARGE, tolerance=CONV_TOLERANCE, levels=levels,
+            cfg, discharge=q, tolerance=CONV_TOLERANCE, levels=levels,
             base_dir=mc_dir, n_processors=cfg.telemac.n_processors,
         )
 

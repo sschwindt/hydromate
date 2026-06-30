@@ -14,7 +14,7 @@ path, at the input data. There are three kinds of input:
 All paths in the config are resolved **relative to the configuration file's own
 directory**. Every vector/raster layer may be in any coordinate system: it is
 **reprojected to the project CRS** (``project.crs_epsg``, metres) on ingest. Keep
-raw inputs immutable - produced artifacts are written under ``tm-simulation/``.
+raw inputs immutable - produced artifacts are written under ``hydromate-case/``.
 
 .. _input-geodata:
 
@@ -151,7 +151,7 @@ The configuration is a single YAML file with these top-level sections:
 
 ``project``
     case ``name``, ``crs_epsg`` (project coordinate system, metric), and the
-    per-phase output directories under ``tm-simulation/`` (``preprocessing_dir``,
+    per-phase output directories under ``hydromate-case/`` (``preprocessing_dir``,
     ``model_dir``, ``postprocessing_dir``, ``calibration_dir``).
 ``telemac``
     ``pysource`` (the TELEMAC environment script, *sourced* - not imported -
@@ -169,7 +169,10 @@ The configuration is a single YAML file with these top-level sections:
 ``hydrodynamics``
     steady/unsteady regime, time stepping, the **numerics** (finite volumes vs
     finite elements, turbulence), the outflow-boundary type and prescribed values,
-    and optional pre-wetting. See :ref:`Numerics <numerics>`.
+    and optional pre-wetting. The steady ``steady2d.cas`` is built from **this case's**
+    inflow discharge (``prescribed_flowrate``, m3/s) and outflow stage prescription
+    (``outflow_condition``); the finite-element numerics ship **compute-stable
+    defaults** (see :ref:`Numerics <numerics>`).
 ``morphodynamics`` *(optional)*
     enable GAIA and declare sediment classes.
 ``calibration``
@@ -193,8 +196,13 @@ A minimal example:
      liquid_boundaries: ../geodata/liquid-boundaries.gpkg
      inflow: ../data/inflow.csv
    hydrodynamics:
-     regime: steady
-     finite_volumes: true        # HLLC finite volumes (robust); false -> finite elements
+     regime: steady              # initial run is always steady (convergence judged by flux balance)
+     prescribed_flowrate: 47.2   # inflow Q [m3/s] for steady2d.cas (this case's discharge)
+     outflow_condition: stage_discharge  # downstream stage (H) from the rating curve
+     finite_volumes: false       # finite elements (default); true -> HLLC finite volumes
+     turbulence_model: auto      # auto-picks k-epsilon / Smagorinski / Spalart-Allmaras
+     # the initial run is a dry start (only a thin plug at the inflow is wetted);
+     # set prewet_depth to warm-start the whole channel instead.
    calibration:
      calibration_quantities: ["WATER DEPTH"]
      parameters:

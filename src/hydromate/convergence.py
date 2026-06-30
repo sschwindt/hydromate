@@ -433,8 +433,9 @@ def make_telemac_simulator(cfg: Config, discharge: float, *, base_dir: Path,
         lc.hydrodynamics.turbulence_model = pinned_turbulence
         lc.hydrodynamics.prescribed_flowrate = discharge
         # let TELEMAC pick a CFL-admissible dt for this mesh (iterative convergence
-        # to steady state must be reached before meshes are compared); 0.6 is the
-        # conservative, stable target used across the project
+        # to steady state must be reached before meshes are compared). These runs are
+        # pre-wetted (warm start), so a faster 0.6 Courant target keeps the 5-mesh
+        # study tractable; the production dry-start default is the safer 0.30.
         lc.hydrodynamics.variable_timestep = True
         lc.hydrodynamics.desired_courant = 0.6
         if n_processors:

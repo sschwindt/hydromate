@@ -58,11 +58,14 @@ def _fake_extract(imbalance, model_dir):
     q_out = -q_in * (1.0 - imbalance)            # outflow reported negative
 
     def fake(model_directory="", cas_name="", plotting=True):
-        if plotting:                              # mimic the real flux plot side effect
-            (Path(model_directory) / "flux-convergence.png").write_bytes(b"")
         idx = np.arange(imbalance.size, dtype=float)
-        return pd.DataFrame({"Fluxes Boundary 1": q_in,
-                             "Fluxes Boundary 2": q_out}, index=idx)
+        df = pd.DataFrame({"Fluxes Boundary 1": q_in,
+                           "Fluxes Boundary 2": q_out}, index=idx)
+        # mimic the real extract_fluxes side effects: the fluxes CSV + plot
+        df.to_csv(Path(model_directory) / "extracted-fluxes.csv")
+        if plotting:
+            (Path(model_directory) / "flux-convergence.png").write_bytes(b"")
+        return df
     return fake
 
 
@@ -96,10 +99,16 @@ def test_converges_and_recommends_time_steps(tmp_path, monkeypatch):
 
     assert fc.converged is True
     assert fc.converged_time_steps == int(idx) * period
-    assert fc.converged_seconds == fc.converged_time_steps * 1.0
+    # converged time = idx * cas_timestep; the fake's index is 0,1,2,... so the
+    # back-calculated cas_timestep is 1.0 s
+    assert fc.converged_seconds == float(int(idx))
     assert fc.final_imbalance < 1e-6
-    assert fc.flux_plot is not None and fc.flux_plot.exists()
-    assert fc.rate_plot is not None and fc.rate_plot.exists()
+    # the same four files pythomac's example produces are written into model_dir
+    for p in (fc.fluxes_csv, fc.flux_plot, fc.rate_csv, fc.rate_plot):
+        assert p is not None and p.exists(), f"missing convergence output: {p}"
+    assert {p.name for p in (fc.fluxes_csv, fc.flux_plot, fc.rate_csv, fc.rate_plot)} == {
+        "extracted-fluxes.csv", "flux-convergence.png",
+        "convergence-rate.csv", "convergence-rate.png"}
 
 
 def test_not_converged_when_tolerance_never_met(tmp_path, monkeypatch):
@@ -112,3 +121,18 @@ def test_not_converged_when_tolerance_never_met(tmp_path, monkeypatch):
     assert fc.converged is False
     assert fc.converged_time_steps is None
     assert fc.converged_seconds is None
+
+
+def test_filling_phase_falls_back_but_writes_all_four_files(tmp_path, monkeypatch):
+    """A still-filling run has a flat imbalance (~1, outflow not yet established), so
+    pythomac's logn-based rate is all-NaN and its plot crashes; hydromate falls back
+    to a direct imbalance plot and still writes the four convergence files."""
+    calc, getconv = _pythomac()
+    eps = np.full(20, 1.0)                       # outflow ~0 while the reach fills
+    monkeypatch.setattr(flux_convergence, "_import_pythomac",
+                        lambda *_: (_fake_extract(eps, tmp_path), calc, getconv))
+
+    fc = analyze_flux_convergence(_stub_cfg(tmp_path), tolerance=1e-4)
+    assert fc.converged is False
+    for p in (fc.fluxes_csv, fc.flux_plot, fc.rate_csv, fc.rate_plot):
+        assert p is not None and p.exists(), f"missing convergence output: {p}"

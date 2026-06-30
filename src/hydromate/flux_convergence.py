@@ -68,6 +68,7 @@ class FluxConvergence:
     time_step: float
     fluxes_csv: Path | None
     flux_plot: Path | None
+    rate_csv: Path | None
     rate_plot: Path | None
 
 
@@ -122,6 +123,27 @@ def _gross_in_out(fluxes_df):
     return gross_in[keep], gross_out[keep]
 
 
+def _plot_relative_imbalance(iota_df, path) -> None:
+    """Fallback convergence plot: the relative flux imbalance over time, robust to
+    the undefined convergence rate (NaN) of a not-yet-converging run."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    imbalance = iota_df["Relative imbalance"].to_numpy(dtype=float).real
+    times = iota_df.index.to_numpy(dtype=float)
+    fig, ax = plt.subplots(figsize=(7.0, 4.2))
+    ax.plot(times, imbalance, "-o", ms=3, color="#1F4E78")
+    ax.set_yscale("log")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel(r"Relative flux imbalance $\Delta_{Q,t}$")
+    ax.set_title("Boundary-flux convergence (relative imbalance)")
+    ax.grid(True, which="both", alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+
+
 def analyze_flux_convergence(
     cfg: Config,
     *,
@@ -131,10 +153,12 @@ def analyze_flux_convergence(
     """Analyse boundary-flux convergence of the steady run in ``cfg.model_dir``.
 
     Reads the latest ``<cas>_<timestamp>.sortie`` listing (so the run must have used
-    the ``-s`` flag and ``PRINTING CUMULATED FLOWRATES : YES``), writes
-    ``flux-convergence.png`` + ``convergence-rate.png`` + ``extracted-fluxes.csv``
-    into ``model_dir``, and returns the converged ``NUMBER OF TIME STEPS`` (the time
-    at which the relative flux imbalance drops permanently below *tolerance*).
+    the ``-s`` flag and ``PRINTING CUMULATED FLOWRATES : YES``) and writes the same
+    four files as pythomac's worked example into ``model_dir`` -
+    ``extracted-fluxes.csv`` + ``flux-convergence.png`` (the per-boundary fluxes) and
+    ``convergence-rate.csv`` + ``convergence-rate.png`` (the relative imbalance and
+    convergence rate). Returns the converged ``NUMBER OF TIME STEPS`` (the time at
+    which the relative flux imbalance drops permanently below *tolerance*).
     """
     extract_fluxes, calculate_convergence, get_convergence_time = _import_pythomac(
         pythomac_dir)
@@ -158,27 +182,54 @@ def analyze_flux_convergence(
             f"only {gross_in.size} flux printout(s) available -- the run is too "
             "short to assess convergence (need several listing printouts).")
 
-    iota_df = calculate_convergence(gross_in, gross_out, cas_timestep=period * dt,
-                                    plot_dir=model_dir)
+    # mean simulated time between listing printouts. The run uses a VARIABLE time
+    # step, so `period * time_step` is wrong (time_step is only the initial/max); the
+    # actual spacing is back-calculated from the sortie's time index, as pythomac's
+    # own example does, so the convergence x-axis is in real seconds.
+    times = fluxes_df.index.to_numpy(dtype=float)
+    cas_timestep = (float(times[-1]) / max(len(times) - 1, 1)
+                    if times.size > 1 else period * dt)
+
+    fluxes_csv = cfg.model_path("extracted-fluxes.csv")
+    flux_plot = cfg.model_path("flux-convergence.png")
+    rate_csv = cfg.model_path("convergence-rate.csv")
+    rate_plot = cfg.model_path("convergence-rate.png")
+
+    # convergence rate iota = log_{Delta_t}(Delta_{t+1}); the relative imbalance is
+    # the part we judge convergence on. Compute the table without plotting first (so
+    # we always get it), then try pythomac's plot. While the run is still filling /
+    # in the transient phase the imbalance is flat (~1) so iota is undefined (0/0) and
+    # pythomac's plot crashes on the all-NaN rate; fall back to a direct imbalance plot.
+    iota_df = calculate_convergence(gross_in, gross_out, cas_timestep=cas_timestep,
+                                    plot_dir=None)
+    iota_df.to_csv(rate_csv)
+    try:
+        calculate_convergence(gross_in, gross_out, cas_timestep=cas_timestep,
+                              plot_dir=model_dir)
+    except Exception as exc:  # noqa: BLE001 - pythomac plot is fragile on flat data
+        log.info("  convergence rate not yet defined (%s) - the run is still in the "
+                 "filling/transient phase; plotting the relative imbalance directly.",
+                 type(exc).__name__)
+        _plot_relative_imbalance(iota_df, rate_plot)
+
     imbalance = iota_df["Relative imbalance"].to_numpy(dtype=float).real
     final_imbalance = float(imbalance[-1])
 
     idx = get_convergence_time(imbalance, convergence_precision=tolerance)
     converged = not (idx is None or (isinstance(idx, float) and np.isnan(idx)))
 
-    fluxes_csv = cfg.model_path("extracted-fluxes.csv")
-    flux_plot = cfg.model_path("flux-convergence.png")
-    rate_plot = cfg.model_path("convergence-rate.png")
-
     if converged:
-        # idx counts listing-printout intervals; one interval = `period` timesteps
+        # idx counts listing-printout intervals. The converged *time* is idx ×
+        # cas_timestep (the real mean spacing back-calculated above); reporting steps
+        # too is only a nominal estimate (the actual dt is CFL-variable).
+        conv_secs = float(idx) * cas_timestep
         conv_steps = int(idx) * period
-        conv_secs = conv_steps * dt
-        log.info("  fluxes converged to <%.0e at printout %d -> %d time steps "
-                 "(%.0f s); final imbalance %.2e", tolerance, int(idx),
-                 conv_steps, conv_secs, final_imbalance)
-        log.info("  hotstart recommendation: set NUMBER OF TIME STEPS : %d "
-                 "(currently %d)", conv_steps, cfg.hydrodynamics.n_time_steps)
+        log.info("  fluxes converged to <%.0e at printout %d -> %.0f s simulated "
+                 "(~%d listing iterations); final imbalance %.2e", tolerance, int(idx),
+                 conv_secs, conv_steps, final_imbalance)
+        log.info("  the steady-state auto-stop ends the run here; as a manual cap use "
+                 "DURATION : %.0f (or NUMBER OF TIME STEPS for a fixed-step run).",
+                 conv_secs)
     else:
         conv_steps = conv_secs = None
         log.warning("  fluxes did NOT reach the %.0e imbalance tolerance within the "
@@ -195,5 +246,6 @@ def analyze_flux_convergence(
         time_step=dt,
         fluxes_csv=fluxes_csv if fluxes_csv.exists() else None,
         flux_plot=flux_plot if flux_plot.exists() else None,
+        rate_csv=rate_csv if rate_csv.exists() else None,
         rate_plot=rate_plot if rate_plot.exists() else None,
     )

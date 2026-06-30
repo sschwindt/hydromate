@@ -2,16 +2,18 @@
 # Each case lives under cases/<name>/ and keeps ONLY its case-config.yml, the
 # example scripts (*.py) and docs (*.md) in version control. The large source
 # data go in cases/<name>/user-sources/ and the produced artifacts in
-# cases/<name>/tm-simulation/ (preprocessing/ simulation/ postprocessing/
+# cases/<name>/hydromate-case/ (preprocessing/ simulation/ postprocessing/
 # calibration-validation/) - both kept out of git (well over the 20 MB push limit).
 # ignore all case user-sources contents (real data), but keep the template's
 # README that documents the expected data layout.
 /cases/*/user-sources/**
 !/cases/case-template/user-sources/README.md
+/cases/*/hydromate-case/
 /cases/*/tm-simulation/
 /projection.info
 
 # --- Build outputs / generated TELEMAC cases -------------------------------
+hydromate-case/
 tm-simulation/
 case/
 *.slf

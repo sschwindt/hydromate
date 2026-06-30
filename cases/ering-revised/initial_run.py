@@ -1,6 +1,6 @@
 """Test-run the built TELEMAC case and check hotstart convergence (workflow step 1, continued).
 
-After ``preprocessing.py`` has assembled the case in ``tm-simulation/simulation/``,
+After ``preprocessing.py`` has assembled the case in ``hydromate-case/simulation/``,
 this launches the solver once on exactly that ``steady2d.cas`` to confirm the case
 runs without crashing -- it does NOT rebuild anything. This concludes the
 preprocessing step. Next run ``mesh_convergence_study.py``, then
@@ -8,24 +8,25 @@ hand off to HydroBayesCal.
 
 Because this steady result is also the **hotstart** seed for the HydroBayesCal
 calibration, the run then gets a flux / mass-balance convergence analysis (via the
-``pythomac`` package): it finds the simulation time at which the boundary fluxes
-reach mass balance to the hotstart tolerance (1e-4; 0.01% imbalance), writes ``flux-convergence.png``
-and ``convergence-rate.png`` into the simulation folder, and recommends the
-``NUMBER OF TIME STEPS`` to use for the hotstart so the calibration is not seeded
-with a transient. See ``hydromate.flux_convergence`` for the criterion.
+``pythomac`` package). It writes the same four files as pythomac's example into the
+simulation folder -- ``extracted-fluxes.csv`` + ``flux-convergence.png`` (per-boundary
+fluxes) and ``convergence-rate.csv`` + ``convergence-rate.png`` (the relative flux
+imbalance and its convergence rate) -- and reports the simulation time at which the
+boundary fluxes reach mass balance to the hotstart tolerance (1e-4; 0.01% imbalance).
+See ``hydromate.flux_convergence``.
 
 Needs ``telemac.pysource`` in case-config.yml to point at a real TELEMAC env, and
 ``pythomac`` importable (``pip install pythomac`` or set ``PYTHOMAC_DIR`` to a local
-checkout; defaults to ``/home/schwindt/github/pythomac``).
+checkout).
 
-Run: mamba run -n hydromate-env python cases/example-Inn/initial_run.py
+Run: mamba run -n hydromate-env python cases/<your-case>/initial_run.py
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from hydromate import setup_logging
+from hydromate import format_flux_convergence, setup_logging
 from hydromate.config import load_config
 from hydromate.env import TelemacRuntime
 from hydromate.flux_convergence import HOTSTART_TOLERANCE, analyze_flux_convergence
@@ -38,7 +39,7 @@ def main() -> None:
     cas = cfg.model_path(cfg.cas_file)
     if not cas.exists():
         print(f"no built case at {cas}.")
-        print("run  python cases/example-Inn/preprocessing.py  first.")
+        print("run  python cases/<your-case>/preprocessing.py  first.")
         return
 
     setup_logging(cfg.model_path(cfg.log_file))   # append to the simulation log
@@ -66,19 +67,10 @@ def main() -> None:
     except Exception as exc:  # noqa: BLE001 - the run already succeeded; report cleanly
         print(f"convergence analysis skipped: {type(exc).__name__}: {exc}")
     else:
-        if fc.converged:
-            print(f"fluxes converged (<{fc.tolerance:.0e}) after "
-                  f"{fc.converged_time_steps} time steps ({fc.converged_seconds:.0f} s); "
-                  f"final imbalance {fc.final_imbalance:.2e}")
-            print(f"  -> hotstart: set NUMBER OF TIME STEPS : {fc.converged_time_steps}")
-        else:
-            print(f"fluxes did NOT reach {fc.tolerance:.0e} (final imbalance "
-                  f"{fc.final_imbalance:.2e}); extend NUMBER OF TIME STEPS.")
-        for label, p in (("flux plot", fc.flux_plot), ("rate plot", fc.rate_plot)):
-            if p:
-                print(f"  {label}: {p}")
+        for line in format_flux_convergence(fc):
+            print(line)
 
-    print("next: python cases/example-Inn/mesh_convergence_study.py")
+    print("next: python cases/<your-case>/mesh_convergence_study.py")
 
 
 if __name__ == "__main__":

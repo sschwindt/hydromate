@@ -45,10 +45,10 @@ OPTIONAL_INPUTS = [
 
 TEMPLATE: dict = {
     "project": {"name": "case", "crs_epsg": 25832,
-                "preprocessing_dir": "tm-simulation/preprocessing",
-                "model_dir": "tm-simulation/simulation",
-                "postprocessing_dir": "tm-simulation/postprocessing",
-                "calibration_dir": "tm-simulation/calibration-validation"},
+                "preprocessing_dir": "hydromate-case/preprocessing",
+                "model_dir": "hydromate-case/simulation",
+                "postprocessing_dir": "hydromate-case/postprocessing",
+                "calibration_dir": "hydromate-case/calibration-validation"},
     "telemac": {"pysource": "/path/to/telemac/configs/pysource.sh",
                 "solver": "telemac2d", "n_processors": 4},
     "inputs": {"dem_initial": "path/to/dem.tif", "boundary": "path/to/roi.gpkg",
@@ -162,16 +162,16 @@ with tabs[0]:
                "to the saved config).")
     p["preprocessing_dir"] = c1.text_input(
         "Preprocessing dir",
-        _get(cfg, "project", "preprocessing_dir", default="tm-simulation/preprocessing"))
+        _get(cfg, "project", "preprocessing_dir", default="hydromate-case/preprocessing"))
     p["model_dir"] = c2.text_input(
         "Simulation (model) dir",
-        _get(cfg, "project", "model_dir", default="tm-simulation/simulation"))
+        _get(cfg, "project", "model_dir", default="hydromate-case/simulation"))
     p["postprocessing_dir"] = c1.text_input(
         "Postprocessing dir",
-        _get(cfg, "project", "postprocessing_dir", default="tm-simulation/postprocessing"))
+        _get(cfg, "project", "postprocessing_dir", default="hydromate-case/postprocessing"))
     p["calibration_dir"] = c2.text_input(
         "Calibration-validation dir",
-        _get(cfg, "project", "calibration_dir", default="tm-simulation/calibration-validation"))
+        _get(cfg, "project", "calibration_dir", default="hydromate-case/calibration-validation"))
 
 # ---- TELEMAC ------------------------------------------------------------- #
 with tabs[1]:

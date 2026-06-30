@@ -144,8 +144,10 @@ def run_pipeline_test(tmp: Path) -> None:
 
     cas = Path(art.cas_file).read_text()
     assert "PRESCRIBED FLOWRATES" in cas and "FRICTION DATA FILE" in cas
-    # the steady run auto-stops at steady state instead of running all the time steps
-    assert "STOP IF A STEADY STATE IS REACHED : YES" in cas
+    # variable-time-step run is bounded by DURATION (NUMBER OF TIME STEPS does not stop
+    # it); the steady-state auto-stop is off (unreliable with the variable dt)
+    assert "DURATION :" in cas
+    assert "STOP IF A STEADY STATE IS REACHED" not in cas
     # SCALAR VELOCITY ('M') is output so HydroBayesCal can read it from the results
     printouts = next(line for line in cas.splitlines()
                      if line.startswith("VARIABLES FOR GRAPHIC PRINTOUTS"))
