@@ -3,18 +3,25 @@
 Takes the user's initial (and optional target) DEM, reprojects to the project
 CRS if needed, and clips it to the ROI boundary polygon. The clipped initial DEM
 feeds bathymetry interpolation onto the mesh; the (initial, target) pair feeds an
-optional DEM-of-Difference used as topographic-change calibration data for the
-morphodynamic (GAIA) calibration.
+optional **DEM-of-Difference** (DoD) - the ``dem_target - dem_initial`` bed-change
+raster, thresholded by a minimum **level of detection** (see
+:func:`dem_of_difference` / :func:`resolve_lod`) - used as topographic-change
+calibration data for the morphodynamic (GAIA) calibration. The DoD is produced
+whenever ``dem_of_difference.enabled`` or ``morphodynamics.enabled``.
 """
 
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from hydromate.config import Config
+
+log = logging.getLogger("hydromate")
 
 
 @dataclass
@@ -161,7 +168,7 @@ def clip_dem_to_roi(cfg: Config, dem_path, out_path=None) -> Path:
     dem_path = Path(dem_path)
     if out_path is None:
         out_path = dem_path.with_name(f"{dem_path.stem}-roi-clip.tif")
-    return clip_to_roi(dem_path, cfg.inputs.boundary, out_path, target_epsg=cfg.crs_epsg)
+    return clip_to_roi(dem_path, cfg.geodata.boundary, out_path, target_epsg=cfg.crs_epsg)
 
 
 def clip_dem(cfg: Config, dem_path: Path, out_name: str) -> ClippedDEM:
@@ -170,7 +177,7 @@ def clip_dem(cfg: Config, dem_path: Path, out_name: str) -> ClippedDEM:
 
     cfg.ensure_dirs()
     out_path = clip_to_roi(
-        dem_path, cfg.inputs.boundary, Path(cfg.preprocessing_dir) / out_name,
+        dem_path, cfg.geodata.boundary, Path(cfg.preprocessing_dir) / out_name,
         target_epsg=cfg.crs_epsg,
     )
     with rasterio.open(out_path) as src:
@@ -178,14 +185,61 @@ def clip_dem(cfg: Config, dem_path: Path, out_name: str) -> ClippedDEM:
     return ClippedDEM(path=out_path, nodata=float(nodata))
 
 
+def _critical_value(confidence_level: float) -> float:
+    """Two-tailed critical value (z) for a confidence level (0.95 -> 1.960)."""
+    from scipy.stats import norm
+
+    return float(norm.ppf(0.5 * (1.0 + float(confidence_level))))
+
+
+def propagated_lod(sigma_initial: float, sigma_target: float,
+                   confidence_level: float = 0.95) -> float:
+    """Minimum level of detection [m] from propagated survey uncertainty.
+
+    ``LoD = t * sqrt(sigma_initial^2 + sigma_target^2)`` (Brasington/Wheaton), the
+    spatially-uniform propagated-error threshold below which a bed-elevation change
+    is indistinguishable from survey noise at ``confidence_level``.
+    """
+    return _critical_value(confidence_level) * math.hypot(
+        float(sigma_initial), float(sigma_target))
+
+
+def resolve_lod(cfg: Config) -> tuple[float, str]:
+    """Resolve the minimum level of detection [m] and a human-readable rationale.
+
+    Priority: an explicit ``dem_of_difference.min_lod`` > the propagated survey
+    uncertainty (when both per-DEM uncertainties are given) > 0 (no thresholding).
+    """
+    dod = cfg.dem_of_difference
+    if dod.min_lod is not None:
+        return float(dod.min_lod), f"explicit min_lod = {float(dod.min_lod):.4f} m"
+    if dod.uncertainty_initial is not None and dod.uncertainty_target is not None:
+        lod = propagated_lod(
+            dod.uncertainty_initial, dod.uncertainty_target, dod.confidence_level)
+        t = _critical_value(dod.confidence_level)
+        return lod, (
+            f"propagated LoD = {t:.3f}*sqrt({dod.uncertainty_initial:.3f}^2 + "
+            f"{dod.uncertainty_target:.3f}^2) = {lod:.4f} m "
+            f"(confidence {dod.confidence_level:.2f})"
+        )
+    return 0.0, "no level of detection (raw difference; set uncertainties or min_lod)"
+
+
 def dem_of_difference(cfg: Config, initial: ClippedDEM, target: ClippedDEM) -> Path:
-    """Compute target - initial on the initial grid -> bed-change raster (m)."""
+    """Compute target - initial on the initial ROI grid -> bed-change raster (m).
+
+    Applies the minimum level of detection (see :func:`resolve_lod`): cells whose
+    absolute change is below the LoD are masked to nodata
+    (``dem_of_difference.mask_below_lod``, the default) or set to 0. The net /
+    erosion / deposition volumes over the significant cells are logged.
+    """
     import rasterio
     from rasterio.warp import reproject, Resampling
 
     with rasterio.open(initial.path) as ref:
         ref_data = ref.read(1, masked=True)
         meta = ref.meta.copy()
+        px_area = abs(ref.transform.a * ref.transform.e)   # pixel area [m^2]
         tgt = np.full(ref_data.shape, ref.nodata, dtype="float32")
         with rasterio.open(target.path) as t:
             reproject(
@@ -195,28 +249,51 @@ def dem_of_difference(cfg: Config, initial: ClippedDEM, target: ClippedDEM) -> P
                 resampling=Resampling.bilinear, dst_nodata=ref.nodata,
             )
     tgt_m = np.ma.masked_equal(tgt, ref.nodata)
-    diff = (tgt_m - ref_data).filled(meta["nodata"])
-    out_path = Path(cfg.preprocessing_dir) / "dem-of-difference.tif"
+    diff = np.ma.masked_array(tgt_m - ref_data)            # masked where either DEM is nodata
+
+    lod, why = resolve_lod(cfg)
+    valid = ~np.ma.getmaskarray(diff)
+    below = valid & (np.abs(np.ma.filled(diff, 0.0)) < lod)
+    if lod > 0.0:
+        if cfg.dem_of_difference.mask_below_lod:
+            diff = np.ma.masked_where(below, diff)         # sub-LoD -> nodata
+        else:
+            diff = np.ma.where(below, 0.0, diff)           # sub-LoD -> no change
+    significant = valid & ~below
+    dz = np.ma.filled(diff, 0.0)
+    net = float(dz[significant].sum() * px_area)
+    deposition = float(dz[significant & (dz > 0)].sum() * px_area)
+    erosion = float(dz[significant & (dz < 0)].sum() * px_area)
+    n_sig = int(significant.sum())
+    n_valid = int(valid.sum())
+    log.info("  DoD level of detection: %s", why)
+    log.info("  DoD significant cells: %d / %d (%.1f%%); net %+.1f m3 "
+             "(deposition +%.1f, erosion %.1f)", n_sig, n_valid,
+             100.0 * n_sig / n_valid if n_valid else 0.0, net, deposition, erosion)
+
+    out_path = Path(cfg.preprocessing_dir) / cfg.dem_of_difference.output
     meta.update(dtype="float32", count=1)
     with rasterio.open(out_path, "w", **meta) as dst:
-        dst.write(diff.astype("float32"), 1)
+        dst.write(np.ma.filled(diff, meta["nodata"]).astype("float32"), 1)
     return out_path
 
 
 def run(cfg: Config) -> dict[str, Path]:
     """Execute stage 1; returns the produced raster paths."""
     out: dict[str, Path] = {}
-    initial = clip_dem(cfg, Path(cfg.inputs.dem_initial), "dem-initial-roi.tif")
+    initial = clip_dem(cfg, Path(cfg.geodata.dem_initial), "dem-initial-roi.tif")
     out["dem_initial_roi"] = initial.path
 
     target = None
-    if cfg.inputs.dem_target is not None:
-        target = clip_dem(cfg, Path(cfg.inputs.dem_target), "dem-target-roi.tif")
+    if cfg.geodata.dem_target is not None:
+        target = clip_dem(cfg, Path(cfg.geodata.dem_target), "dem-target-roi.tif")
         out["dem_target_roi"] = target.path
 
-    if cfg.morphodynamics.enabled:
-        if cfg.inputs.dem_of_difference is not None:
-            out["dod"] = Path(cfg.inputs.dem_of_difference)
+    # DoD when explicitly enabled (dem_of_difference.enabled) or needed as
+    # morphodynamic (GAIA) topographic-change calibration data.
+    if cfg.dem_of_difference.enabled or cfg.morphodynamics.enabled:
+        if cfg.geodata.dem_of_difference is not None:
+            out["dod"] = Path(cfg.geodata.dem_of_difference)   # precomputed DoD wins
         elif target is not None:
             out["dod"] = dem_of_difference(cfg, initial, target)
     return out

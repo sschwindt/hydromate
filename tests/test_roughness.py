@@ -48,13 +48,13 @@ project:
   crs_epsg: 25832
 telemac:
   pysource: {geo / "roughness-table.csv"}   # not sourced in this test
-inputs:
+geodata:
   dem_initial: geo/dem.tif                   # dummy (existence not checked here)
   boundary: geo/boundary.shp
-  liquid_boundaries: geo/lb.shp
-  inflow: geo/inflow.csv
   roughness_zones: geo/roughness-zones.gpkg
   roughness_table: geo/roughness-table.csv
+boundaries:
+  liquid_boundaries: geo/lb.shp
 """)
     return cfg_yaml
 
@@ -83,7 +83,7 @@ def run_roughness_test(tmp: Path) -> None:
     cfg = load_config(cfg_yaml)
 
     # 1) table parsing — header row detected and skipped
-    table = read_roughness_table(cfg.inputs.roughness_table)
+    table = read_roughness_table(cfg.geodata.roughness_table)
     assert table == {1: 0.2, 2: 0.5}, f"bad table: {table}"
 
     # ... and a header-less CSV parses the same

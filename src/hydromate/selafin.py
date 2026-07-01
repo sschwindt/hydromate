@@ -220,7 +220,7 @@ def write_initial_state(
     date: Sequence[int] = (2026, 1, 1, 0, 0, 0),
     double_precision: bool = True,
 ) -> Path:
-    """Write a warm-start SELAFIN holding VELOCITY U, VELOCITY V and WATER DEPTH.
+    """Write a hotstart SELAFIN holding VELOCITY U, VELOCITY V and WATER DEPTH.
 
     TELEMAC reads this as the ``PREVIOUS COMPUTATION FILE`` (which alone triggers
     the continuation since release 9.0) to initialise the flow field, matching
@@ -234,7 +234,7 @@ def write_initial_state(
         match the GEOMETRY FILE: same NPOIN/NELEM, node order and connectivity).
     depth : (NPOIN,) float array of initial water depths (m).
     velocity_u, velocity_v : optional (NPOIN,) initial velocity components (m/s);
-        default to zero (a still pre-wetted pond, the usual warm start).
+        default to zero (a still pre-wetted pond, the usual hotstart).
     """
     depth = np.asarray(depth, dtype=float)
     npoin = depth.size

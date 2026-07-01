@@ -36,9 +36,11 @@ def test_layer_levels_auto_ladder():
     class _Cfg:
         class hydrodynamics:  # noqa: N801
             turbulence_length_scale = 1.0
-            prewet_depth = None
             initial_velocity_guess = 1.0
             turbulence_model = "auto"
+
+        class initialization:  # noqa: N801
+            prewet_depth = None
 
         class mesh:  # noqa: N801
             channel_size = 1.0

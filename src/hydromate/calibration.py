@@ -61,12 +61,12 @@ def _pick_table(tables: dict[str, pd.DataFrame], quantities: list[str]) -> pd.Da
 def build_calibration_csv(cfg: Config) -> Path | None:
     """Write the HydroBayesCal calibration-points CSV from the tidy ground truth.
 
-    The tidy table is compiled from ``inputs.ground_truth`` when given, otherwise
-    read from a user-authored ``inputs.measurements``. Returns ``None`` if neither
+    The tidy table is compiled from ``ground_truth.sources`` when given, otherwise
+    read from a user-authored ``ground_truth.measurements``. Returns ``None`` if neither
     is configured.
     """
     compile_ground_truth(cfg)            # no-op when the table is user-supplied
-    if not cfg.inputs.ground_truth and cfg.inputs.measurements is None:
+    if not cfg.ground_truth.sources and cfg.ground_truth.measurements is None:
         return None
     tables = ground_truth.read_tidy(cfg.ground_truth_path)
     quantities = cfg.calibration.calibration_quantities

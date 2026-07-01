@@ -1,7 +1,7 @@
 """Preprocessing + case build (Inn case, workflow step 1).
 
 Assembles a complete, ready-to-run TELEMAC-2D case at the steady discharge set in
-``case-config.yml`` (``hydrodynamics.prescribed_flowrate``): clips the DEM(s), builds
+``case-config.yml`` (``boundaries.prescribed_flowrate``): clips the DEM(s), builds
 the mesh (anisotropic + roughness), classifies the liquid boundaries and writes the
 case into ``hydromate-case/simulation/`` -- the final mesh ``geometry.slf``, the
 boundary-conditions ``boundaries.cli``, the friction ``friction.tbl`` and the steering
@@ -52,8 +52,8 @@ def main() -> None:
         return
 
     # keep a copy of the rating curve next to the case for traceability
-    if cfg.inputs.stage_discharge and Path(cfg.inputs.stage_discharge).exists():
-        shutil.copy(cfg.inputs.stage_discharge, cfg.model_path("rating-curve.csv"))
+    if cfg.boundaries.stage_discharge and Path(cfg.boundaries.stage_discharge).exists():
+        shutil.copy(cfg.boundaries.stage_discharge, cfg.model_path("rating-curve.csv"))
 
     print(f"\nbuilt the TELEMAC case in {cfg.model_dir}:")
     print(f"  mesh      : {art.geometry_slf.name}")

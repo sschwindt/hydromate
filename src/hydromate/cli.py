@@ -8,7 +8,7 @@ Two forms:
   region-of-interest polygon, without needing a full configuration.
 * ``hydromate rating -o <out.csv> --manning <n>|--strickler <Kst> --slope <S0>
   --width <b> [--side-slope <m>] [--bed-elevation <z>] --q <Q...>`` - synthesise a
-  normal-flow outflow stage-discharge curve to use as ``inputs.stage_discharge``.
+  normal-flow outflow stage-discharge curve to use as ``boundaries.stage_discharge``.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ def _rating_parser() -> argparse.ArgumentParser:
         prog="hydromate rating",
         description="Generate a normal-flow (uniform Manning/Strickler) outflow "
                     "stage-discharge curve for a prismatic trapezoidal channel and "
-                    "write it as a Q,WSE,depth CSV to use as inputs.stage_discharge.",
+                    "write it as a Q,WSE,depth CSV to use as boundaries.stage_discharge.",
     )
     p.add_argument("-o", "--out", type=Path, required=True, help="output CSV path")
     rough = p.add_mutually_exclusive_group(required=True)

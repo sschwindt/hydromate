@@ -66,8 +66,8 @@ def _turbulence_length_scale(cfg: Config) -> float:
     h = cfg.hydrodynamics
     if h.turbulence_length_scale is not None:
         return float(h.turbulence_length_scale)
-    if h.prewet_depth is not None:
-        return float(h.prewet_depth)
+    if cfg.initialization.prewet_depth is not None:
+        return float(cfg.initialization.prewet_depth)
     return 1.0
 
 
@@ -154,16 +154,16 @@ def _friction_rows(cfg: Config) -> list[tuple[int, int, float, str]]:
     """Return the friction zones as (fric_id, law, coefficient, name) rows.
 
     Priority: explicit ``friction.zones`` (MATID scheme) > the roughness zones
-    (``inputs.roughness_zones`` + ``roughness_table``: one row per Zone ID with
+    (``geodata.roughness_zones`` + ``roughness_table``: one row per Zone ID with
     its ks under ``friction.roughness_law``, default NIKU) > a single default zone.
     """
     if cfg.friction.zones:
         return [(z.matid, z.law, z.coefficient, z.name)
                 for z in sorted(cfg.friction.zones, key=lambda z: z.matid)]
-    if cfg.inputs.roughness_zones is not None and cfg.inputs.roughness_table is not None:
+    if cfg.geodata.roughness_zones is not None and cfg.geodata.roughness_table is not None:
         from hydromate.mesh import read_roughness_table
 
-        table = read_roughness_table(cfg.inputs.roughness_table)
+        table = read_roughness_table(cfg.geodata.roughness_table)
         return [(zid, cfg.friction.roughness_law, ks, f"roughness zone {zid}")
                 for zid, ks in sorted(table.items())]
     return [(1, cfg.friction.default_law, cfg.friction.default_coefficient, "default")]
@@ -209,7 +209,7 @@ def _centerline_arclength(cfg: Config, mesh):
     from scipy.spatial import cKDTree
     from shapely.ops import linemerge, unary_union
 
-    gdf = gpd.read_file(cfg.inputs.channel_centerline)
+    gdf = gpd.read_file(cfg.geodata.channel_centerline)
     if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
         gdf = gdf.to_crs(epsg=cfg.crs_epsg)
     merged = unary_union(gdf.geometry.values)
@@ -261,7 +261,7 @@ def _longitudinal_prewet_depth(s_node, bottom, mask, depth_val, bed_percentile=2
 
 
 def write_initial_conditions(cfg: Config, mesh) -> Path:
-    """Write the warm-start SELAFIN that pre-wets the channel for a stable cold start.
+    """Write the hotstart SELAFIN that pre-wets the channel for a stable start.
 
     Seeds WATER DEPTH on the ``*channel*`` mesh-zone nodes (zero velocity, dry
     elsewhere) on the geometry's own mesh; TELEMAC reads it as the PREVIOUS
@@ -279,9 +279,9 @@ def write_initial_conditions(cfg: Config, mesh) -> Path:
     from hydromate import mesh as mesh_mod
     from hydromate import selafin
 
-    depth_val = float(cfg.hydrodynamics.prewet_depth)
+    depth_val = float(cfg.initialization.prewet_depth)
     mask = mesh_mod.channel_node_mask(cfg, mesh)
-    if cfg.inputs.channel_centerline is not None:
+    if cfg.geodata.channel_centerline is not None:
         s_node = _centerline_arclength(cfg, mesh)
         depth = _longitudinal_prewet_depth(s_node, mesh.bottom, mask, depth_val)
         how = "smoothed longitudinal surface"
@@ -319,10 +319,10 @@ def write_dry_start_conditions(cfg: Config, mesh) -> Path | None:
     inflow = boundary._load_liquid_lines(cfg).get("inflow")
     if inflow is None:
         return None
-    h = cfg.hydrodynamics
-    extent = (float(h.dry_start_extent) if h.dry_start_extent is not None
+    init = cfg.initialization
+    extent = (float(init.dry_start_extent) if init.dry_start_extent is not None
               else max(cfg.mesh.channel_size, cfg.mesh.floodplain_size) * 5.0)
-    seed = float(h.dry_start_depth)
+    seed = float(init.dry_start_depth)
     plug = np.asarray(contains_xy(inflow.buffer(extent), mesh.x, mesh.y), dtype=bool)
     depth = np.where(plug, seed, 0.0)
     path = cfg.model_path(cfg.ic_slf)
@@ -350,7 +350,7 @@ def _prescribed_arrays(cfg: Config, liquids: list[LiquidBoundary],
     total prescribed inflow stays *inflow_q* - prescribing the full Q on each would
     multiply the supplied discharge and flood the domain.
     """
-    free_outflow = cfg.hydrodynamics.outflow_condition == "free"
+    free_outflow = cfg.boundaries.outflow_condition == "free"
     inflows = [b for b in liquids if b.kind == "inflow"]
     inflow_nodes = sum(b.n_nodes for b in inflows) or 1
     flow, elev, prof = [], [], []
@@ -380,7 +380,7 @@ def write_liquid_boundaries(cfg: Config, liquids: list[LiquidBoundary],
     """
     import numpy as np
 
-    free_outflow = cfg.hydrodynamics.outflow_condition == "free"
+    free_outflow = cfg.boundaries.outflow_condition == "free"
     ordered = sorted(liquids, key=lambda b: b.index)
     inflows = [b for b in ordered if b.kind == "inflow"]
     inflow_nodes = sum(b.n_nodes for b in inflows) or 1
@@ -414,22 +414,36 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
               previous_computation: str | None = None,
               turbulence_model: int | None = None,
               unsteady: bool = False, liquid_boundaries_file: str | None = None,
-              duration: float | None = None, out_name: str | None = None) -> Path:
+              duration: float | None = None, out_name: str | None = None,
+              results_name: str | None = None,
+              n_distributive_corrections: int | None = None,
+              sections_input: str | None = None, sections_output: str | None = None,
+              hotstart_note: str | None = None) -> Path:
     """Write a TELEMAC-2D steering (.cas) file.
 
     The default (``unsteady=False``, ``out_name=None``) writes the **steady** initial
     run to ``cfg.cas_file`` (``steady2d.cas``). With ``unsteady=True`` and a
     ``liquid_boundaries_file`` it writes a hydrograph-driven run (Q(t)/SL(t) read
     from that file, total time from ``duration``) - the pipeline emits it as
-    ``unsteady2d.cas`` when the inflow carries a varying series.
+    ``unsteady2d.cas`` when the inflow carries a varying series, and
+    :mod:`hydromate.unsteady` writes the recommended one hotstarted from the steady
+    result.
 
     *turbulence_model* is the resolved TELEMAC model number (see
     :func:`select_turbulence_model`); when None it is selected from the config here.
 
-    When *previous_computation* is given (the warm-start SELAFIN from
-    :func:`write_initial_conditions`), the case is continued from it - the flow
-    field (incl. the pre-wetted channel) is read from that file instead of the
-    analytical INITIAL CONDITIONS, with the simulation clock reset to zero.
+    When *previous_computation* is given the case is continued from that SELAFIN -
+    the flow field is read from it instead of the analytical INITIAL CONDITIONS, with
+    the clock reset to zero. This is either the pre-wetted/dry-start hotstart from
+    :func:`write_initial_conditions` (the steady run) or the converged **steady result**
+    the unsteady run continues from; *hotstart_note* overrides the comment line.
+
+    *results_name* overrides the RESULTS FILE (so an unsteady run continued from the
+    steady ``r2d.slf`` writes to a distinct file rather than clobbering its own input).
+    *n_distributive_corrections* emits ``NUMBER OF CORRECTIONS OF DISTRIBUTIVE
+    SCHEMES`` (the developers' >=2 recommendation for quasi-steady runs).
+    *sections_input* / *sections_output* wire the CONTROL SECTIONS keywords so the run
+    reports the flux across each open boundary (see :func:`hydromate.unsteady`).
     """
     h = cfg.hydrodynamics
     flow, elev, prof = _prescribed_arrays(cfg, liquids, inflow_q, outflow_wse)
@@ -455,12 +469,12 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         # since TELEMAC release 9.0 the boolean COMPUTATION CONTINUED keyword is
         # gone; supplying PREVIOUS COMPUTATION FILE alone triggers the continuation.
         initial_conditions = [
-            "/ pre-wetted warm start (channel seeded with water; see hydromate)",
+            hotstart_note or "/ pre-wetted hotstart (channel seeded with water; see hydromate)",
             f"PREVIOUS COMPUTATION FILE : {previous_computation}",
             "INITIAL TIME SET TO ZERO : YES",
         ]
     else:
-        initial_conditions = [f"INITIAL CONDITIONS : '{h.initial_conditions}'"]
+        initial_conditions = [f"INITIAL CONDITIONS : '{cfg.initialization.initial_conditions}'"]
 
     # how the run is bounded. A hydrograph run uses DURATION (seconds). For the steady
     # march, NUMBER OF TIME STEPS bounds a FIXED-step run - but it does NOT bound a
@@ -490,7 +504,12 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         f"BOUNDARY CONDITIONS FILE : {cfg.boundary_cli}",
         *([f"LIQUID BOUNDARIES FILE : {liquid_boundaries_file}"]
           if (unsteady and liquid_boundaries_file) else []),
-        f"RESULTS FILE : {cfg.results_slf}",
+        f"RESULTS FILE : {results_name or cfg.results_slf}",
+        # control sections: report the flux across each open boundary (verifies
+        # Q_in(t) vs Q_out(t) for the unsteady run) - see hydromate.unsteady.
+        *([f"SECTIONS INPUT FILE : {sections_input}",
+           f"SECTIONS OUTPUT FILE : {sections_output}"]
+          if (sections_input and sections_output) else []),
         "MASS-BALANCE : YES",
         # M = scalar velocity (sqrt(u^2+v^2)); written so the results carry
         # SCALAR VELOCITY directly, which HydroBayesCal reads as a calibration QoI.
@@ -541,6 +560,11 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
             "SCHEME FOR ADVECTION OF VELOCITIES : 14",
             f"MAXIMUM NUMBER OF ITERATIONS FOR ADVECTION SCHEMES : {h.max_advection_iterations}",
             f"NUMBER OF SUB-ITERATIONS FOR NON-LINEARITIES : {h.advection_sub_iterations}",
+            # predictor-corrector (distributive) schemes need >=2 corrections per step
+            # for a well-converged QUASI-STEADY march (TELEMAC2d manual 7.2.1); the
+            # unsteady run sets this, the steady run leaves it at the solver default.
+            *([f"NUMBER OF CORRECTIONS OF DISTRIBUTIVE SCHEMES : {n_distributive_corrections}"]
+              if n_distributive_corrections is not None else []),
             # more-implicit depth/velocity update (0.80 > the explicit 0.55 default)
             # keeps the wetting front from oscillating into divergence.
             f"IMPLICITATION FOR DEPTH : {h.implicitation:.2f}",
@@ -631,7 +655,12 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
     ]
 
     if cfg.morphodynamics.enabled and gaia_cas:
-        lines += ["/", "/ MORPHODYNAMICS (GAIA)", f"GAIA STEERING FILE : {gaia_cas}"]
+        # COUPLING WITH : 'GAIA' internally couples the sediment solver; GAIA declares
+        # its own tracers for suspended load, so no manual NUMBER OF TRACERS is needed.
+        lines += ["/", "/ MORPHODYNAMICS (GAIA - bedload / suspended load)",
+                  "COUPLING WITH : 'GAIA'",
+                  f"GAIA STEERING FILE : {gaia_cas}",
+                  f"COUPLING PERIOD FOR GAIA : {cfg.morphodynamics.coupling_period}"]
 
     if h.extra_keywords:
         lines += ["/", "/ USER OVERRIDES"]
@@ -645,15 +674,25 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
 
 
 def write_gaia_cas(cfg: Config) -> Path | None:
-    """Write a minimal GAIA steering file (morphodynamic extension point).
+    """Write the GAIA steering file (bedload and/or suspended load).
 
-    v1 emits a structurally valid GAIA .cas with the configured sediment classes
-    and result file. Sediment-transport tuning is left to the user / calibration
-    (e.g. CLASSES SHIELDS PARAMETERS perturbed by HydroBayesCal).
+    Emits a structurally valid GAIA .cas with the configured sediment classes and
+    result file, then enables the transport modes set on ``cfg.morphodynamics``:
+
+    * ``bedload`` -> ``BED LOAD FOR ALL SANDS : YES`` +
+      ``BED-LOAD TRANSPORT FORMULA FOR ALL SANDS`` (``bedload_formula``, 1 = MPM);
+    * ``suspended_load`` -> ``SUSPENSION FOR ALL SANDS : YES`` (GAIA transports the
+      classes as TELEMAC tracers through the coupling).
+
+    Sediment-transport tuning is left to the user / calibration (e.g. the Shields
+    parameters or class diameters perturbed by HydroBayesCal via ``gaia*`` params).
     """
     if not cfg.morphodynamics.enabled:
         return None
     m = cfg.morphodynamics
+    if not (m.bedload or m.suspended_load):
+        log.warning("morphodynamics.enabled but neither bedload nor suspended_load is "
+                    "on; the GAIA run will transport no sediment")
     classes = m.sediment_classes or [{"diameter": 0.001, "density": 2650}]
     diameters = ";".join(str(c.get("diameter", 0.001)) for c in classes)
     densities = ";".join(str(c.get("density", 2650)) for c in classes)
@@ -665,8 +704,14 @@ def write_gaia_cas(cfg: Config) -> Path | None:
         f"CLASSES SEDIMENT DIAMETERS : {diameters}",
         f"CLASSES SEDIMENT DENSITY : {densities}",
         f"CLASSES SHIELDS PARAMETERS : {shields}",
-        "BED LOAD FOR ALL SANDS : YES",
-        "BED-LOAD TRANSPORT FORMULA FOR ALL SANDS : 1",
+        "/",
+        "/ TRANSPORT MODES",
+        f"BED LOAD FOR ALL SANDS : {'YES' if m.bedload else 'NO'}",
+        *([f"BED-LOAD TRANSPORT FORMULA FOR ALL SANDS : {m.bedload_formula}"]
+          if m.bedload else []),
+        # suspended sediment is transported as TELEMAC tracers by GAIA (the coupling
+        # declares them on the hydro side); needs no NUMBER OF TRACERS in the .cas.
+        f"SUSPENSION FOR ALL SANDS : {'YES' if m.suspended_load else 'NO'}",
     ]
     for key, value in m.extra_keywords.items():
         lines.append(f"{key} : {value}")

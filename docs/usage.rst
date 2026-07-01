@@ -95,7 +95,7 @@ boundary's CRS is assumed and written onto the output.
 Options: ``--epsg <code>`` reprojects the raster to that EPSG before clipping;
 ``--all-touched`` keeps pixels touched by the polygon edge (the default keeps
 pixels whose centre is inside the polygon). The same clipping is applied
-automatically to ``inputs.dem_initial`` (and ``inputs.dem_target``) during a build.
+automatically to ``geodata.dem_initial`` (and ``geodata.dem_target``) during a build.
 
 .. _meshing:
 
@@ -105,8 +105,8 @@ Meshing
 The mesh is generated with `gmsh <https://gmsh.info>`_. Two strategies are chosen
 automatically.
 
-**Anisotropic, flow-aligned (preferred).** When you provide ``inputs.mesh_zones``
-and ``inputs.channel_centerline``, the channel is meshed with triangles
+**Anisotropic, flow-aligned (preferred).** When you provide ``geodata.mesh_zones``
+and ``geodata.channel_centerline``, the channel is meshed with triangles
 **elongated along the centerline** and the floodplain with **near-equilateral**
 triangles, blended smoothly between the two. This keeps cells aligned with the main
 flow - reducing numerical diffusion and cross-flow artifacts - while staying
@@ -150,7 +150,7 @@ elements - so increase the sizes while iterating.
 
 **Isotropic fallback.** With no ``mesh_zones`` / ``channel_centerline``, the mesh
 uses ``default_size`` everywhere, refined to ``breakline_size`` along
-``inputs.breaklines`` and to ``region_sizes`` near MATID region points.
+``geodata.breaklines`` and to ``region_sizes`` near MATID region points.
 
 .. _numerics:
 
@@ -158,7 +158,8 @@ Numerics
 --------
 
 The steering (``.cas``) defaults are tuned for a real, steep, wetting/drying river
-reach (set in the ``hydrodynamics`` config block):
+reach (set in the ``hydrodynamics`` config block; the initial condition below is in
+the ``initialization`` block):
 
 * **Finite elements** (``finite_volumes: false``, the default) - the classic kernel,
   with an advection scheme, a preconditioned linear solver and an explicit tidal-flats
@@ -201,12 +202,12 @@ reach (set in the ``hydrodynamics`` config block):
   abort) while the rest of the domain wets from the inflow. **Pre-wetting**
   (``prewet_depth``) is the alternative: it seeds the whole channel with a smooth,
   thalweg-following surface up front (used by the mesh-convergence study to skip the
-  wetting front per mesh), and needs ``inputs.mesh_zones``.
+  wetting front per mesh), and needs ``geodata.mesh_zones``.
 
 Boundary conditions come from the :ref:`liquid-boundary lines <input-geodata>`:
 inflow nodes get a prescribed discharge (the total reach Q split across inflow
-boundaries by node count), outflow nodes a prescribed water level from the rating
-curve (or a fixed elevation / free outflow per ``outflow_condition``).
+boundaries by node count), outflow nodes a fixed prescribed elevation (the default)
+or a water level from the rating curve / a free outflow per ``outflow_condition``.
 
 The pipeline
 ------------

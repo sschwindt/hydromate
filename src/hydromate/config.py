@@ -13,12 +13,15 @@ Design goals:
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+log = logging.getLogger("hydromate")
 
 # --------------------------------------------------------------------------- #
 # helpers
@@ -92,13 +95,16 @@ class GroundTruthSource:
 
 
 @dataclass
-class Inputs:
-    """User-provided geodata and hydraulics (paths resolved against the config dir)."""
+class Geodata:
+    """User-provided geodata files (paths resolved against the config dir).
+
+    Pure geodata only - the boundary *conditions* (liquid boundary lines, inflow,
+    rating curve, prescribed values) live in :class:`Boundaries`, and the
+    calibration ground truth in :class:`GroundTruth`.
+    """
 
     dem_initial: Path                    # baseline terrain (GeoTIFF)
     boundary: Path                       # ROI / max wetted extent polygon (shp/gpkg)
-    liquid_boundaries: Path              # inflow/outflow boundary lines (shp/gpkg)
-    inflow: Path                         # discharge time series / value (csv)
     dem_target: Path | None = None       # optional 2nd DEM for morphodynamic target
     breaklines: Path | None = None       # internal constraint lines (shp/gpkg)
     mesh_zones: Path | None = None       # polygons with a 'Zone Name' (channel/floodplain) for sizing
@@ -107,39 +113,114 @@ class Inputs:
     roughness_table: Path | None = None  # csv: zone_id, roughness (e.g. ks) -> calibrated by HBC
     region_points: Path | None = None    # seed points carrying MATID + max area
     region_table: Path | None = None     # region-pts-table.txt (MATID legend)
-    stage_discharge: Path | None = None  # outlet rating curve (csv), optional
-    measurements: Path | None = None     # tidy multi-tab ground-truth table (xlsx/csv)
-    ground_truth: list[GroundTruthSource] = field(default_factory=list)  # raw sources to compile
     dem_of_difference: Path | None = None  # precomputed DoD (else derived from DEMs)
 
     def validate(self) -> None:
-        required = {
-            "dem_initial": self.dem_initial,
-            "boundary": self.boundary,
-            "liquid_boundaries": self.liquid_boundaries,
-            "inflow": self.inflow,
-        }
+        required = {"dem_initial": self.dem_initial, "boundary": self.boundary}
         missing = [name for name, p in required.items() if p is None or not Path(p).exists()]
         if missing:
-            raise FileNotFoundError(f"Missing required inputs: {missing}")
+            raise FileNotFoundError(f"Missing required geodata: {missing}")
         for name in ("dem_target", "breaklines", "mesh_zones", "channel_centerline",
                      "roughness_zones", "roughness_table", "region_points",
-                     "region_table", "stage_discharge", "dem_of_difference"):
+                     "region_table", "dem_of_difference"):
             p = getattr(self, name)
             if p is not None and not Path(p).exists():
-                raise FileNotFoundError(f"inputs.{name} set but not found: {p}")
-        # measurements is a user-authored tidy table only when no raw ground_truth
-        # sources are given (otherwise it is the artifact compiled from them).
-        if self.measurements is not None and not self.ground_truth \
+                raise FileNotFoundError(f"geodata.{name} set but not found: {p}")
+
+
+@dataclass
+class Boundaries:
+    """Boundary conditions: the liquid-boundary lines plus the prescribed values.
+
+    ``liquid_boundaries`` is the LINE layer whose 'Type (inflow/outflow)' field
+    tags each line; it is required for a build. ``inflow`` (a discharge time series
+    CSV) is OPTIONAL - it drives a later *unsteady* case; the steady initial run is
+    driven by the scalar ``prescribed_flowrate`` (and ``prescribed_elevation`` /
+    ``stage_discharge`` for the outflow).
+    """
+
+    liquid_boundaries: Path | None = None  # inflow/outflow boundary lines (shp/gpkg)
+    inflow: Path | None = None           # discharge time series (csv); optional, for unsteady
+    stage_discharge: Path | None = None  # outlet rating curve (csv), for outflow_condition=stage_discharge
+    # downstream (outflow) boundary type:
+    #   "elevation"       -> prescribed water level (cli 5 4 4) from prescribed_elevation (default)
+    #   "stage_discharge" -> prescribed water level (cli 5 4 4) read from stage_discharge at Q
+    #   "free"            -> Neumann / free outflow (cli 4 4 4), nothing prescribed
+    outflow_condition: str = "elevation"
+    prescribed_flowrate: float | None = None   # upstream Q (m3/s) for the steady run
+    prescribed_elevation: float | None = None  # downstream WSE (m) for outflow_condition=elevation
+
+    def validate(self) -> None:
+        if self.liquid_boundaries is None or not Path(self.liquid_boundaries).exists():
+            raise FileNotFoundError(
+                f"boundaries.liquid_boundaries not found: {self.liquid_boundaries}"
+            )
+        for name in ("inflow", "stage_discharge"):
+            p = getattr(self, name)
+            if p is not None and not Path(p).exists():
+                raise FileNotFoundError(f"boundaries.{name} set but not found: {p}")
+        if self.outflow_condition not in ("stage_discharge", "elevation", "free"):
+            raise ValueError(
+                "boundaries.outflow_condition must be 'stage_discharge', 'elevation', "
+                f"or 'free', got {self.outflow_condition!r}"
+            )
+
+
+@dataclass
+class Initialization:
+    """Initial-condition controls for the run (dry start vs pre-wetting)."""
+
+    initial_conditions: str = "ZERO DEPTH"
+    # DRY START (the default): a fully dry bed makes TELEMAC's DEBIMP abort at a
+    # prescribed-Q inflow, so instead we seed only a thin water plug on the nodes
+    # within dry_start_extent of the inflow line(s) - deep enough (dry_start_depth,
+    # kept >= the normal depth so the inflow stays subcritical) for the discharge to
+    # establish - and leave the rest of the domain DRY. The flow then wets the reach.
+    dry_start_depth: float = 0.5          # inflow-plug seed depth [m]
+    dry_start_extent: float | None = None  # plug buffer around the inflow line [m]; default ~5 cells
+    # pre-wetting (hotstart): when set, instead of the dry start above, seed this
+    # water depth (m) on the *channel mesh-zone* nodes (dry elsewhere) and continue
+    # from it - wets the whole low-flow channel up front (the mesh-convergence study
+    # uses it to skip advancing the wetting front per mesh). Needs geodata.mesh_zones.
+    prewet_depth: float | None = None
+
+
+@dataclass
+class GroundTruth:
+    """Calibration ground truth: a tidy measurements table or raw sources to compile.
+
+    Provide either ``measurements`` (a user-authored tidy multi-tab table) or
+    ``sources`` (raw sources hydromate compiles into that table). When ``sources``
+    are given, ``measurements`` (if set) is the compiled artifact's output path.
+    """
+
+    measurements: Path | None = None     # tidy multi-tab ground-truth table (xlsx/csv)
+    sources: list[GroundTruthSource] = field(default_factory=list)  # raw sources to compile
+
+    def problems(self) -> list[str]:
+        """Return ground-truth input problems as messages (empty when all OK).
+
+        Ground truth feeds only the *calibration / HydroBayesCal* setup (pipeline
+        stage 5), never the TELEMAC model build itself, so a missing or mismatched
+        source must NOT abort the build. Callers treat these as warnings: the model
+        setup still completes and only the HydroBayesCal setup is skipped.
+        """
+        issues: list[str] = []
+        # measurements is a user-authored tidy table only when no raw sources are
+        # given (otherwise it is the artifact compiled from them).
+        if self.measurements is not None and not self.sources \
                 and not Path(self.measurements).exists():
-            raise FileNotFoundError(f"inputs.measurements set but not found: {self.measurements}")
-        for src in self.ground_truth:
+            issues.append(
+                f"ground_truth.measurements set but not found: {self.measurements}"
+            )
+        for src in self.sources:
             for field_name in ("values", "positions"):
                 p = getattr(src, field_name)
                 if p is not None and not Path(p).exists():
-                    raise FileNotFoundError(
+                    issues.append(
                         f"ground_truth source '{src.category}' {field_name} not found: {p}"
                     )
+        return issues
 
 
 @dataclass
@@ -148,8 +229,8 @@ class MeshConfig:
 
     Two strategies, chosen automatically:
 
-    * **Anisotropic, flow-aligned** (preferred) - when ``inputs.mesh_zones`` and
-      ``inputs.channel_centerline`` are given. Each mesh-zone polygon is classified
+    * **Anisotropic, flow-aligned** (preferred) - when ``geodata.mesh_zones`` and
+      ``geodata.channel_centerline`` are given. Each mesh-zone polygon is classified
       by its ``Zone Name`` (substring, case-insensitive) into one of three types and
       sized by its own ``Max Edge Length (m)`` field (``zone_size_field``; the
       ``*_size`` values below are only fallbacks when that field is absent/blank):
@@ -210,7 +291,7 @@ class FrictionZone:
 class Friction:
     default_law: int = 4               # Manning
     default_coefficient: float = 0.03
-    # law for the .tbl rows derived from inputs.roughness_zones + roughness_table
+    # law for the .tbl rows derived from geodata.roughness_zones + roughness_table
     # (5 = NIKU, Nikuradse k_s in metres - matching the ks roughness values)
     roughness_law: int = 5
     # lateral (wall) boundary friction -> TELEMAC LAW OF FRICTION ON LATERAL
@@ -333,40 +414,81 @@ class Hydrodynamics:
     # the flow depth scale (prewet_depth, else 1.0 m) when left None.
     turbulence_length_scale: float | None = None
     velocity_diffusivity: float | None = None   # eddy viscosity [m2/s]; auto from U for model 1
-    # downstream (outflow) boundary type:
-    #   "stage_discharge" -> prescribed water level (cli 5 4 4) read from the
-    #                        inputs.stage_discharge rating curve at the simulated
-    #                        Q (the default; one Q-h pair suffices for steady runs)
-    #   "elevation"       -> prescribed water level (cli 5 4 4) from prescribed_elevation
-    #   "free"            -> Neumann / free outflow (cli 4 4 4), nothing prescribed
-    outflow_condition: str = "stage_discharge"
-    prescribed_flowrate: float | None = None   # upstream Q (m3/s); else from inflow
-    prescribed_elevation: float | None = None  # downstream WSE (m); only for outflow_condition=elevation
-    initial_conditions: str = "ZERO DEPTH"
-    # DRY START (the default initial condition for the initial run): a fully dry bed
-    # makes TELEMAC's DEBIMP abort at a prescribed-Q inflow, so instead of wetting the
-    # whole channel we seed only a thin water plug on the nodes within dry_start_extent
-    # of the inflow line(s) - deep enough (dry_start_depth, kept >= the normal depth so
-    # the inflow stays subcritical) for the discharge to establish - and leave the rest
-    # of the domain DRY. The flow then wets the reach from the inflow.
-    dry_start_depth: float = 0.5          # inflow-plug seed depth [m]
-    dry_start_extent: float | None = None  # plug buffer around the inflow line [m]; default ~5 cells
-    # pre-wetting (warm start): when set, instead of the dry start above, seed this
-    # water depth (m) on the *channel mesh-zone* nodes (dry elsewhere) and continue
-    # from it - wets the whole low-flow channel up front (the mesh-convergence study
-    # uses it to skip advancing the wetting front per mesh). Needs inputs.mesh_zones.
-    prewet_depth: float | None = None
     extra_keywords: dict[str, Any] = field(default_factory=dict)  # raw .cas overrides
 
 
 @dataclass
 class Morphodynamics:
-    """GAIA morphodynamic block - extension point, off by default in v1."""
+    """GAIA morphodynamic block - extension point, off by default in v1.
+
+    Two transport modes, independently toggleable and combinable (a GAIA run may do
+    bedload only, suspension only, or both):
+
+    * ``bedload`` -> ``BED LOAD FOR ALL SANDS : YES`` with
+      ``BED-LOAD TRANSPORT FORMULA FOR ALL SANDS : bedload_formula`` in the GAIA
+      steering file (1 = Meyer-Peter & Mueller).
+    * ``suspended_load`` -> ``SUSPENSION FOR ALL SANDS : YES``; GAIA then transports
+      the suspended sediment classes as TELEMAC **tracers** (no manual NUMBER OF
+      TRACERS on the hydro side - GAIA declares them through the coupling).
+
+    When ``enabled`` the hydrodynamic ``.cas`` gets ``COUPLING WITH : 'GAIA'`` +
+    ``GAIA STEERING FILE`` and a ``COUPLING PERIOD FOR GAIA`` (hydro steps per GAIA
+    step). Both 2D and 3D unsteady runs can drive GAIA.
+    """
 
     enabled: bool = False
+    bedload: bool = True                 # BED LOAD FOR ALL SANDS : YES
+    suspended_load: bool = False         # SUSPENSION FOR ALL SANDS : YES (carried as tracers)
+    bedload_formula: int = 1             # BED-LOAD TRANSPORT FORMULA (1 = Meyer-Peter & Mueller)
+    coupling_period: int = 1             # COUPLING PERIOD FOR GAIA (hydro steps per GAIA step)
     gaia_results_base: str = "rgaia"
     sediment_classes: list[dict[str, Any]] = field(default_factory=list)
     extra_keywords: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class DemOfDifference:
+    """DEM-of-Difference (DoD) computation with a minimum level of detection (LoD).
+
+    When ``enabled``, stage 1 computes the bed-change raster
+    ``dem_target - dem_initial`` on the ROI-clipped initial grid (so the DoD is
+    inherently clipped to ``geodata.boundary``) and applies a **minimum level of
+    detection** (minLoD) - the survey-uncertainty floor below which a difference is
+    indistinguishable from noise. Cells with ``|dz| < LoD`` are either masked to
+    nodata (``mask_below_lod: true``, the default) or set to 0.
+
+    The LoD [m] is resolved, in priority order, from:
+
+    * an explicit ``min_lod`` (a fixed threshold you already trust), else
+    * the **propagated survey uncertainty**
+      ``LoD = t * sqrt(uncertainty_initial^2 + uncertainty_target^2)`` where each
+      ``uncertainty_*`` is that DEM's vertical error (1-sigma, m) and ``t`` is the
+      two-tailed critical value for ``confidence_level`` (0.95 -> 1.96), the
+      best-available spatially-uniform propagated-error method (Brasington/Wheaton),
+      else
+    * 0 (report the raw difference, no thresholding) when neither is given.
+    """
+
+    enabled: bool = False
+    uncertainty_initial: float | None = None   # vertical 1-sigma error of dem_initial [m]
+    uncertainty_target: float | None = None    # vertical 1-sigma error of dem_target [m]
+    confidence_level: float = 0.95             # two-tailed -> t/z critical value for the propagated LoD
+    min_lod: float | None = None               # explicit minimum LoD [m]; overrides the propagated value
+    mask_below_lod: bool = True                # |dz| < LoD -> nodata (True) or 0.0 (False)
+    output: str = "dem-of-difference.tif"      # output filename in preprocessing_dir
+
+    def validate(self) -> None:
+        if not self.enabled:
+            return
+        if not 0.0 < self.confidence_level < 1.0:
+            raise ValueError(
+                "dem_of_difference.confidence_level must be in (0, 1), got "
+                f"{self.confidence_level}"
+            )
+        for name in ("uncertainty_initial", "uncertainty_target", "min_lod"):
+            v = getattr(self, name)
+            if v is not None and v < 0.0:
+                raise ValueError(f"dem_of_difference.{name} must be >= 0, got {v}")
 
 
 @dataclass
@@ -422,12 +544,17 @@ class Config:
     postprocessing_dir: Path  # mesh-convergence study and other post-processing
     calibration_dir: Path     # HydroBayesCal artifacts (calibration CSV, config_Telemac.py)
     telemac: TelemacEnv
-    inputs: Inputs
+    geodata: Geodata
+    boundaries: Boundaries
+    initialization: Initialization
     mesh: MeshConfig
     friction: Friction
     hydrodynamics: Hydrodynamics
     morphodynamics: Morphodynamics
+    ground_truth: GroundTruth
     calibration: Calibration
+    # DoD computation (optional; disabled by default so existing cases are unaffected)
+    dem_of_difference: DemOfDifference = field(default_factory=DemOfDifference)
 
     # canonical output filenames inside model_dir -----------------------------
     geometry_slf: str = "geometry.slf"
@@ -437,7 +564,15 @@ class Config:
     # varying time series (otherwise a constant-Q inflow needs no unsteady case)
     unsteady_cas_file: str = "unsteady2d.cas"
     liquid_boundaries_file: str = "inflow-hydrograph.liq"  # Q(t)/SL(t) for unsteady2d.cas
-    ic_slf: str = "initial-conditions.slf"   # warm-start file when prewet_depth is set
+    # serialized FRONT2-ordered LiquidBoundary list written during the build, so the
+    # standalone unsteady / 3D scripts get the boundary numbering without re-meshing
+    liquid_boundaries_json: str = "liquid-boundaries.json"
+    control_sections_file: str = "control-sections.txt"    # unsteady flux-verification sections
+    sections_output_file: str = "r-control-sections.txt"   # SECTIONS OUTPUT FILE
+    results_unsteady_slf: str = "r2d-unsteady.slf"         # unsteady2d.cas RESULTS FILE
+    results3d_unsteady_slf: str = "r3d-unsteady.slf"       # unsteady telemac3d 3D RESULT FILE
+    results2d_from_3d_unsteady_slf: str = "r3d-2d-unsteady.slf"  # unsteady 3D 2D RESULT FILE
+    ic_slf: str = "initial-conditions.slf"   # hotstart file when prewet_depth is set
     friction_tbl: str = "friction.tbl"
     zones_file: str = "zones.bfr"
     gaia_cas: str = "gaia.cas"
@@ -465,39 +600,47 @@ class Config:
     @property
     def ground_truth_path(self) -> Path:
         """Where the tidy ground-truth table lives (explicit input, else compiled)."""
-        if self.inputs.measurements is not None:
-            return Path(self.inputs.measurements)
+        if self.ground_truth.measurements is not None:
+            return Path(self.ground_truth.measurements)
         return self.preprocessing_path(self.ground_truth_xlsx)
 
     def validate(self) -> None:
         self.telemac.validate()
-        self.inputs.validate()
-        cond = self.hydrodynamics.outflow_condition
-        if cond not in ("stage_discharge", "elevation", "free"):
+        self.geodata.validate()
+        self.boundaries.validate()
+        # ground truth is non-fatal: it feeds only the calibration/HydroBayesCal
+        # setup, so a missing/mismatched source warns and skips that setup rather
+        # than aborting the model build (see GroundTruth.problems / pipeline stage 5).
+        for problem in self.ground_truth.problems():
+            log.warning("%s; HydroBayesCal setup will be skipped", problem)
+        cond = self.boundaries.outflow_condition
+        if cond == "stage_discharge" and self.boundaries.stage_discharge is None:
             raise ValueError(
-                "hydrodynamics.outflow_condition must be 'stage_discharge', "
-                f"'elevation', or 'free', got {cond!r}"
-            )
-        if cond == "stage_discharge" and self.inputs.stage_discharge is None:
-            raise ValueError(
-                "outflow_condition: stage_discharge requires inputs.stage_discharge "
+                "outflow_condition: stage_discharge requires boundaries.stage_discharge "
                 "(a Q-h rating CSV alongside the config). Generate one from a "
                 "Manning/Strickler value and channel geometry with `hydromate rating`."
             )
-        if cond == "elevation" and self.hydrodynamics.prescribed_elevation is None:
+        if cond == "elevation" and self.boundaries.prescribed_elevation is None:
             raise ValueError(
-                "outflow_condition: elevation requires hydrodynamics.prescribed_elevation"
+                "outflow_condition: elevation requires boundaries.prescribed_elevation"
             )
-        if self.hydrodynamics.prewet_depth is not None and self.inputs.mesh_zones is None:
+        if self.initialization.prewet_depth is not None and self.geodata.mesh_zones is None:
             raise ValueError(
-                "hydrodynamics.prewet_depth needs inputs.mesh_zones (with a "
+                "initialization.prewet_depth needs geodata.mesh_zones (with a "
                 "'*channel*' Zone Name) to define the region to pre-wet."
             )
-        if self.morphodynamics.enabled and self.inputs.dem_target is None \
-                and self.inputs.dem_of_difference is None:
+        if self.morphodynamics.enabled and self.geodata.dem_target is None \
+                and self.geodata.dem_of_difference is None:
             raise ValueError(
-                "morphodynamics.enabled but no inputs.dem_target / dem_of_difference "
+                "morphodynamics.enabled but no geodata.dem_target / dem_of_difference "
                 "provided for topographic-change calibration data."
+            )
+        self.dem_of_difference.validate()
+        if self.dem_of_difference.enabled and self.geodata.dem_target is None \
+                and self.geodata.dem_of_difference is None:
+            raise ValueError(
+                "dem_of_difference.enabled but no geodata.dem_target (to difference "
+                "against geodata.dem_initial) nor a precomputed geodata.dem_of_difference."
             )
 
     def ensure_dirs(self) -> None:
@@ -531,18 +674,33 @@ def load_config(path: str | os.PathLike) -> Config:
     tdict["pysource"] = _resolve(cfg_dir, tdict.get("pysource"))
     telemac = TelemacEnv(**_only_known(TelemacEnv, tdict))
 
-    # inputs (resolve every path against the config dir)
-    idict = dict(raw.get("inputs", {}))
-    gt_raw = idict.pop("ground_truth", None) or []
-    for key in list(idict):
-        idict[key] = _resolve(cfg_dir, idict[key])
-    ground_truth = []
+    # geodata (resolve every path against the config dir)
+    gdict = dict(raw.get("geodata") or {})
+    for key in list(gdict):
+        gdict[key] = _resolve(cfg_dir, gdict[key])
+    geodata = Geodata(**_only_known(Geodata, gdict))
+
+    # boundaries: liquid-boundary lines / inflow / rating are paths; the rest scalars
+    bdict = dict(raw.get("boundaries") or {})
+    for key in ("liquid_boundaries", "inflow", "stage_discharge"):
+        if key in bdict:
+            bdict[key] = _resolve(cfg_dir, bdict[key])
+    boundaries = Boundaries(**_only_known(Boundaries, bdict))
+
+    initialization = Initialization(
+        **_only_known(Initialization, raw.get("initialization", {}) or {}))
+
+    # ground truth: a compiled/authored measurements table + raw sources to compile
+    gtdict = dict(raw.get("ground_truth") or {})
+    gt_raw = gtdict.pop("sources", None) or []
+    measurements = _resolve(cfg_dir, gtdict.get("measurements"))
+    sources = []
     for src in gt_raw:
         src = _only_known(GroundTruthSource, src)
         src["values"] = _resolve(cfg_dir, src.get("values"))
         src["positions"] = _resolve(cfg_dir, src.get("positions"))
-        ground_truth.append(GroundTruthSource(**src))
-    inputs = Inputs(**_only_known(Inputs, idict), ground_truth=ground_truth)
+        sources.append(GroundTruthSource(**src))
+    ground_truth = GroundTruth(measurements=measurements, sources=sources)
 
     mesh = MeshConfig(**_only_known(MeshConfig, raw.get("mesh", {}) or {}))
     # YAML maps keys may come back as str; coerce region_sizes keys to int
@@ -551,6 +709,8 @@ def load_config(path: str | os.PathLike) -> Config:
     friction = Friction.from_dict(raw.get("friction", {}) or {})
     hydro = Hydrodynamics(**_only_known(Hydrodynamics, raw.get("hydrodynamics", {}) or {}))
     morph = Morphodynamics(**_only_known(Morphodynamics, raw.get("morphodynamics", {}) or {}))
+    dod = DemOfDifference(
+        **_only_known(DemOfDifference, raw.get("dem_of_difference", {}) or {}))
     calib = Calibration.from_dict(raw.get("calibration", {}) or {})
 
     cfg = Config(
@@ -562,12 +722,16 @@ def load_config(path: str | os.PathLike) -> Config:
         postprocessing_dir=postprocessing_dir,
         calibration_dir=calibration_dir,
         telemac=telemac,
-        inputs=inputs,
+        geodata=geodata,
+        boundaries=boundaries,
+        initialization=initialization,
         mesh=mesh,
         friction=friction,
         hydrodynamics=hydro,
         morphodynamics=morph,
+        ground_truth=ground_truth,
         calibration=calib,
+        dem_of_difference=dod,
     )
     # apply optional output-filename overrides
     for key, value in (raw.get("outputs", {}) or {}).items():

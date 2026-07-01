@@ -1,7 +1,7 @@
 """Preprocessing + case build (TEMPLATE, workflow step 1).
 
 Assembles a complete, ready-to-run TELEMAC-2D case at the steady discharge set in
-``case-config.yml`` (``hydrodynamics.prescribed_flowrate``): clips the DEM(s), builds
+``case-config.yml`` (``boundaries.prescribed_flowrate``): clips the DEM(s), builds
 the mesh (anisotropic + roughness), classifies the liquid boundaries and writes the
 case into ``hydromate-case/simulation/`` -- the final mesh ``geometry.slf``, the
 boundary-conditions ``boundaries.cli``, the friction ``friction.tbl`` and the steering
@@ -52,15 +52,18 @@ def main() -> None:
         return
 
     # keep a copy of the rating curve next to the case for traceability
-    if cfg.inputs.stage_discharge and Path(cfg.inputs.stage_discharge).exists():
-        shutil.copy(cfg.inputs.stage_discharge, cfg.model_path("rating-curve.csv"))
+    if cfg.boundaries.stage_discharge and Path(cfg.boundaries.stage_discharge).exists():
+        shutil.copy(cfg.boundaries.stage_discharge, cfg.model_path("rating-curve.csv"))
 
     print(f"\nbuilt the TELEMAC case in {cfg.model_dir}:")
     print(f"  mesh      : {art.geometry_slf.name}")
     print(f"  boundary  : {art.boundary_cli.name}")
     print(f"  friction  : {art.friction_tbl.name}")
     print(f"  steering  : {art.cas_file.name}")
-    print(f"  HBC config: {art.hbc_config}")
+    if art.hbc_config:
+        print(f"  HBC config: {art.hbc_config}")
+    else:
+        print("  HBC config: skipped (ground-truth data do not match; see hydromate.log)")
     print(f"  convergence dir ready: {cfg.postprocessing_path('mesh-convergence')}")
     print("next: test-run it with  python cases/<your-case>/initial_run.py")
 

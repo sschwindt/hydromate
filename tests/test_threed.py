@@ -86,8 +86,8 @@ def test_build_3d_cas_from_2d_result(tmp_path):
 
 def _cfg(tmp_path):
     from hydromate.config import (
-        Calibration, Config, Friction, Hydrodynamics, Inputs, MeshConfig,
-        Morphodynamics, TelemacEnv,
+        Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
+        Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )
 
     model = tmp_path / "model"
@@ -99,8 +99,10 @@ def _cfg(tmp_path):
         preprocessing_dir=tmp_path, model_dir=model, postprocessing_dir=tmp_path,
         calibration_dir=tmp_path,
         telemac=TelemacEnv(pysource=dummy),
-        inputs=Inputs(dem_initial=dummy, boundary=dummy, liquid_boundaries=dummy,
-                      inflow=dummy),
+        geodata=Geodata(dem_initial=dummy, boundary=dummy),
+        boundaries=Boundaries(liquid_boundaries=dummy),
+        initialization=Initialization(),
         mesh=MeshConfig(), friction=Friction(), hydrodynamics=Hydrodynamics(),
-        morphodynamics=Morphodynamics(), calibration=Calibration(),
+        morphodynamics=Morphodynamics(), ground_truth=GroundTruth(),
+        calibration=Calibration(),
     )

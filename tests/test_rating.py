@@ -118,12 +118,12 @@ def test_synthesize_outflow_rating(tmp_path):
     (tmp_path / "c.yml").write_text(f"""
 project: {{name: t, crs_epsg: 25832}}
 telemac: {{pysource: {geo / 'dem.tif'}}}
-inputs:
+geodata:
   dem_initial: geo/dem.tif
   boundary: geo/lb.gpkg
-  liquid_boundaries: geo/lb.gpkg
-  inflow: geo/dem.tif
   channel_centerline: geo/cl.gpkg
+boundaries:
+  liquid_boundaries: geo/lb.gpkg
   stage_discharge: geo/rating.csv
 friction: {{boundary_law: 3, boundary_coefficient: 38}}
 """)

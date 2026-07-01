@@ -20,7 +20,7 @@ components only (VelX, VelY; the vertical VelZ is dropped). The measurement
 positions come from the DGPS point layers in
 ``user-sources/geodata/flowtracker2/dgps-flowtracker-day{1,2}_utm33.shp`` (EPSG
 25833), reprojected to the project CRS (25832) and joined to the values by ``ID``
-- both handled by ``hydromate.ground_truth`` from the ``inputs.ground_truth``
+- both handled by ``hydromate.ground_truth`` from the ``ground_truth.sources``
 sources already declared in the config.
 
 What it does
@@ -87,12 +87,12 @@ def build_velocity_calibration_csv(cfg) -> tuple[Path, pd.DataFrame]:
     position (id, x, y, z) and the quantity columns by name
     (``<QTY>_DATA`` / ``<QTY>_ERROR``).
     """
-    compile_ground_truth(cfg)                       # tidy table from inputs.ground_truth
+    compile_ground_truth(cfg)                       # tidy table from ground_truth.sources
     tables = read_tidy(cfg.ground_truth_path)
     if "hydraulics" not in tables:
         raise SystemExit(
             f"no 'hydraulics' tab in {cfg.ground_truth_path}. Check the FlowTracker "
-            "sources under inputs.ground_truth in case-config.yml."
+            "sources under ground_truth.sources in case-config.yml."
         )
     df = tables["hydraulics"].reset_index(drop=True)
     for col in ("x", "y", "u", "v", "h"):

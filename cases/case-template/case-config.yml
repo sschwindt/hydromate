@@ -5,14 +5,17 @@
 # data into user-sources/, edit the paths/values below, then:
 #   hydromate cases/<your-case>/case-config.yml --check    # validate first
 #   hydromate cases/<your-case>/case-config.yml            # build the case
-# or run the two example scripts (see USAGE.info).
+# or run the example scripts (see USAGE.info).
 #
 # Conventions:
 #   * All relative paths are resolved against THIS file's directory.
 #   * Lines marked  [REQUIRED]  must be set; everything else has a sensible
 #     default and may be omitted or left commented.
 #   * Your source data lives in this case's user-sources/ folder (gitignored).
-#   * A fully worked, filled-in example is in cases/example-Inn/.
+#
+# Sections: project / telemac / geodata / boundaries / initialization / mesh /
+#           friction / hydrodynamics / morphodynamics / dem_of_difference /
+#           ground_truth / calibration
 # -----------------------------------------------------------------------------
 
 project:
@@ -33,21 +36,13 @@ telemac:
   solver: telemac2d            # telemac2d | telemac3d
   n_processors: 4
 
-inputs:
-  # Paths resolve relative to THIS file. Put your data under user-sources/.
+geodata:
+  # Pure geodata files. Paths resolve relative to THIS file; put your data under
+  # user-sources/. The boundary CONDITIONS live in the `boundaries` section below,
+  # and the calibration ground truth in `ground_truth`.
   # ---- required -----------------------------------------------------------
   dem_initial: user-sources/geodata/dem-initial.tif      # [REQUIRED] baseline terrain (GeoTIFF)
   boundary: user-sources/geodata/roi.gpkg                # [REQUIRED] ROI / max wetted extent polygon
-  # liquid boundaries: a LINE layer whose 'Type (inflow/outflow)' field tags each
-  # line 'inflow' or 'outflow' (you may have several of each). The lines MUST
-  # coincide with the OUTER BOUNDS of the mesh zones so the contour nodes fall on
-  # them. Contour nodes on an inflow line get a prescribed-Q boundary (4 5 5),
-  # those on an outflow line a free/Neumann (4 4 4) or prescribed-elevation
-  # (5 4 4) boundary (see hydrodynamics.outflow_condition); every other outer
-  # node is a solid wall (2 2 2). For stability the total inflow-node count
-  # should be within ~10% of the total outflow-node count (else a warning fires).
-  liquid_boundaries: user-sources/geodata/liquid-boundaries.gpkg  # [REQUIRED for a build]
-  inflow: user-sources/hydraulics/inflow.csv   # [REQUIRED for a build] discharge value or time series
 
   # ---- optional -----------------------------------------------------------
   dem_target: user-sources/geodata/dem-target.tif        # 2nd DEM, enables morphodynamic target
@@ -64,38 +59,58 @@ inputs:
   # breaklines: user-sources/geodata/breaklines.shp     # internal constraint lines (mesh + zone edges)
   # region_points: user-sources/geodata/region-points.shp  # seed points carrying a MATID field
   # region_table: user-sources/geodata/region-pts-table.txt  # legend mapping MATID -> material/roughness
-  # outlet rating curve (drives the outflow boundary when
-  # hydrodynamics.outflow_condition = stage_discharge, the default): a CSV with
-  # Q [m3/s] and WSE [m] columns. One Q-h pair at the steady discharge is enough;
-  # more rows are interpolated. Generate one from a Manning/Strickler value and
-  # the channel geometry (normal-flow conditions) with, e.g.:
+  # dem_of_difference: user-sources/geodata/dod.tif     # precomputed bed-change raster (else derived from DEMs)
+
+boundaries:
+  # liquid boundaries: a LINE layer whose 'Type (inflow/outflow)' field tags each
+  # line 'inflow' or 'outflow' (you may have several of each). The lines MUST
+  # coincide with the OUTER BOUNDS of the mesh zones so the contour nodes fall on
+  # them. Contour nodes on an inflow line get a prescribed-Q boundary (4 5 5),
+  # those on an outflow line a free/Neumann (4 4 4) or prescribed-elevation
+  # (5 4 4) boundary (see outflow_condition); every other outer node is a solid
+  # wall (2 2 2). For stability the total inflow-node count should be within ~10%
+  # of the total outflow-node count (else a warning fires).
+  liquid_boundaries: user-sources/geodata/liquid-boundaries.gpkg  # [REQUIRED for a build]
+  # inflow: user-sources/hydraulics/inflow.csv   # OPTIONAL discharge time series (csv)
+  #   The steady initial run uses the scalar prescribed_flowrate below; the inflow
+  #   series is only needed for a later UNSTEADY (varying-hydrograph) case.
+
+  # the inflow Q (m3/s) and the outflow stage (H) prescription below are THIS case's
+  # steady boundary conditions, read straight from here for steady2d.cas (the
+  # preprocessing / mesh-convergence scripts no longer hard-code a discharge).
+  prescribed_flowrate: 47.2    # inflow Q [m3/s] for steady2d.cas (set THIS case's discharge)
+  # outflow (downstream) boundary type:
+  #   elevation       -> prescribed water level (cli 5 4 4) fixed at
+  #                      prescribed_elevation below (the DEFAULT).
+  #   stage_discharge -> prescribed water level (cli 5 4 4) read from the
+  #                      stage_discharge rating curve at the simulated Q. One Q-h
+  #                      pair at the steady discharge suffices.
+  #   free            -> Neumann / free outflow (cli 4 4 4); nothing prescribed.
+  outflow_condition: elevation
+  prescribed_elevation: 0.0    # downstream water level [m a.s.l.] (outflow_condition: elevation)
+  # outlet rating curve (only for outflow_condition: stage_discharge): a CSV with
+  # Q [m3/s] and WSE [m] columns. One Q-h pair at the steady discharge is enough.
+  # Generate one from a Manning/Strickler value and the channel geometry with:
   #   hydromate rating -o user-sources/geodata/rating-curve.csv \
   #       --manning 0.035 --slope 0.0012 --width 80 --side-slope 2 \
   #       --bed-elevation <outflow bed z> --q <steady Q>
-  stage_discharge: user-sources/geodata/rating-curve.csv
-  # dem_of_difference: user-sources/geodata/dod.tif     # precomputed bed-change raster (else derived from DEMs)
+  # stage_discharge: user-sources/geodata/rating-curve.csv
 
-  # ---- ground truth (calibration targets) ---------------------------------
-  # The calibration consumes a tidy, multi-tab "measurements" table: one tab per
-  # category (hydraulics, sediment, ...), first three columns x,y,z (project CRS),
-  # then quantity columns. Provide it one of two ways:
-  #
-  #   (a) author it yourself and point `measurements` at the .xlsx (general case);
-  #   (b) declare raw sources under `ground_truth` and hydromate compiles the
-  #       tidy table for you. Compiled to preprocessing/ground-truth.xlsx unless
-  #       `measurements` gives an explicit output path.
-  #
-  # measurements: user-sources/ground-truth/ground-truth.xlsx   # (a) user-authored tidy table
-  # ground_truth:                                # (b) raw sources -> compiled tidy table
-  #   # e.g. FlowTracker velocities (values) joined by ID to DGPS survey points
-  #   # (positions, reprojected to the project CRS); one entry per source/tab.
-  #   - { category: hydraulics, kind: flowtracker, join_key: ID,
-  #       values: user-sources/ground-truth/hydraulics/flowtracker-day1.xlsx,
-  #       positions: user-sources/geodata/flowtracker/dgps-day1.shp }
+initialization:
+  # INITIAL CONDITION = dry start (default): the domain starts dry except a thin
+  # water plug at the inflow line (a fully dry bed makes DEBIMP abort at the
+  # prescribed-Q inflow). Tune the plug if needed:
+  # dry_start_depth: 0.5    # inflow-plug seed depth [m]; raise if DEBIMP reports a
+  #                         # supercritical entrance, lower for a thinner plug
+  # dry_start_extent: 7.5   # plug buffer around the inflow line [m] (default ~5 cells)
+  # pre-wetting (hotstart) - the ALTERNATIVE to the dry start: wet the whole
+  # channel mesh-zone to this depth [m] up front (needs geodata.mesh_zones). The
+  # mesh-convergence study sets it internally; leave it off for a dry initial run.
+  # prewet_depth: 0.5
 
 mesh:
-  # Anisotropic, flow-aligned strategy (used when inputs.mesh_zones +
-  # inputs.channel_centerline are set). Each polygon in the mesh-zones layer is
+  # Anisotropic, flow-aligned strategy (used when geodata.mesh_zones +
+  # geodata.channel_centerline are set). Each polygon in the mesh-zones layer is
   # classified by its 'Zone Name' (case-insensitive substring) into one of THREE
   # types and sized by its own 'Max Edge Length (m)' field:
   #   * "channel"     -> triangles elongated ALONG the centerline
@@ -129,7 +144,7 @@ mesh:
 
 friction:
   # The friction .tbl is derived, in priority order, from: explicit `zones`
-  # below (MATID scheme) -> else the roughness zones (inputs.roughness_zones +
+  # below (MATID scheme) -> else the roughness zones (geodata.roughness_zones +
   # roughness_table: one row per Zone ID with its ks under `roughness_law`) ->
   # else a single uniform default. With roughness zones the .tbl gets rows like
   # `1 NIKU 0.2000 NULL` / `2 NIKU 0.5000 NULL` matching the geometry's per-node
@@ -149,8 +164,8 @@ friction:
   #   - { matid: 5, name: floodplain, law: 4, coefficient: 0.060 }
 
 hydrodynamics:
-  # the initial run (steady2d.cas) is ALWAYS steady; when inputs.inflow carries a
-  # varying hydrograph an additional unsteady2d.cas (+ liquid-boundaries file) is
+  # the initial run (steady2d.cas) is ALWAYS steady; when boundaries.inflow carries
+  # a varying hydrograph an additional unsteady2d.cas (+ liquid-boundaries file) is
   # written too. 'regime' is kept for provenance/labelling.
   regime: steady               # steady | unsteady
   # Stable-numerics defaults (see steady2d.cas). With variable_timestep on, time_step
@@ -160,7 +175,7 @@ hydrodynamics:
   # gradient compatibility 0.9, H CLIPPING NO, DISCRETIZATIONS IN SPACE 11;11 and the
   # k-epsilon solve budget, are the explosion-safe solver settings hydromate writes.
   time_step: 0.25              # conservative CFL start step [s]; CFL-adapted thereafter
-  duration: 5000.0            # simulated time [s] for the steady march to convergence
+  duration: 5000.0             # simulated time [s] for the steady march to convergence
   n_time_steps: 15000          # only bounds a FIXED-step run (variable_timestep: false)
   # Steady-state auto-stop is OFF by default and ONLY honoured with a fixed time
   # step. TELEMAC's STOP CRITERIA is an ABSOLUTE per-step change; with the variable
@@ -192,37 +207,54 @@ hydrodynamics:
   # converge in fewer steps once the case is known to be stable, or extend `duration`
   # if a run has not converged within the budget.
   # desired_courant: 0.30
-  # the inflow Q (m3/s) and the outflow stage (H) prescription below are THIS case's
-  # steady boundary conditions, read straight from here for steady2d.cas (the
-  # preprocessing / mesh-convergence scripts no longer hard-code a discharge).
-  # outflow (downstream) boundary type:
-  #   stage_discharge -> prescribed water level (cli 5 4 4) read from the
-  #                      inputs.stage_discharge rating curve at the simulated Q
-  #                      (the default; stable for subcritical flow). One Q-h pair
-  #                      at the steady discharge suffices.
-  #   elevation       -> prescribed water level (cli 5 4 4) fixed at
-  #                      prescribed_elevation below.
-  #   free            -> Neumann / free outflow (cli 4 4 4); nothing prescribed.
-  outflow_condition: stage_discharge
-  # fixed downstream water level, only used when outflow_condition: elevation:
-  # prescribed_elevation: 0.0  # m a.s.l.
-  prescribed_flowrate: 47.2  # inflow Q [m3/s] for steady2d.cas (set THIS case's discharge)
-  # INITIAL CONDITION = dry start (default): the domain starts dry except a thin
-  # water plug at the inflow line (a fully dry bed makes DEBIMP abort at the
-  # prescribed-Q inflow). Tune the plug if needed:
-  # dry_start_depth: 0.5    # inflow-plug seed depth [m]; raise if DEBIMP reports a
-  #                         # supercritical entrance, lower for a thinner plug
-  # dry_start_extent: 7.5   # plug buffer around the inflow line [m] (default ~5 cells)
-  # pre-wetting (warm start) - the ALTERNATIVE to the dry start: wet the whole
-  # channel mesh-zone to this depth [m] up front (needs inputs.mesh_zones). The
-  # mesh-convergence study sets it internally; leave it off for a dry initial run.
-  # prewet_depth: 0.5
 
-# morphodynamics:              # optional GAIA extension (v1 focuses on 2D hydraulics)
-#   enabled: true
+# morphodynamics:              # optional GAIA extension (coupled by unsteady_run.py)
+#   enabled: true              # master switch (also settable via unsteady_run.py toggles)
+#   bedload: true              # BED LOAD FOR ALL SANDS
+#   suspended_load: false      # SUSPENSION FOR ALL SANDS (suspended load, carried as tracers)
+#   bedload_formula: 1         # BED-LOAD TRANSPORT FORMULA (1 = Meyer-Peter & Mueller)
+#   coupling_period: 1         # hydro time steps per GAIA step (COUPLING PERIOD FOR GAIA)
 #   gaia_results_base: rgaia
-#   sediment_classes:
+#   sediment_classes:          # one entry per sediment class (diameter [m], density, Shields)
 #     - { diameter: 0.0008, density: 2650, shields: 0.047 }
+
+dem_of_difference:
+  # Optional DEM-of-Difference (DoD): the bed-change raster geodata.dem_target minus
+  # geodata.dem_initial, computed during pre-processing on the ROI-clipped grid (so it
+  # is inherently clipped to geodata.boundary) and thresholded by a minimum LEVEL OF
+  # DETECTION (minLoD) - the survey-uncertainty floor below which a change is just
+  # noise. Independent of the GAIA morphodynamics toggle; needs geodata.dem_target (or
+  # a precomputed geodata.dem_of_difference). Written to preprocessing/dem-of-difference.tif.
+  enabled: false
+  # Level of detection - choose ONE approach:
+  #  (a) propagated survey uncertainty (best-available; Brasington/Wheaton):
+  #      LoD = t * sqrt(uncertainty_initial^2 + uncertainty_target^2), with t the
+  #      two-tailed critical value for confidence_level (0.95 -> 1.96). Set both
+  #      per-DEM vertical errors (1-sigma, m):
+  # uncertainty_initial: 0.05   # vertical 1-sigma error of dem_initial [m]
+  # uncertainty_target: 0.03    # vertical 1-sigma error of dem_target [m]
+  # confidence_level: 0.95      # two-tailed confidence for the propagated LoD
+  #  (b) a fixed threshold you already trust (overrides the propagated value):
+  # min_lod: 0.10               # explicit minimum level of detection [m]
+  mask_below_lod: true          # |dz| < LoD -> nodata (true) or 0.0 (false)
+
+ground_truth:
+  # The calibration consumes a tidy, multi-tab "measurements" table: one tab per
+  # category (hydraulics, sediment, ...), first three columns x,y,z (project CRS),
+  # then quantity columns. Provide it one of two ways:
+  #
+  #   (a) author it yourself and point `measurements` at the .xlsx (general case);
+  #   (b) declare raw sources under `sources` and hydromate compiles the tidy table
+  #       for you. Compiled to preprocessing/ground-truth.xlsx unless `measurements`
+  #       gives an explicit output path.
+  #
+  # measurements: user-sources/ground-truth/ground-truth.xlsx   # (a) user-authored tidy table
+  # sources:                                     # (b) raw sources -> compiled tidy table
+  #   # e.g. FlowTracker velocities (values) joined by ID to DGPS survey points
+  #   # (positions, reprojected to the project CRS); one entry per source/tab.
+  #   - { category: hydraulics, kind: flowtracker, join_key: ID,
+  #       values: user-sources/ground-truth/hydraulics/flowtracker-day1.xlsx,
+  #       positions: user-sources/geodata/flowtracker/dgps-day1.shp }
 
 calibration:
   calibration_quantities: ["WATER DEPTH"]                    # measured columns used for calibration

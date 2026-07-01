@@ -92,13 +92,17 @@ telemac:
   pysource: {geo / "boundary.shp"}   # not sourced in this test (validate_env=False)
   solver: telemac2d
   n_processors: 1
-inputs:
+geodata:
   dem_initial: geo/dem.tif
   boundary: geo/boundary.shp
   breaklines: geo/breaklines.shp
   region_points: geo/region-points.shp
+boundaries:
   liquid_boundaries: geo/liquid-boundaries.shp
   inflow: geo/inflow.csv
+  outflow_condition: elevation
+  prescribed_elevation: 379.5
+ground_truth:
   measurements: geo/measurements.csv
 mesh:
   default_size: 6.0
@@ -112,8 +116,6 @@ friction:
 hydrodynamics:
   regime: steady
   n_time_steps: 200
-  outflow_condition: elevation
-  prescribed_elevation: 379.5
 calibration:
   calibration_quantities: ["WATER DEPTH"]
   extraction_quantities: ["WATER DEPTH", "SCALAR VELOCITY"]

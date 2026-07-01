@@ -20,7 +20,7 @@ given ``Q`` is found by bisection; the stage is ``WSE = bed_elevation + h_n``.
 
 Roughness is given either as a Manning ``n`` or a Strickler ``Kst`` (``n = 1/Kst``).
 The result is written as a ``Q,WSE,depth`` CSV that :func:`hydromate.hydraulics.
-read_stage_discharge` consumes as ``inputs.stage_discharge``.
+read_stage_discharge` consumes as ``boundaries.stage_discharge``.
 """
 
 from __future__ import annotations
@@ -139,12 +139,12 @@ def synthesize_outflow_rating(cfg, discharge, *, side_slope: float = 0.0,
 
     Unless given explicitly, the trapezoidal-channel parameters are taken from the
     geodata: *width* = total length of the outflow liquid-boundary line(s)
-    (``inputs.liquid_boundaries``, field tagged ``outflow``); *bed_elevation* =
+    (``boundaries.liquid_boundaries``, field tagged ``outflow``); *bed_elevation* =
     thalweg (minimum DEM elevation) sampled along that line; *slope* = reach bed
-    slope from a linear fit of the DEM along ``inputs.channel_centerline``. The
+    slope from a linear fit of the DEM along ``geodata.channel_centerline``. The
     roughness defaults to the lateral-boundary friction in the config
     (``friction.boundary_law``/``boundary_coefficient``; Strickler or Manning).
-    Writes a one-row ``Q,WSE,depth`` CSV to *out* (default ``inputs.stage_discharge``).
+    Writes a one-row ``Q,WSE,depth`` CSV to *out* (default ``boundaries.stage_discharge``).
     """
     import geopandas as gpd
     import numpy as np
@@ -165,21 +165,21 @@ def synthesize_outflow_rating(cfg, discharge, *, side_slope: float = 0.0,
                              f"{law} (not Strickler=3 or Manning=4)")
 
     # outflow boundary line(s) -> width + sampling geometry
-    lb = gpd.read_file(cfg.inputs.liquid_boundaries)
+    lb = gpd.read_file(cfg.boundaries.liquid_boundaries)
     if lb.crs and lb.crs.to_epsg() != cfg.crs_epsg:
         lb = lb.to_crs(epsg=cfg.crs_epsg)
     type_col = _type_column(lb)
     if type_col is None:
-        raise ValueError(f"{Path(cfg.inputs.liquid_boundaries).name}: no inflow/"
+        raise ValueError(f"{Path(cfg.boundaries.liquid_boundaries).name}: no inflow/"
                          "outflow type column to find the outflow line")
     outflow = lb[[_normalise_kind(v) == "outflow" for v in lb[type_col]]]
     if outflow.empty:
-        raise ValueError(f"no 'outflow' line in {Path(cfg.inputs.liquid_boundaries).name}")
+        raise ValueError(f"no 'outflow' line in {Path(cfg.boundaries.liquid_boundaries).name}")
     outline = unary_union(outflow.geometry.values)
     if width is None:
         width = float(outflow.length.sum())
 
-    with rasterio.open(cfg.inputs.dem_initial) as dem:
+    with rasterio.open(cfg.geodata.dem_initial) as dem:
         def _sample(geom, n):
             d = np.linspace(0.0, geom.length, n)
             pts = [geom.interpolate(t) for t in d]
@@ -197,10 +197,10 @@ def synthesize_outflow_rating(cfg, discharge, *, side_slope: float = 0.0,
                 raise ValueError("outflow line samples no valid DEM elevations")
             bed_elevation = float(zo.min())             # thalweg
         if slope is None:
-            if cfg.inputs.channel_centerline is None:
-                raise ValueError("slope not given and no inputs.channel_centerline "
+            if cfg.geodata.channel_centerline is None:
+                raise ValueError("slope not given and no geodata.channel_centerline "
                                  "to derive the reach slope from")
-            cl = gpd.read_file(cfg.inputs.channel_centerline)
+            cl = gpd.read_file(cfg.geodata.channel_centerline)
             if cl.crs and cl.crs.to_epsg() != cfg.crs_epsg:
                 cl = cl.to_crs(epsg=cfg.crs_epsg)
             merged = unary_union(cl.geometry.values)
@@ -210,7 +210,7 @@ def synthesize_outflow_rating(cfg, discharge, *, side_slope: float = 0.0,
             s = np.linspace(0.0, line.length, zc.size)
             slope = abs(float(np.polyfit(s, zc, 1)[0]))
 
-    out = Path(out) if out is not None else Path(cfg.inputs.stage_discharge)
+    out = Path(out) if out is not None else Path(cfg.boundaries.stage_discharge)
     rough = f"Strickler Kst={strickler}" if strickler is not None else f"Manning n={manning}"
     log.info("outflow rating from geodata: Q=%.2f m3/s, width=%.1f m (outflow line), "
              "bed=%.2f m (thalweg), slope=%.5f, banks %g:1, %s",

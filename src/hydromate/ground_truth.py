@@ -121,7 +121,7 @@ def read_flowtracker_values(xlsx: Path) -> pd.DataFrame:
     header_idx = next(i for i in range(len(raw))
                       if str(raw.iloc[i, 0]).strip() == "ID")
     header = [str(h).strip() if h is not None else "" for h in raw.iloc[header_idx]]
-    data = raw.iloc[header_idx + 2:].copy()       # skip header + units rows
+    data = raw.iloc[header_idx + 2:].copy()       # skip header and units rows
     data.columns = header
     data = data[data["ID"].notna()]
 
@@ -262,10 +262,10 @@ def compile_ground_truth(cfg) -> Path | None:
     written path (``cfg.ground_truth_path``), or ``None`` when no sources are
     configured (the user supplies the tidy table directly).
     """
-    if not cfg.inputs.ground_truth:
+    if not cfg.ground_truth.sources:
         return None
     tables: dict[str, list[pd.DataFrame]] = {}
-    for src in cfg.inputs.ground_truth:
+    for src in cfg.ground_truth.sources:
         tables.setdefault(src.category, []).append(_compile_source(src, cfg.crs_epsg))
     merged = {cat: pd.concat(parts, ignore_index=True) for cat, parts in tables.items()}
     out = cfg.ground_truth_path

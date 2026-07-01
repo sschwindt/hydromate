@@ -233,10 +233,13 @@ def _read_cas_value(path: Path, keyword: str) -> str | None:
     return None
 
 
-def cas3d_name(cfg: Config) -> str:
-    """``<case-name>3d.cas`` with a filesystem-safe case name."""
+def cas3d_name(cfg: Config, suffix: str = "") -> str:
+    """``<case-name>3d<suffix>.cas`` with a filesystem-safe case name.
+
+    *suffix* distinguishes variants written next to each other (e.g.
+    ``"-unsteady"`` -> ``<case-name>3d-unsteady.cas``)."""
     slug = "".join(c if (c.isalnum() or c in "-_") else "_" for c in cfg.name)
-    return f"{(slug.strip('_') or 'case')}3d.cas"
+    return f"{(slug.strip('_') or 'case')}3d{suffix}.cas"
 
 
 def _force_levels(vd: VerticalDiscretization, n_levels: int) -> VerticalDiscretization:
@@ -253,7 +256,14 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
                  cas_2d: str | Path | None = None,
                  total_time_factor: float = 4.0,
                  n_levels: int | None = None,
-                 hotstart: str = "continuation") -> ThreeDSetup:
+                 hotstart: str = "continuation",
+                 unsteady: bool = False,
+                 liquid_boundaries_file: str | None = None,
+                 duration: float | None = None,
+                 gaia_cas: str | None = None,
+                 out_name: str | None = None,
+                 results3d_name: str | None = None,
+                 results2d_name: str | None = None) -> ThreeDSetup:
     """Write ``<case-name>3d.cas`` next to the 2D case and return the setup summary.
 
     *results_2d* defaults to ``<model_dir>/<results_slf>`` (the ``initial_run``
@@ -262,6 +272,14 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
     flow-through times (length / characteristic velocity). *n_levels* overrides the
     inferred ``NUMBER OF HORIZONTAL LEVELS`` (used by the vertical convergence study;
     the time step then adapts to the resulting layer thickness).
+
+    With *unsteady* and a *liquid_boundaries_file* the run is hydrograph-driven: the
+    ``LIQUID BOUNDARIES FILE`` supplies Q(t)/SL(t) and the step count spans *duration*
+    (TELEMAC-3D has no DURATION keyword, so ``NUMBER OF TIME STEPS = duration / dt``);
+    the hotstart still lifts the initial 3D field from the 2D result. *gaia_cas*
+    couples GAIA morphodynamics. *out_name* / *results3d_name* / *results2d_name*
+    override the output filenames so an unsteady variant does not clobber the steady
+    3D run's files.
 
     *hotstart* selects how the 3D run is initialised from the 2D result:
 
@@ -293,10 +311,14 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
     u_char = characteristic_velocity(cfg, data)
     dt = courant_time_step(vd.dx, vd.dz, u_char)
 
-    # duration: a few reach flow-through times, so the 3D field settles from the
-    # 2D hotstart; pick the time-step count and printout periods from it.
+    # duration: for an unsteady run, span the supplied hydrograph *duration* (3D has
+    # no DURATION keyword, so convert to a step count at the fixed dt); otherwise a
+    # few reach flow-through times so the 3D field settles from the 2D hotstart.
     reach_len = float(max(np.ptp(data["x"]), np.ptp(data["y"]))) or (u_char * dt * 1000)
-    total_time = total_time_factor * reach_len / max(u_char, 1e-6)
+    if unsteady and duration is not None:
+        total_time = float(duration)
+    else:
+        total_time = total_time_factor * reach_len / max(u_char, 1e-6)
     n_steps = int(np.clip(round(total_time / dt), 200, 200_000))
     # 3D result writing is expensive; keep only a handful of frames over the spin-up
     graphic = max(1, n_steps // 5)
@@ -348,8 +370,11 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
         "/ INPUT / OUTPUT FILES",
         f"GEOMETRY FILE : {cfg.geometry_slf}",
         f"BOUNDARY CONDITIONS FILE : {cfg.boundary_cli}",
-        f"3D RESULT FILE : {cfg.results3d_slf}",
-        f"2D RESULT FILE : {cfg.results2d_from_3d_slf}",
+        # hydrograph forcing (Q(t)/SL(t)) for the unsteady run
+        *([f"LIQUID BOUNDARIES FILE : {liquid_boundaries_file}"]
+          if (unsteady and liquid_boundaries_file) else []),
+        f"3D RESULT FILE : {results3d_name or cfg.results3d_slf}",
+        f"2D RESULT FILE : {results2d_name or cfg.results2d_from_3d_slf}",
         "MASS-BALANCE : YES",
         "/",
         *hotstart_lines,
@@ -439,8 +464,16 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
             # logarithmic vertical velocity profile on every liquid boundary
             lines.append("VELOCITY VERTICAL PROFILES : " + ";".join(["2"] * n_liquid))
 
+    if cfg.morphodynamics.enabled and gaia_cas:
+        # GAIA couples to telemac3d the same way as 2D (bedload / suspended load);
+        # suspended sediment is carried as tracers declared through the coupling.
+        lines += ["/", "/ MORPHODYNAMICS (GAIA - bedload / suspended load)",
+                  "COUPLING WITH : 'GAIA'",
+                  f"GAIA STEERING FILE : {gaia_cas}",
+                  f"COUPLING PERIOD FOR GAIA : {cfg.morphodynamics.coupling_period}"]
+
     lines.append("&ETA")
-    path = model / cas3d_name(cfg)
+    path = model / (out_name or cas3d_name(cfg))
     path.write_text("\n".join(lines) + "\n")
     return ThreeDSetup(
         cas=path, n_levels=vd.n_levels, dz=vd.dz, dx=vd.dx, depth=vd.depth,

@@ -1,6 +1,6 @@
 """Liquid-boundary classification, outflow type, and node-balance warning.
 
-Builds a rectangular contour mesh plus an ``inputs.liquid_boundaries`` line layer
+Builds a rectangular contour mesh plus a ``boundaries.liquid_boundaries`` line layer
 with a ``Type (inflow/outflow)`` field (left edge = inflow, right edge =
 outflow), then checks:
 
@@ -76,12 +76,11 @@ project:
   crs_epsg: 25832
 telemac:
   pysource: {geo / "liquid-boundaries.gpkg"}   # not sourced here
-inputs:
+geodata:
   dem_initial: geo/dem.tif            # dummy (existence not checked here)
   boundary: geo/boundary.shp
+boundaries:
   liquid_boundaries: geo/liquid-boundaries.gpkg
-  inflow: geo/inflow.csv
-hydrodynamics:
   outflow_condition: {outflow_condition}
 """)
     return cfg_yaml

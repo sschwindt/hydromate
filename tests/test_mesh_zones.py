@@ -35,8 +35,8 @@ def test_classify_zone_by_substring():
 
 def _zone_cfg(tmp_path, gpkg):
     from hydromate.config import (
-        Calibration, Config, Friction, Hydrodynamics, Inputs, MeshConfig,
-        Morphodynamics, TelemacEnv,
+        Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
+        Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )
 
     dummy = tmp_path / "dummy"
@@ -47,11 +47,13 @@ def _zone_cfg(tmp_path, gpkg):
         name="zones", crs_epsg=25832, config_dir=tmp_path,
         preprocessing_dir=tmp_path, model_dir=model, postprocessing_dir=tmp_path,
         calibration_dir=tmp_path, telemac=TelemacEnv(pysource=dummy),
-        inputs=Inputs(dem_initial=dummy, boundary=dummy, liquid_boundaries=dummy,
-                      inflow=dummy, mesh_zones=gpkg),
+        geodata=Geodata(dem_initial=dummy, boundary=dummy, mesh_zones=gpkg),
+        boundaries=Boundaries(liquid_boundaries=dummy),
+        initialization=Initialization(),
         mesh=MeshConfig(floodplain_size=1.5, refinement_size=0.4),
         friction=Friction(), hydrodynamics=Hydrodynamics(),
-        morphodynamics=Morphodynamics(), calibration=Calibration(),
+        morphodynamics=Morphodynamics(), ground_truth=GroundTruth(),
+        calibration=Calibration(),
     )
 
 

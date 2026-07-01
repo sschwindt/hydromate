@@ -26,13 +26,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hydromate import format_flux_convergence, setup_logging
+from hydromate import format_flux_convergence, run_solver_streaming, setup_logging
 from hydromate.config import load_config
 from hydromate.env import TelemacRuntime
 from hydromate.flux_convergence import HOTSTART_TOLERANCE, analyze_flux_convergence
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)
+
+# Number of parallel MPI processes for this test run. None -> use the core
+# count assigned in preprocessing (case-config.yml telemac.n_processors);
+# set an integer here to override it for this run only (e.g. NCSIZE = 8).
+NCSIZE: int | None = None
 
 
 def main() -> None:
@@ -44,12 +49,14 @@ def main() -> None:
 
     setup_logging(cfg.model_path(cfg.log_file))   # append to the simulation log
     print(f"test-running the built case: {cas}")
+    print("streaming TELEMAC output (simulated-time progress bar below):\n")
 
     runtime = TelemacRuntime(cfg.telemac)
     try:
         runtime.check_available()
-        proc = runtime.run_solver(cfg.cas_file, cwd=cfg.model_dir,
-                                  ncsize=cfg.telemac.n_processors)
+        # stream the solver listing live and show a simulated-time vs DURATION
+        # progress bar instead of running silently (see hydromate.progress).
+        proc = run_solver_streaming(runtime, cfg, ncsize=NCSIZE)
     except Exception as exc:  # noqa: BLE001 - report cleanly
         print(f"could not run the solver: {type(exc).__name__}: {exc}")
         return

@@ -13,7 +13,7 @@ compute time, the per-mesh runs, and the study log.
 The discharge and the outflow stage prescription come from ``case-config.yml``
 (same source as preprocessing.py); each mesh is **pre-wetted**: the channel is
 seeded with ``INITIAL_DEPTH`` (0.5 m by default) of water on the nodes inside the
-``channel`` mesh-zones, and the run is continued from that warm start so the solver
+``channel`` mesh-zones, and the run is continued from that hotstart so the solver
 need not advance the wetting front from the inflow (a large time saving across the
 five runs). The IC does not affect the steady result the study compares, only its
 speed. Set ``INITIAL_DEPTH = None`` to use the production dry start instead.

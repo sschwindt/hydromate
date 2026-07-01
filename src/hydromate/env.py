@@ -13,6 +13,7 @@ from __future__ import annotations
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 from hydromate.config import TelemacEnv
 
@@ -29,15 +30,41 @@ class TelemacRuntime:
         return ["bash", "-lc", script]
 
     def run(self, command: str, cwd: str | Path | None = None,
-            check: bool = True) -> subprocess.CompletedProcess:
-        """Run *command* inside the sourced TELEMAC environment."""
-        return subprocess.run(
-            self._wrap(command),
-            cwd=str(cwd) if cwd else None,
-            check=check,
-            text=True,
-            capture_output=True,
+            check: bool = True,
+            on_line: Callable[[str], None] | None = None) -> subprocess.CompletedProcess:
+        """Run *command* inside the sourced TELEMAC environment.
+
+        With *on_line* the command's combined stdout+stderr is streamed line by
+        line (each passed to the callback as it arrives, so a long solver run is
+        not silent) instead of being buffered until the end; the full output is
+        still returned in ``CompletedProcess.stdout``. Without it, output is
+        captured quietly as before.
+        """
+        args = self._wrap(command)
+        cwd = str(cwd) if cwd else None
+        if on_line is None:
+            return subprocess.run(
+                args, cwd=cwd, check=check, text=True, capture_output=True,
+            )
+        proc = subprocess.Popen(
+            args, cwd=cwd, text=True, bufsize=1,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
+        captured: list[str] = []
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            captured.append(line)
+            on_line(line.rstrip("\n"))
+        proc.stdout.close()
+        returncode = proc.wait()
+        result = subprocess.CompletedProcess(
+            args, returncode, stdout="".join(captured), stderr="",
+        )
+        if check and returncode != 0:
+            raise subprocess.CalledProcessError(
+                returncode, args, output=result.stdout,
+            )
+        return result
 
     def python(self, code: str, cwd: str | Path | None = None,
                check: bool = True) -> subprocess.CompletedProcess:
@@ -49,7 +76,8 @@ class TelemacRuntime:
                    ncsize: int | None = None,
                    sortie: bool = True,
                    solver: str | None = None,
-                   check: bool = True) -> subprocess.CompletedProcess:
+                   check: bool = True,
+                   on_line: Callable[[str], None] | None = None) -> subprocess.CompletedProcess:
         """Launch a TELEMAC solver on *cas_file* (used for the dry test run).
 
         *solver* overrides the configured solver launcher (default
@@ -63,13 +91,17 @@ class TelemacRuntime:
         the per-boundary cumulated flowrates and volume balance that the flux-
         convergence analysis (pythomac) reads; ``--nozip`` keeps it unzipped in
         parallel runs so the parser can find it.
+
+        *on_line* is forwarded to :meth:`run`: pass a callback (e.g.
+        ``SolverProgress.feed``) to stream the solver's listing live instead of
+        running silently.
         """
         ncsize = ncsize or self.env.n_processors
         parallel = f" --ncsize={ncsize}" if ncsize and ncsize > 1 else ""
         sortie_flags = " -s --nozip" if sortie else ""
         launcher = solver or self.env.solver
         cmd = f"{launcher}.py {shlex.quote(str(cas_file))}{parallel}{sortie_flags}"
-        return self.run(cmd, cwd=cwd, check=check)
+        return self.run(cmd, cwd=cwd, check=check, on_line=on_line)
 
     def check_available(self) -> str:
         """Return the TELEMAC python version string, raising if the env is broken."""

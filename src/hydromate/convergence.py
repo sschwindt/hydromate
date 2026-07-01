@@ -392,11 +392,11 @@ def default_probes(cfg: Config, n: int = 40) -> np.ndarray:
                 return pts
         except Exception as exc:  # pragma: no cover - fallback only
             log.debug("probe points from ground truth unavailable: %s", exc)
-    if cfg.inputs.channel_centerline is not None:
+    if cfg.geodata.channel_centerline is not None:
         import geopandas as gpd
         from shapely.ops import linemerge, unary_union
 
-        gdf = gpd.read_file(cfg.inputs.channel_centerline)
+        gdf = gpd.read_file(cfg.geodata.channel_centerline)
         if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
             gdf = gdf.to_crs(epsg=cfg.crs_epsg)
         merged = unary_union(gdf.geometry.values)
@@ -431,10 +431,10 @@ def make_telemac_simulator(cfg: Config, discharge: float, *, base_dir: Path,
         lc = copy.deepcopy(cfg)
         lc.mesh.channel_size, lc.mesh.floodplain_size = ch, fp
         lc.hydrodynamics.turbulence_model = pinned_turbulence
-        lc.hydrodynamics.prescribed_flowrate = discharge
+        lc.boundaries.prescribed_flowrate = discharge
         # let TELEMAC pick a CFL-admissible dt for this mesh (iterative convergence
         # to steady state must be reached before meshes are compared). These runs are
-        # pre-wetted (warm start), so a faster 0.6 Courant target keeps the 5-mesh
+        # pre-wetted (hotstart), so a faster 0.6 Courant target keeps the 5-mesh
         # study tractable; the production dry-start default is the safer 0.30.
         lc.hydrodynamics.variable_timestep = True
         lc.hydrodynamics.desired_courant = 0.6

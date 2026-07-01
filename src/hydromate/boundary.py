@@ -9,7 +9,7 @@ lines and writes the TELEMAC boundary-conditions file. Codes:
                                                   [default] or ``elevation``)
 * outflow, free / Neumann          -> ``4 4 4``  (``outflow_condition: free``)
 
-The liquid-boundary lines come from ``inputs.liquid_boundaries`` (a line layer
+The liquid-boundary lines come from ``boundaries.liquid_boundaries`` (a line layer
 whose ``Type (inflow/outflow)`` field tags each line ``inflow`` or ``outflow``;
 there may be several of each). They **must coincide with the outer bounds of the
 mesh zones** so that contour nodes fall on them. Liquid boundaries are numbered
@@ -56,9 +56,35 @@ class LiquidBoundary:
     n_nodes: int
 
 
+def dump_liquid_boundaries(liquids: list["LiquidBoundary"], path: str | Path) -> Path:
+    """Serialize the FRONT2-ordered liquid boundaries to JSON.
+
+    Written during the build (:mod:`hydromate.pipeline`) so the standalone unsteady /
+    3D scripts recover the exact TELEMAC boundary numbering (index/kind/node count)
+    without rebuilding the mesh - all :func:`load_liquid_boundaries` needs to write
+    the hydrograph liquid-boundaries file and the prescribed-value arrays.
+    """
+    import json
+
+    path = Path(path)
+    path.write_text(json.dumps(
+        [{"index": lb.index, "kind": lb.kind, "n_nodes": lb.n_nodes} for lb in liquids],
+        indent=2) + "\n")
+    return path
+
+
+def load_liquid_boundaries(path: str | Path) -> list["LiquidBoundary"]:
+    """Load the liquid boundaries dumped by :func:`dump_liquid_boundaries`."""
+    import json
+
+    data = json.loads(Path(path).read_text())
+    return [LiquidBoundary(index=int(d["index"]), kind=str(d["kind"]),
+                           n_nodes=int(d["n_nodes"])) for d in data]
+
+
 def _outflow_code(cfg: Config) -> tuple[int, int, int]:
     """Free/Neumann outflow -> 4 4 4; stage_discharge / elevation -> 5 4 4."""
-    return OUTFLOW_FREE if cfg.hydrodynamics.outflow_condition == "free" else OUTFLOW_ELEV
+    return OUTFLOW_FREE if cfg.boundaries.outflow_condition == "free" else OUTFLOW_ELEV
 
 
 def _normalise_kind(value) -> str:
@@ -91,7 +117,7 @@ def _load_liquid_lines(cfg: Config):
     import geopandas as gpd
     from shapely.ops import unary_union
 
-    gdf = gpd.read_file(cfg.inputs.liquid_boundaries)
+    gdf = gpd.read_file(cfg.boundaries.liquid_boundaries)
     if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
         gdf = gdf.to_crs(epsg=cfg.crs_epsg)
     type_col = _type_column(gdf)
@@ -99,14 +125,14 @@ def _load_liquid_lines(cfg: Config):
     if type_col is None:
         log.warning("liquid_boundaries %s has no inflow/outflow type column; "
                     "treating every line as inflow",
-                    Path(cfg.inputs.liquid_boundaries).name)
+                    Path(cfg.boundaries.liquid_boundaries).name)
         out["inflow"] = list(gdf.geometry.values)
         return {k: unary_union(v) for k, v in out.items()}
     for _, row in gdf.iterrows():
         kind = _normalise_kind(row[type_col])
         if kind not in ("inflow", "outflow"):
             raise ValueError(
-                f"liquid_boundaries {Path(cfg.inputs.liquid_boundaries).name!r}: "
+                f"liquid_boundaries {Path(cfg.boundaries.liquid_boundaries).name!r}: "
                 f"line tagged {row[type_col]!r} in column {type_col!r} is neither "
                 "'inflow' nor 'outflow'"
             )

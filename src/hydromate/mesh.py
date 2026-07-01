@@ -63,7 +63,7 @@ def _boundary_polygon(cfg: Config):
     import geopandas as gpd
     from shapely.ops import polygonize, unary_union
 
-    gdf = gpd.read_file(cfg.inputs.boundary)
+    gdf = gpd.read_file(cfg.geodata.boundary)
     if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
         gdf = gdf.to_crs(epsg=cfg.crs_epsg)
     geoms = list(gdf.geometry.values)
@@ -92,11 +92,11 @@ def _read_lines(path: Path, crs_epsg: int):
 
 def _read_region_seeds(cfg: Config):
     """Return (xy array, matid array) of region seed points, or (None, None)."""
-    if cfg.inputs.region_points is None:
+    if cfg.geodata.region_points is None:
         return None, None
     import geopandas as gpd
 
-    gdf = gpd.read_file(cfg.inputs.region_points)
+    gdf = gpd.read_file(cfg.geodata.region_points)
     if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
         gdf = gdf.to_crs(epsg=cfg.crs_epsg)
     matid_col = next(
@@ -133,8 +133,8 @@ def _build_gmsh(cfg: Config):
 
     # breaklines as embedded constraint lines
     embedded_lines: list[int] = []
-    if cfg.inputs.breaklines is not None:
-        for coords in _read_lines(Path(cfg.inputs.breaklines), cfg.crs_epsg):
+    if cfg.geodata.breaklines is not None:
+        for coords in _read_lines(Path(cfg.geodata.breaklines), cfg.crs_epsg):
             pts = [geo.addPoint(px, py, 0.0, m.breakline_size) for px, py in coords]
             for i in range(len(pts) - 1):
                 embedded_lines.append(geo.addLine(pts[i], pts[i + 1]))
@@ -156,8 +156,8 @@ def _build_gmsh(cfg: Config):
 
 
 def _anisotropic_enabled(cfg: Config) -> bool:
-    return (cfg.inputs.mesh_zones is not None
-            and cfg.inputs.channel_centerline is not None)
+    return (cfg.geodata.mesh_zones is not None
+            and cfg.geodata.channel_centerline is not None)
 
 
 _ZONE_PRIORITY = {"refinement": 0, "channel": 1, "floodplain": 2, "other": 3}
@@ -217,13 +217,13 @@ def _read_mesh_zones(cfg: Config):
     """
     import geopandas as gpd
 
-    gdf = gpd.read_file(cfg.inputs.mesh_zones)
+    gdf = gpd.read_file(cfg.geodata.mesh_zones)
     if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
         gdf = gdf.to_crs(epsg=cfg.crs_epsg)
     name_field = _match_field(gdf, cfg.mesh.zone_name_field)
     if name_field is None:
         raise ValueError(
-            f"mesh_zones {Path(cfg.inputs.mesh_zones).name!r} has no "
+            f"mesh_zones {Path(cfg.geodata.mesh_zones).name!r} has no "
             f"'{cfg.mesh.zone_name_field}' column (has {list(gdf.columns)})"
         )
     size_field = _match_field(gdf, cfg.mesh.zone_size_field)
@@ -271,7 +271,7 @@ def _channel_union(cfg: Config):
     channel = zones[zones["_zone_type"] == "channel"]
     if channel.empty:
         raise ValueError(
-            f"no mesh zone named '*channel*' in {Path(cfg.inputs.mesh_zones).name!r}; "
+            f"no mesh zone named '*channel*' in {Path(cfg.geodata.mesh_zones).name!r}; "
             f"found {sorted(zones['_zone_type'].unique())}"
         )
     return _fill_holes(unary_union(channel.geometry.values))
@@ -283,7 +283,7 @@ def _centerline_tangents(cfg: Config, spacing: float):
     from scipy.spatial import cKDTree
     from shapely.ops import linemerge, unary_union
 
-    gdf = gpd.read_file(cfg.inputs.channel_centerline)
+    gdf = gpd.read_file(cfg.geodata.channel_centerline)
     if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
         gdf = gdf.to_crs(epsg=cfg.crs_epsg)
     merged = unary_union(gdf.geometry.values)
@@ -659,7 +659,7 @@ def _assign_matid(cfg: Config, points: np.ndarray) -> np.ndarray:
 def channel_node_mask(cfg: Config, mesh: "Mesh") -> np.ndarray:
     """Boolean (NPOIN,) flag of mesh nodes on/inside the ``*channel*`` mesh-zones.
 
-    Uses the same ``inputs.mesh_zones`` polygons (``Zone Name`` contains
+    Uses the same ``geodata.mesh_zones`` polygons (``Zone Name`` contains
     ``channel``) that drive the anisotropic mesh, so the pre-wetting region
     coincides with the meshed channel. Raises if no channel zones are configured.
 
@@ -670,7 +670,7 @@ def channel_node_mask(cfg: Config, mesh: "Mesh") -> np.ndarray:
     cross-section dry, which makes TELEMAC's ``DEBIMP`` abort at t=0 ("PROBLEM ON
     BOUNDARY NUMBER ... CHECK THE WATER DEPTHS"). The seeded depth is still
     ``max(water_level - bed, 0)``, so the buffer only wets nodes actually below
-    the warm-start surface; the dry banks stay dry.
+    the hotstart surface; the dry banks stay dry.
     """
     from shapely import contains_xy
 
@@ -716,7 +716,7 @@ def build_mesh(cfg: Config, dem_initial_roi: Path | None = None) -> Mesh:
             for zt, grp in zones.groupby("_zone_type"))
         log.info("  mesh strategy: anisotropic (channel x%.1f along centerline, "
                  "growth %.2f); zones from %s: %s", cfg.mesh.channel_anisotropy,
-                 cfg.mesh.growth_ratio, Path(cfg.inputs.mesh_zones).name, summary)
+                 cfg.mesh.growth_ratio, Path(cfg.geodata.mesh_zones).name, summary)
     else:
         log.info("  mesh strategy: isotropic (default %.2f m, breakline %.2f m)",
                  cfg.mesh.default_size, cfg.mesh.breakline_size)
@@ -846,24 +846,24 @@ def interpolate_roughness(cfg: Config, mesh: Mesh) -> Mesh:
     points just outside any). That id becomes the per-node ``FRIC_ID`` written to
     the geometry - overriding the MATID-derived ids so the friction zonation comes
     from the roughness zones - via ``mesh.node_matid`` / ``mesh.element_matid``.
-    The matching ``inputs.roughness_table`` value (e.g. a Nikuradse k_s) is stored
+    The matching ``geodata.roughness_table`` value (e.g. a Nikuradse k_s) is stored
     in ``mesh.roughness`` (BOTTOM FRICTION); HydroBayesCal later perturbs it.
     """
     import geopandas as gpd
 
-    if cfg.inputs.roughness_zones is None or cfg.inputs.roughness_table is None:
-        raise ValueError("interpolate_roughness needs inputs.roughness_zones "
-                         "and inputs.roughness_table to be set")
-    table = read_roughness_table(Path(cfg.inputs.roughness_table))
+    if cfg.geodata.roughness_zones is None or cfg.geodata.roughness_table is None:
+        raise ValueError("interpolate_roughness needs geodata.roughness_zones "
+                         "and geodata.roughness_table to be set")
+    table = read_roughness_table(Path(cfg.geodata.roughness_table))
 
-    zones = gpd.read_file(cfg.inputs.roughness_zones)
+    zones = gpd.read_file(cfg.geodata.roughness_zones)
     if zones.crs and zones.crs.to_epsg() != cfg.crs_epsg:
         zones = zones.to_crs(epsg=cfg.crs_epsg)
     field = next((c for c in zones.columns
                   if c.lower() == cfg.mesh.roughness_zone_field.lower()), None)
     if field is None:
         raise ValueError(
-            f"roughness_zones {Path(cfg.inputs.roughness_zones).name!r} has no "
+            f"roughness_zones {Path(cfg.geodata.roughness_zones).name!r} has no "
             f"'{cfg.mesh.roughness_zone_field}' column (has {list(zones.columns)})"
         )
     zones = zones[[field, "geometry"]].rename(columns={field: "zone_id"})
@@ -887,8 +887,8 @@ def interpolate_roughness(cfg: Config, mesh: Mesh) -> Mesh:
     if missing:
         raise ValueError(
             f"roughness zone id(s) {missing} present in "
-            f"{Path(cfg.inputs.roughness_zones).name!r} but absent from the "
-            f"roughness table {Path(cfg.inputs.roughness_table).name!r} "
+            f"{Path(cfg.geodata.roughness_zones).name!r} but absent from the "
+            f"roughness table {Path(cfg.geodata.roughness_table).name!r} "
             f"(has {sorted(table)})"
         )
     mesh.node_matid = node_zone                       # FRIC_ID per node
@@ -927,7 +927,7 @@ def run(cfg: Config, dem_initial_roi: Path) -> tuple[Mesh, Path]:
     is consistent with the friction ``.tbl`` derived from the same table).
     """
     mesh = build_mesh(cfg, dem_initial_roi)
-    if cfg.inputs.roughness_zones is not None and cfg.inputs.roughness_table is not None:
+    if cfg.geodata.roughness_zones is not None and cfg.geodata.roughness_table is not None:
         with log_step("  interpolate roughness zones onto the mesh"):
             mesh = interpolate_roughness(cfg, mesh)
     slf_path = write_mesh(mesh, cfg.model_path(cfg.geometry_slf),

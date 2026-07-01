@@ -1,8 +1,8 @@
-"""Channel pre-wetting (warm-start) tests.
+"""Channel pre-wetting (hotstart) tests.
 
 Covers the two pieces that make up the pre-wetting option used by the
-mesh-convergence study: the warm-start SELAFIN writer
-(:func:`hydromate.selafin.write_initial_state`) and the warm-start keywords the
+mesh-convergence study: the hotstart SELAFIN writer
+(:func:`hydromate.selafin.write_initial_state`) and the hotstart keywords the
 steering writer emits (:func:`hydromate.steering.write_cas`). The TELEMAC solver
 is not involved.
 """
@@ -173,8 +173,8 @@ def test_unsteady_cas_and_liquid_boundaries(tmp_path):
 
 def _minimal_cfg(tmp_path):
     from hydromate.config import (
-        Calibration, Config, Friction, Hydrodynamics, Inputs, MeshConfig,
-        Morphodynamics, TelemacEnv,
+        Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
+        Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )
 
     model = tmp_path / "model"
@@ -186,14 +186,16 @@ def _minimal_cfg(tmp_path):
         preprocessing_dir=tmp_path, model_dir=model, postprocessing_dir=tmp_path,
         calibration_dir=tmp_path,
         telemac=TelemacEnv(pysource=dummy),
-        inputs=Inputs(dem_initial=dummy, boundary=dummy, liquid_boundaries=dummy,
-                      inflow=dummy),
+        geodata=Geodata(dem_initial=dummy, boundary=dummy),
+        boundaries=Boundaries(liquid_boundaries=dummy),
+        initialization=Initialization(),
         mesh=MeshConfig(), friction=Friction(), hydrodynamics=Hydrodynamics(),
-        morphodynamics=Morphodynamics(), calibration=Calibration(),
+        morphodynamics=Morphodynamics(), ground_truth=GroundTruth(),
+        calibration=Calibration(),
     )
 
 
-def test_write_cas_warm_start_keywords(tmp_path):
+def test_write_cas_hotstart_keywords(tmp_path):
     from hydromate import steering
     from hydromate.boundary import LiquidBoundary
 
@@ -206,15 +208,15 @@ def test_write_cas_warm_start_keywords(tmp_path):
     assert "INITIAL CONDITIONS :" in plain
     assert "COMPUTATION CONTINUED" not in plain
 
-    # with a warm-start file: continue the run from it, clock reset to zero.
+    # with a hotstart file: continue the run from it, clock reset to zero.
     # Since TELEMAC 9.0 the PREVIOUS COMPUTATION FILE keyword alone triggers the
     # continuation (the boolean COMPUTATION CONTINUED keyword was removed).
-    warm = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5,
-                              previous_computation="initial-conditions.slf").read_text()
-    assert "COMPUTATION CONTINUED" not in warm
-    assert "PREVIOUS COMPUTATION FILE : initial-conditions.slf" in warm
-    assert "INITIAL TIME SET TO ZERO : YES" in warm
-    assert "INITIAL CONDITIONS :" not in warm
+    hot = steering.write_cas(cfg, liquids, inflow_q=47.0, outflow_wse=379.5,
+                             previous_computation="initial-conditions.slf").read_text()
+    assert "COMPUTATION CONTINUED" not in hot
+    assert "PREVIOUS COMPUTATION FILE : initial-conditions.slf" in hot
+    assert "INITIAL TIME SET TO ZERO : YES" in hot
+    assert "INITIAL CONDITIONS :" not in hot
 
 
 def test_steady_state_auto_stop_is_opt_in_and_fixed_step_only(tmp_path):

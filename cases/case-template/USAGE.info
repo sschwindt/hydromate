@@ -20,6 +20,9 @@ cases/<your-case>/
                               (<case-name>3d.cas) hotstarted from the 2D result
   vertical_convergence_3d.py  optional: 3D grid-independence study over the number
                               of vertical (sigma) layers
+  unsteady_run.py             optional: hydrograph (quasi-steady) run hotstarted from
+                              the steady result; in-script toggles for 2D/3D + GAIA
+                              bedload / suspended load (needs boundaries.inflow series)
   USAGE.info                  this file
 
   user-sources/        YOUR input data (gitignored; not shipped with the template)

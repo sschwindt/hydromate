@@ -19,7 +19,9 @@ Everything is driven by a single YAML config (:mod:`hydromate.config`).
 __version__ = "0.1.0"
 
 from hydromate.config import Config, load_config
-from hydromate.dem import clip_dem_to_roi, clip_to_roi
+from hydromate.dem import (
+    clip_dem_to_roi, clip_to_roi, dem_of_difference, propagated_lod, resolve_lod,
+)
 from hydromate.ground_truth import compile_ground_truth, read_tidy
 from hydromate.mesh import (
     build_mesh, channel_node_mask, interpolate_elevations, interpolate_roughness,
@@ -37,14 +39,21 @@ from hydromate.rating import (
     generate_stage_discharge, normal_depth, synthesize_outflow_rating,
 )
 from hydromate.convergence import percent_levels, run_mesh_convergence
+from hydromate.unsteady import (
+    build_unsteady_case, build_unsteady_3d_case, load_hydrograph,
+    write_control_sections,
+)
 from hydromate.flux_convergence import analyze_flux_convergence, FluxConvergence
 from hydromate.workflow import (
     format_flux_convergence, prepare_steady_inputs, resolve_discharge,
     synthesize_constant_inflow, synthesize_rating_if_missing,
+    run_solver_streaming, expected_duration,
 )
+from hydromate.progress import SolverProgress
 from hydromate.logsetup import setup_logging, log_step, logging_to
 
 __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
+           "dem_of_difference", "propagated_lod", "resolve_lod",
            "compile_ground_truth", "read_tidy",
            "build_mesh", "channel_node_mask", "interpolate_elevations",
            "interpolate_roughness", "write_mesh", "assess_quality",
@@ -53,7 +62,10 @@ __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "layer_levels", "run_vertical_convergence",
            "generate_stage_discharge", "normal_depth", "synthesize_outflow_rating",
            "run_mesh_convergence", "percent_levels",
+           "build_unsteady_case", "build_unsteady_3d_case", "load_hydrograph",
+           "write_control_sections",
            "analyze_flux_convergence", "FluxConvergence",
            "format_flux_convergence", "prepare_steady_inputs", "resolve_discharge",
            "synthesize_constant_inflow", "synthesize_rating_if_missing",
+           "run_solver_streaming", "expected_duration", "SolverProgress",
            "setup_logging", "log_step", "logging_to", "__version__"]
