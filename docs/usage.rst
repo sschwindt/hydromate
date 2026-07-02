@@ -14,7 +14,8 @@ chain - each step only makes sense once the previous one has succeeded:
    ``config_Telemac.py``. No solver is launched.
 #. **Initial run** (``initial_run.py``) - test-run the built case once to confirm
    it does not crash, and check that the boundary fluxes have reached mass balance
-   (the hotstart convergence check). This concludes preprocessing.
+   (the hotstart convergence check). The solver's output streams live with a
+   progress bar (see `The initial run`_). This concludes preprocessing.
 #. **Mesh-convergence study** (``mesh_convergence_study.py``) - the
    grid-independence study. It runs the case on five meshes, so it is only worth
    starting **once the initial run has confirmed the model runs**.
@@ -31,6 +32,43 @@ Prefer a form to hand-editing the YAML? Launch the browser-based configuration
 editor with ``hydromate-gui`` (see :ref:`the graphical configurator <input-config>`);
 its **Build** button is the same build step as above.
 
+The initial run
+---------------
+
+``initial_run.py`` launches the built ``steady2d.cas`` **once** (no rebuild) to
+confirm the case runs, then checks the boundary-flux mass balance (the hotstart
+convergence check; see :doc:`hbc`):
+
+* **Live output + progress bar.** The solver's listing is streamed to the terminal
+  as the run marches - rather than captured silently - and a single-line progress
+  bar tracks the **simulated time against the run's** ``DURATION``, the point the
+  variable-time-step march reaches when no stop criterion fires. Because the
+  CFL-adaptive step makes the *number* of time steps unknown in advance, progress is
+  measured against that simulated-time cap, with the live iteration count shown
+  alongside (:class:`hydromate.progress.SolverProgress`, wired by
+  :func:`hydromate.run_solver_streaming`). **Every** solver launch in the workflow
+  streams the same way: the per-mesh runs of the mesh-convergence study, the
+  per-layer runs of the vertical convergence study, and the ``--run`` modes of
+  ``add3d.py`` / ``unsteady_run.py``.
+* **Core-count override.** Set the module-level ``NCSIZE`` at the top of
+  ``initial_run.py`` to run this test on a different number of MPI processes than the
+  ``telemac.n_processors`` chosen during preprocessing; leave it ``None`` to use the
+  configured count. The command run is exactly
+  ``telemac2d.py steady2d.cas --ncsize=<N> -s --nozip``, so the wrapper adds no
+  compute overhead versus launching TELEMAC by hand.
+* **Flux convergence + the generated hotstart case.** After the run,
+  :func:`hydromate.analyze_flux_convergence` (delegating to pythomac) reads the
+  ``.sortie`` listing and writes ``extracted-fluxes.csv`` / ``flux-convergence.png``
+  (the per-boundary fluxes) and ``convergence-rate.csv`` / ``convergence-rate.png``
+  (the relative imbalance and its rate) into ``simulation/``; the per-processor
+  ``*_p0000N.sortie`` copies of a parallel run are deleted (only the merged main
+  listing matters). When the **absolute** flux imbalance ``||Q_in| - |Q_out||``
+  stays below 1e-3 m³/s over 10 consecutive listing printouts (or, on a noisy
+  steady state, in the 10-printout mean), a ``hotstart2d.cas`` is generated next to
+  the steady case: it continues from ``r2d.slf`` with that steady time as
+  ``DURATION`` and the constant Q/H prescriptions unchanged
+  (:func:`hydromate.steering.write_hotstart_cas`).
+
 Optional 3D extension (after the 2D path)
 -----------------------------------------
 
@@ -38,10 +76,24 @@ A 3D simulation builds on the 2D one and is run **only after it**: it needs the 
 **hotstart** result (``r2d.slf`` from the initial run) and reuses the horizontal mesh
 whose resolution the mesh-convergence study has already validated.
 
-#. **3D case** (``add3d.py``) - write a non-hydrostatic TELEMAC-3D case
-   (``<case-name>3d.cas``) hotstarted from the 2D result; the number of sigma layers
-   and the turbulence model are inferred from ``r2d.slf`` and the time step is sized
-   for a Courant number of 0.6 (``--run`` also launches ``telemac3d.py``).
+#. **3D cases** (``add3d.py``) - write exactly **three** TELEMAC-3D steering files
+   hotstarted from the 2D result (:func:`hydromate.build_3d_cases`); the number of
+   sigma layers and the turbulence model are inferred from ``r2d.slf`` and the fixed
+   time step is sized for a Courant number of 0.6:
+
+   * ``hotstart3d_hydrostatic.cas`` - ``NON-HYDROSTATIC VERSION : NO`` (the cheap
+     hydrostatic solver), constant in-file Q/H, ~30k fixed steps with a short
+     listing period: the steady **boundary-flux convergence check** (the sortie's
+     ``FLUX BOUNDARY`` printouts show when in/outflow balance in 3D).
+   * ``hotstart3d_hydrodyn.cas`` - ``NON-HYDROSTATIC VERSION : YES``; the steady
+     non-hydrostatic run with the same in-file prescribed Q (inflow) and H (outflow).
+   * ``unsteady3d.cas`` - non-hydrostatic and hydrograph-driven: the time-variable
+     inflow Q(t) and the stage-discharge outflow SL(t) come from the **same**
+     ``LIQUID BOUNDARIES FILE`` as ``unsteady2d.cas`` (needs a *varying*
+     ``boundaries.inflow`` series; skipped with a notice otherwise).
+
+   ``--run [hydrostatic|hydrodyn|unsteady]`` also launches ``telemac3d.py`` on one
+   of them (default: hydrostatic, the flux-convergence check).
 #. **Vertical-layer convergence** (``vertical_convergence_3d.py``) - the number of
    vertical layers (``dz``) is a *new* discretization choice the 2D mesh-convergence
    study never covered, so it gets its **own** grid-independence study over the layer
@@ -49,7 +101,7 @@ whose resolution the mesh-convergence study has already validated.
 
 .. code-block:: bash
 
-   python cases/example-Inn/add3d.py                    # write (and --run) the 3D case
+   python cases/example-Inn/add3d.py                    # write (and --run) the 3D cases
    python cases/example-Inn/vertical_convergence_3d.py  # vertical-layer convergence
 
 The ``cases/example-Inn/`` scripts drive the worked Inn example from its

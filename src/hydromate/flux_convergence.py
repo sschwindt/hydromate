@@ -9,7 +9,7 @@ hotstart would bake a transient bias into every perturbed run.
 Convergence criterion (after ``mass-balance-bc.md`` / ``convergence.md`` in the
 hyhome numerics notes): a **steady** Telemac2d run is converged when the liquid
 boundaries are in mass balance, i.e. total inflow equals total outflow. We track
-the dimensionless *relative flux imbalance* per listing printout
+the dimensionless *relative flux imbalance* per listing printout::
 
     eps_t = | |Q_in,t| - |Q_out,t| | / |Q_in,t|
 
@@ -54,6 +54,13 @@ _DEFAULT_PYTHOMAC = "/home/schwindt/github/pythomac"
 # (0.01% imbalance) is a well-converged steady state without the slow 1e-6 tail
 HOTSTART_TOLERANCE = 1.0e-4
 
+# absolute steady-state criterion for the hotstart end time: the run counts as steady
+# from the first listing printout at which the ABSOLUTE flux imbalance
+# ||Q_in| - |Q_out|| stays below STEADY_ABS_TOLERANCE (m3/s) for STEADY_WINDOW
+# consecutive printouts; that time becomes the DURATION of the generated hotstart case
+STEADY_ABS_TOLERANCE = 1.0e-3
+STEADY_WINDOW = 10
+
 
 @dataclass
 class FluxConvergence:
@@ -70,6 +77,11 @@ class FluxConvergence:
     flux_plot: Path | None
     rate_csv: Path | None
     rate_plot: Path | None
+    steady_seconds: float | None = None    # first time of the steady abs-imbalance window
+    steady_abs_tolerance: float = STEADY_ABS_TOLERANCE
+    steady_window: int = STEADY_WINDOW
+    steady_strict: bool = True             # False: window-mean fallback, not per-printout
+    hotstart_cas: Path | None = None       # generated hotstart steering file
 
 
 def _import_pythomac(pythomac_dir: str | Path | None):
@@ -120,7 +132,71 @@ def _gross_in_out(fluxes_df):
     gross_in = np.where(signed > 0.0, signed, 0.0).sum(axis=1)
     gross_out = np.where(signed < 0.0, -signed, 0.0).sum(axis=1)
     keep = gross_in > 0.0
-    return gross_in[keep], gross_out[keep]
+    times = fluxes_df.index.to_numpy(dtype=float)
+    return times[keep], gross_in[keep], gross_out[keep]
+
+
+def find_steady_window(
+    times,
+    gross_in,
+    gross_out,
+    *,
+    abs_tolerance: float = STEADY_ABS_TOLERANCE,
+    window: int = STEADY_WINDOW,
+) -> float | None:
+    """Simulated time [s] at which the boundary fluxes reach a *sustained* balance.
+
+    Returns the time of the first listing printout whose absolute flux imbalance
+    ``||Q_in| - |Q_out||`` is below *abs_tolerance* (m3/s) **and stays below it for
+    *window* consecutive printouts** (so a momentary crossing of the oscillating
+    imbalance does not count), or ``None`` if no such window exists. This time is
+    the end time (``DURATION``) for the generated hotstart case: continuing from
+    the steady result, the flow re-equilibrates well within the span the initial
+    run needed to balance its fluxes.
+    """
+    diff = np.abs(np.abs(np.asarray(gross_in, dtype=float))
+                  - np.abs(np.asarray(gross_out, dtype=float)))
+    ok = diff < abs_tolerance
+    for i in range(ok.size - window + 1):
+        if ok[i:i + window].all():
+            return float(times[i])
+    return None
+
+
+def _mean_balance_time(times, gross_in, gross_out, *, abs_tolerance, window) -> float | None:
+    """Fallback steady time when the strict per-printout window never occurs.
+
+    A CFL-marched steady state keeps oscillating around perfect balance (wetting/
+    drying + turbulence noise), so the *instantaneous* imbalance can sit above
+    *abs_tolerance* at every single printout even though the run is steady. The
+    robust statistic is then the imbalance **averaged over the window**: returns the
+    time of the first *window*-printout rolling mean of the signed imbalance
+    ``Q_in - Q_out`` whose magnitude is below *abs_tolerance* and stays there for the
+    next *window* means (so a single lucky window does not count), or ``None``.
+    """
+    signed = np.abs(np.asarray(gross_in, dtype=float)) - np.abs(
+        np.asarray(gross_out, dtype=float))
+    if signed.size < 2 * window:
+        return None
+    roll = np.convolve(signed, np.ones(window) / window, mode="valid")
+    ok = np.abs(roll) < abs_tolerance
+    for i in range(ok.size - window + 1):
+        if ok[i:i + window].all():
+            return float(times[i])
+    return None
+
+
+def _remove_processor_sorties(model_dir: Path, cas_name: str) -> int:
+    """Delete the per-processor listing copies of a parallel run.
+
+    A parallel run leaves one ``<cas>_<timestamp>_p0000N.sortie`` per MPI rank next
+    to the merged main listing; only the main ``.sortie`` carries the flux printouts
+    analysed here, so the per-rank copies are just clutter."""
+    removed = 0
+    for p in sorted(Path(model_dir).glob(f"{cas_name}_*_p*.sortie")):
+        p.unlink()
+        removed += 1
+    return removed
 
 
 def _plot_relative_imbalance(iota_df, path) -> None:
@@ -148,6 +224,9 @@ def analyze_flux_convergence(
     cfg: Config,
     *,
     tolerance: float = HOTSTART_TOLERANCE,
+    abs_tolerance: float = STEADY_ABS_TOLERANCE,
+    steady_window: int = STEADY_WINDOW,
+    write_hotstart: bool = True,
     pythomac_dir: str | Path | None = None,
 ) -> FluxConvergence:
     """Analyse boundary-flux convergence of the steady run in ``cfg.model_dir``.
@@ -159,6 +238,14 @@ def analyze_flux_convergence(
     ``convergence-rate.csv`` + ``convergence-rate.png`` (the relative imbalance and
     convergence rate). Returns the converged ``NUMBER OF TIME STEPS`` (the time at
     which the relative flux imbalance drops permanently below *tolerance*).
+
+    On top of the relative-imbalance criterion, the *absolute* steady window is
+    detected (``find_steady_window``: ``||Q_in|-|Q_out|| < abs_tolerance`` m3/s over
+    *steady_window* consecutive printouts); when found and *write_hotstart* is on, a
+    ``hotstart2d.cas`` continuing from the steady results file with that time as
+    ``DURATION`` is written next to the steady case (``steering.write_hotstart_cas``).
+    The per-processor ``*_p0000N.sortie`` copies of a parallel run are deleted after
+    a successful extraction (only the merged main listing is analysed and kept).
     """
     extract_fluxes, calculate_convergence, get_convergence_time = _import_pythomac(
         pythomac_dir)
@@ -176,7 +263,12 @@ def analyze_flux_convergence(
             "pythomac.extract_fluxes failed to read the sortie listing; check that "
             "the run used '-s' and printed cumulated flowrates.")
 
-    gross_in, gross_out = _gross_in_out(fluxes_df)
+    removed = _remove_processor_sorties(Path(model_dir), cfg.cas_file)
+    if removed:
+        log.info("  removed %d per-processor .sortie file(s); kept the main listing",
+                 removed)
+
+    kept_times, gross_in, gross_out = _gross_in_out(fluxes_df)
     if gross_in.size < 3:
         raise RuntimeError(
             f"only {gross_in.size} flux printout(s) available -- the run is too "
@@ -236,6 +328,37 @@ def analyze_flux_convergence(
                     "run (final imbalance %.2e). Increase NUMBER OF TIME STEPS or "
                     "relax the tolerance.", tolerance, final_imbalance)
 
+    # absolute steady window -> hotstart end time + generated hotstart2d.cas
+    steady_secs = find_steady_window(kept_times, gross_in, gross_out,
+                                     abs_tolerance=abs_tolerance, window=steady_window)
+    steady_strict = steady_secs is not None
+    if not steady_strict:
+        steady_secs = _mean_balance_time(kept_times, gross_in, gross_out,
+                                         abs_tolerance=abs_tolerance,
+                                         window=steady_window)
+        if steady_secs is not None:
+            log.warning("  the instantaneous flux imbalance never stayed below %.0e "
+                        "m3/s for %d consecutive printouts (steady-state noise floor "
+                        "above the tolerance); falling back to the %d-printout MEAN "
+                        "balance, first sustained at %.1f s.",
+                        abs_tolerance, steady_window, steady_window, steady_secs)
+    hotstart_cas = None
+    if steady_secs is None:
+        log.warning("  the absolute flux imbalance never stayed below %.0e m3/s for "
+                    "%d consecutive printouts - no hotstart end time; extend the run "
+                    "or relax abs_tolerance.", abs_tolerance, steady_window)
+    else:
+        if steady_strict:
+            log.info("  sustained flux balance (<%.0e m3/s over %d printouts) from "
+                     "%.1f s simulated", abs_tolerance, steady_window, steady_secs)
+        if write_hotstart:
+            from hydromate.steering import write_hotstart_cas
+            try:
+                hotstart_cas = write_hotstart_cas(cfg, duration=steady_secs)
+            except Exception as exc:  # noqa: BLE001 - keep the analysis result usable
+                log.warning("  could not write the hotstart steering file: %s: %s",
+                            type(exc).__name__, exc)
+
     return FluxConvergence(
         converged=converged,
         tolerance=tolerance,
@@ -248,4 +371,9 @@ def analyze_flux_convergence(
         flux_plot=flux_plot if flux_plot.exists() else None,
         rate_csv=rate_csv if rate_csv.exists() else None,
         rate_plot=rate_plot if rate_plot.exists() else None,
+        steady_seconds=steady_secs,
+        steady_abs_tolerance=abs_tolerance,
+        steady_window=steady_window,
+        steady_strict=steady_strict,
+        hotstart_cas=hotstart_cas,
     )

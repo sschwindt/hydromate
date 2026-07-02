@@ -1,32 +1,25 @@
-"""Build a TELEMAC-3D case from the converged 2D run (optional 3D extension).
+"""Build the three TELEMAC-3D cases from the converged 2D run (optional extension).
 
-The 3D path runs **after the whole 2D path**: a 3D simulation is only built once the
-2D run has produced its hotstart result (run ``initial_run.py`` first -> ``r2d.slf``)
-AND the 2D mesh-convergence study (``mesh_convergence_study.py``) has settled the
-horizontal resolution - the 3D case reuses that same horizontal mesh. Choosing the
-number of vertical layers is then a *separate* convergence question (the 2D study
-never touched ``dz``); run ``vertical_convergence_3d.py`` after this.
+Runs strictly after the 2D path (``initial_run.py`` -> ``r2d.slf``; settle the
+horizontal mesh with ``mesh_convergence_study.py`` first). Delegates everything to
+:func:`hydromate.build_3d_cases`, which writes exactly three steering files:
 
-After ``initial_run.py`` has produced the converged 2D steady result
-(``tm-simulation/simulation/r2d.slf``), this writes a ``<case-name>3d.cas`` for
-``telemac3d.py`` alongside the 2D case, **without rebuilding** the mesh:
+1. ``hotstart3d_hydrostatic.cas`` - hydrostatic, constant Q/H, ~30k fixed steps
+   with a short listing period: the steady **boundary-flux convergence check**.
+2. ``hotstart3d_hydrodyn.cas``    - non-hydrostatic steady run, in-file Q/H.
+3. ``unsteady3d.cas``             - non-hydrostatic, hydrograph Q(t) + outflow
+   SL(t) via the same liquid-boundaries file as ``unsteady2d.cas`` (skipped with a
+   notice unless ``boundaries.inflow`` is a varying series).
 
-* it **hotstarts** the 3D run from the 2D result with the TELEMAC v9+ true 2D->3D
-  continuation (``FILE FOR 2D CONTINUATION``; a commented ``CONSTANT DEPTH`` cold-start
-  fallback is written too, for when the continuation inflow is too thin - see below);
-* it **infers the number of sigma layers** from the 2D depth/cell size so the
-  layer thickness ``dz`` lands near the horizontal cell size (``dz ~ dx/2``, never
-  more than 4x finer) - TELEMAC has no Delft3D-style constant-dz z-layers, only
-  sigma planes, so the level count is what we tune;
-* it picks the **turbulence model** with the same quality check as the 2D case
-  (k-epsilon / Smagorinski / Spalart-Allmaras), runs **non-hydrostatic**, and sizes
-  the fixed time step for a Courant number of 0.6 (3D has no DESIRED COURANT NUMBER).
+All three hotstart from ``r2d.slf`` (v9 2D->3D continuation) and share the vertical
+discretisation, turbulence closure and Courant-sized time step inferred from one
+read of the 2D result - see ``hydromate.threed`` for the how and why.
 
-Pass ``--run`` to also launch ``telemac3d.py`` on the produced case (needs a real
-``telemac.pysource`` in case-config.yml). Otherwise it only writes the steering and
-prints the command to run it.
+Pass ``--run [hydrostatic|hydrodyn|unsteady]`` to also launch ``telemac3d.py`` on
+one case (default: hydrostatic, the flux-convergence check) with the live listing
++ simulated-time progress bar.
 
-Run: mamba run -n hydromate-env python cases/<your-case>/add3d.py [--run]
+Run: mamba run -n hydromate-env python cases/<your-case>/add3d.py [--run [which]]
 """
 
 from __future__ import annotations
@@ -34,50 +27,53 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hydromate import build_3d_cas, setup_logging
+from hydromate import (build_3d_cases, format_3d_cases, run_solver_streaming,
+                       setup_logging)
 from hydromate.config import load_config
 from hydromate.env import TelemacRuntime
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)
 
+# Step count / listing spacing of the hydrostatic flux-convergence run. None ->
+# hydromate defaults (threed.HYDROSTATIC_N_STEPS = 30000, ..._LISTING_PERIOD = 100).
+HYDROSTATIC_STEPS: int | None = None
+HYDROSTATIC_LISTING: int | None = None
 
-def main(run: bool = False) -> None:
-    results_2d = cfg.model_path(cfg.results_slf)
-    if not results_2d.exists():
-        print(f"no 2D result at {results_2d}.")
+
+def main(run: str | None = None) -> None:
+    if not cfg.model_path(cfg.results_slf).exists():
+        print(f"no 2D result at {cfg.model_path(cfg.results_slf)}.")
         print("run  python cases/<your-case>/initial_run.py  first (it produces r2d.slf).")
         return
 
     setup_logging(cfg.model_path(cfg.log_file))   # append to the simulation log
-    print(f"building the TELEMAC-3D case from {results_2d.name}")
+    print(f"building the TELEMAC-3D cases from {cfg.results_slf}\n")
+    setups = build_3d_cases(cfg, hydrostatic_steps=HYDROSTATIC_STEPS,
+                            hydrostatic_listing=HYDROSTATIC_LISTING)
+    for line in format_3d_cases(setups):
+        print(line)
 
-    setup = build_3d_cas(cfg)
-    print(f"\nwrote {setup.cas.name}:")
-    print(f"  vertical    : {setup.n_levels} sigma levels (dz~{setup.dz:.2f} m, "
-          f"dx~{setup.dx:.2f} m, depth~{setup.depth:.2f} m)")
-    print(f"  turbulence  : H={setup.h_turbulence} V={setup.v_turbulence} "
-          f"({setup.turbulence_reason})")
-    print(f"  time step   : {setup.time_step} s for Courant {setup.courant:g} "
-          f"({setup.n_time_steps} steps)")
-    print("  solver      : non-hydrostatic, v9 2D-continuation hotstart from r2d.slf")
-    print("  note        : if telemac3d aborts with 'DEBIMP_3D: PROBLEM ON BOUNDARY' "
-          "(thin/supercritical")
-    print("                inflow from the continuation), swap in the commented "
-          "CONSTANT DEPTH fallback")
-    print(f"                in {setup.cas.name} (a deep uniform cold-start seed).")
-
-    if not run:
-        print(f"\nnext: run it with  python cases/<your-case>/add3d.py --run")
-        print(f"or directly:  telemac3d.py {setup.cas.name}  (in {cfg.model_dir})")
+    if run is None:
+        print("\nnext: launch one with  python cases/<your-case>/add3d.py --run "
+              "[hydrostatic|hydrodyn|unsteady]")
+        print("(default: hydrostatic, the flux-convergence check; or run "
+              f"telemac3d.py <case>.cas directly in {cfg.model_dir})")
         return
 
+    setup = setups.get(run)
+    if setup is None:
+        print(f"\ncannot run '{run}': that case was not built (see above).")
+        return
     print(f"\nlaunching telemac3d.py on {setup.cas.name} ...")
+    print("streaming TELEMAC output (simulated-time progress bar below):\n")
     runtime = TelemacRuntime(cfg.telemac)
     try:
         runtime.check_available()
-        proc = runtime.run_solver(setup.cas.name, cwd=cfg.model_dir,
-                                  ncsize=cfg.telemac.n_processors, solver="telemac3d")
+        # 3D has no DURATION keyword: the bar spans the fixed step count times dt
+        proc = run_solver_streaming(runtime, cfg, cas_file=setup.cas.name,
+                                    solver="telemac3d",
+                                    duration=setup.time_step * setup.n_time_steps)
     except Exception as exc:  # noqa: BLE001 - report cleanly
         print(f"could not run telemac3d: {type(exc).__name__}: {exc}")
         return
@@ -85,8 +81,18 @@ def main(run: bool = False) -> None:
         print(f"FAILED - telemac3d returned {proc.returncode}; "
               f"see {cfg.model_path(cfg.log_file)}")
         return
-    print(f"OK - the 3D case runs. Results: {cfg.model_path(cfg.results3d_slf)}")
+    print(f"OK - {setup.cas.name} runs.")
+
+
+def _parse_argv(argv: list[str]) -> str | None:
+    """``--run [which]`` -> the case to launch (default 'hydrostatic'), or None."""
+    if "--run" not in argv:
+        return None
+    i = argv.index("--run")
+    if i + 1 < len(argv) and argv[i + 1] in ("hydrostatic", "hydrodyn", "unsteady"):
+        return argv[i + 1]
+    return "hydrostatic"
 
 
 if __name__ == "__main__":
-    main(run="--run" in sys.argv[1:])
+    main(run=_parse_argv(sys.argv[1:]))

@@ -66,8 +66,29 @@ def read_inflow(path: Path, steady: bool = True) -> Inflow:
         cols = {c.lower(): c for c in df.columns}
         qcol = next((cols[c] for c in cols if "q" in c or "disch" in c or "abfluss" in c),
                     df.columns[-1])
-        q = pd.to_numeric(df[qcol], errors="coerce").dropna().to_numpy(dtype=float)
-        t = np.arange(len(q), dtype=float) if len(q) > 1 else None
+        # the time axis: use an explicit time column (numeric seconds or datetime
+        # strings) when present - the row index is only the last resort (it would
+        # silently compress e.g. an hourly hydrograph to 1-second spacing)
+        tcol = next((cols[c] for c in cols
+                     if cols[c] != qcol and ("time" in c or "zeit" in c or "date" in c
+                                             or "datum" in c or c.strip() == "t")),
+                    None)
+        q_all = pd.to_numeric(df[qcol], errors="coerce")
+        t_all = None
+        if tcol is not None:
+            t_all = pd.to_numeric(df[tcol], errors="coerce")
+            if t_all.isna().any():                    # datetime strings, not seconds
+                stamps = pd.to_datetime(df[tcol], errors="coerce")
+                valid = stamps.dropna()
+                t_all = ((stamps - valid.iloc[0]).dt.total_seconds()
+                         if not valid.empty else None)
+        if t_all is not None:
+            keep = q_all.notna() & t_all.notna()
+            q = q_all[keep].to_numpy(dtype=float)
+            t = t_all[keep].to_numpy(dtype=float) if len(q) > 1 else None
+        else:
+            q = q_all.dropna().to_numpy(dtype=float)
+            t = np.arange(len(q), dtype=float) if len(q) > 1 else None
     steady_value = float(np.mean(q))
     return Inflow(times_s=(None if steady else t), discharge=q, steady_value=steady_value)
 

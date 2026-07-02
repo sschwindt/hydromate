@@ -13,6 +13,7 @@ with the liquid-boundary numbering from stage 3.
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 
 from hydromate.config import Config
@@ -670,6 +671,71 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
     lines.append("&ETA")
     path = cfg.model_path(out_name or cfg.cas_file)
     path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def write_hotstart_cas(cfg: Config, duration: float,
+                       out_name: str = "hotstart2d.cas") -> Path:
+    """Derive a hotstart steering file from the *built* steady case.
+
+    Rewrites ``cfg.cas_file`` (``steady2d.cas``) as a continuation run: the initial
+    conditions block is switched from the pre-wetted/dry-start seed to
+    ``PREVIOUS COMPUTATION FILE : <results_slf>`` (the steady run's own result), the
+    results file is renamed so the run does not clobber its hotstart input, and
+    ``DURATION`` is capped at *duration* - the simulated time the initial run needed
+    to reach a sustained boundary-flux balance (``flux_convergence.find_steady_window``).
+    Everything else - notably the constant ``PRESCRIBED FLOWRATES`` /
+    ``PRESCRIBED ELEVATIONS`` - is carried over unchanged, so the hotstart drives the
+    same steady Q and downstream H as the initial run.
+    """
+    steady_cas = cfg.model_path(cfg.cas_file)
+    duration_s = float(math.ceil(duration)) if duration > 0 else float(duration)
+    results = Path(cfg.results_slf)
+    hot_results = f"{results.stem}-hotstart{results.suffix}"
+
+    out_lines: list[str] = []
+    have_previous = have_duration = False
+    for line in steady_cas.read_text().splitlines():
+        s = line.strip()
+        if s.startswith("TITLE"):
+            title = s.split(":", 1)[1].strip().strip("'")
+            out_lines.append(f"TITLE : '{title} hotstart'")
+        elif s.startswith("RESULTS FILE"):
+            out_lines.append(f"RESULTS FILE : {hot_results}")
+        elif s.startswith("DURATION"):
+            out_lines.append(f"DURATION : {duration_s}")
+            have_duration = True
+        elif s.startswith("PREVIOUS COMPUTATION FILE FORMAT"):
+            continue  # re-emitted right after the file line below
+        elif s.startswith("PREVIOUS COMPUTATION FILE"):
+            out_lines += [f"PREVIOUS COMPUTATION FILE : {cfg.results_slf}",
+                          "PREVIOUS COMPUTATION FILE FORMAT : 'SERAFIN'"]
+            have_previous = True
+        elif s.startswith("INITIAL CONDITIONS") and not have_previous:
+            # analytical (dry) initial conditions -> switch to the continuation
+            out_lines += [f"PREVIOUS COMPUTATION FILE : {cfg.results_slf}",
+                          "PREVIOUS COMPUTATION FILE FORMAT : 'SERAFIN'",
+                          "INITIAL TIME SET TO ZERO : YES"]
+            have_previous = True
+        elif s.startswith("/ pre-wetted hotstart") or s.startswith("/ dry start"):
+            out_lines.append("/ continuation of the steady initial run "
+                             "(end time from the boundary-flux balance)")
+        else:
+            out_lines.append(line)
+
+    if not have_previous:
+        raise ValueError(
+            f"{steady_cas} has neither PREVIOUS COMPUTATION FILE nor INITIAL "
+            "CONDITIONS - cannot derive a hotstart continuation from it.")
+    if not have_duration:
+        # fixed-step steady case: DURATION still terminates the run (TELEMAC derives
+        # the step count from it), so append it rather than touching the step keywords
+        out_lines.insert(len(out_lines) - 1, f"DURATION : {duration_s}")
+
+    path = cfg.model_path(out_name)
+    path.write_text("\n".join(out_lines) + "\n")
+    log.info("hotstart steering file %s (DURATION : %s s, continues %s -> %s)",
+             path.name, duration_s, cfg.results_slf, hot_results)
     return path
 
 

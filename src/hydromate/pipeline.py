@@ -177,9 +177,20 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
                 )
 
     if dry_run:
+        # lazy import: hydromate.workflow is a sibling that must not be pulled in at
+        # module import time (the package __init__ wires both up)
+        from hydromate.workflow import run_solver_streaming
+
         with log_step(f"dry run: launch {cfg.telemac.solver} once to validate the case"):
-            proc = runtime.run_solver(cfg.cas_file, cwd=cfg.model_dir, ncsize=1)
+            # stream the listing live with the simulated-time progress bar (same
+            # look as initial_run.py) on the configured core count - this is also
+            # the per-level solver run of the mesh-convergence study
+            proc = run_solver_streaming(runtime, cfg)
             log.info("solver finished rc=%d", proc.returncode)
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"{cfg.telemac.solver} failed (rc={proc.returncode}) on "
+                    f"{cfg.cas_file}; see the listing above / {cfg.model_dir}")
 
     log.info("build done: case '%s' in %.2fs", cfg.name, time.perf_counter() - t_start)
     return art

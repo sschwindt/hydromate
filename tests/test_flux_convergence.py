@@ -24,7 +24,9 @@ import pandas as pd
 import pytest
 
 from hydromate import flux_convergence
-from hydromate.flux_convergence import _gross_in_out, analyze_flux_convergence
+from hydromate.flux_convergence import (_gross_in_out, _mean_balance_time,
+                                        analyze_flux_convergence,
+                                        find_steady_window)
 
 
 def _pythomac():
@@ -45,10 +47,27 @@ def _stub_cfg(model_dir, *, period=50, dt=1.0, n_steps=10000, cas="steady2d.cas"
     return SimpleNamespace(
         model_dir=model_dir,
         cas_file=cas,
+        results_slf="r2d.slf",
         hydrodynamics=SimpleNamespace(
             listing_printout_period=period, time_step=dt, n_time_steps=n_steps),
         model_path=lambda name: Path(model_dir) / name,
     )
+
+
+# a minimal built steady case for the hotstart derivation (write_hotstart_cas
+# rewrites the initial-conditions / duration / results lines and keeps the rest)
+_STEADY_CAS = """\
+TITLE : 'stub steady'
+GEOMETRY FILE : geometry.slf
+BOUNDARY CONDITIONS FILE : boundaries.cli
+RESULTS FILE : r2d.slf
+DURATION : 5000.0
+PRESCRIBED FLOWRATES : 0.;47.0000
+PRESCRIBED ELEVATIONS : 329.2400;0.
+PREVIOUS COMPUTATION FILE : initial-conditions.slf
+INITIAL TIME SET TO ZERO : YES
+&ETA
+"""
 
 
 def _fake_extract(imbalance, model_dir):
@@ -77,9 +96,34 @@ def test_gross_in_out_aggregates_by_sign_and_drops_dry_rows():
         "Fluxes Boundary 3": [0.0, -45.0, -47.0],
         "Volumes (m3/s)": [0.0, 1.0, 2.0],         # ignored (no "flux" in name)
     })
-    gin, gout = _gross_in_out(df)
+    times, gin, gout = _gross_in_out(df)
     assert gin.tolist() == [47.0, 47.0]            # 30+17, 31+16; dry row dropped
     assert gout.tolist() == [45.0, 47.0]
+    assert times.tolist() == [1.0, 2.0]            # index rows of the kept printouts
+
+
+def test_find_steady_window_requires_consecutive_printouts():
+    t = np.arange(20, dtype=float) * 10.0
+    gin = np.full(20, 2.0)
+    gout = np.full(20, 2.0) + 5e-4                  # balanced within 1e-3 throughout
+    gout[:8] = 1.5                                  # ...except the first 8 printouts
+    # strict window of 10 starts at the first balanced printout (index 8, t=80)
+    assert find_steady_window(t, gin, gout, abs_tolerance=1e-3, window=10) == 80.0
+    # a lone dip below tolerance does not count as steady
+    gout = np.full(20, 2.005)
+    gout[10] = 2.0
+    assert find_steady_window(t, gin, gout, abs_tolerance=1e-3, window=10) is None
+
+
+def test_mean_balance_time_averages_out_steady_noise():
+    # imbalance oscillates +/-3e-3 around zero: never below 1e-3 per printout,
+    # but balanced in the 10-printout mean (the ering-revised situation)
+    t = np.arange(40, dtype=float) * 10.0
+    gin = np.full(40, 2.0)
+    gout = 2.0 + 3e-3 * np.where(np.arange(40) % 2 == 0, 1.0, -1.0)
+    assert find_steady_window(t, gin, gout, abs_tolerance=1e-3, window=10) is None
+    secs = _mean_balance_time(t, gin, gout, abs_tolerance=1e-3, window=10)
+    assert secs == 0.0                              # balanced in the mean from the start
 
 
 def test_converges_and_recommends_time_steps(tmp_path, monkeypatch):
@@ -91,6 +135,7 @@ def test_converges_and_recommends_time_steps(tmp_path, monkeypatch):
 
     period = 50
     cfg = _stub_cfg(tmp_path, period=period, dt=1.0)
+    (tmp_path / "steady2d.cas").write_text(_STEADY_CAS)
     fc = analyze_flux_convergence(cfg, tolerance=1e-6)
 
     # independently reproduce pythomac's converged index from the same series
@@ -109,6 +154,16 @@ def test_converges_and_recommends_time_steps(tmp_path, monkeypatch):
     assert {p.name for p in (fc.fluxes_csv, fc.flux_plot, fc.rate_csv, fc.rate_plot)} == {
         "extracted-fluxes.csv", "flux-convergence.png",
         "convergence-rate.csv", "convergence-rate.png"}
+
+    # the absolute steady window is found strictly and the hotstart case is derived
+    assert fc.steady_seconds is not None and fc.steady_strict is True
+    assert fc.hotstart_cas is not None and fc.hotstart_cas.exists()
+    hot = fc.hotstart_cas.read_text()
+    assert "PREVIOUS COMPUTATION FILE : r2d.slf" in hot          # continues the run
+    assert "RESULTS FILE : r2d-hotstart.slf" in hot              # no self-clobber
+    assert f"DURATION : {np.ceil(fc.steady_seconds)}" in hot     # steady end time
+    assert "PRESCRIBED FLOWRATES : 0.;47.0000" in hot            # Q kept alive
+    assert "PRESCRIBED ELEVATIONS : 329.2400;0." in hot          # H kept alive
 
 
 def test_not_converged_when_tolerance_never_met(tmp_path, monkeypatch):

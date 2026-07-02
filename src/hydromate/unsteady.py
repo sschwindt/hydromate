@@ -259,7 +259,9 @@ def build_unsteady_case(cfg: Config, *, control_sections: bool = True) -> Unstea
 
 
 def build_unsteady_3d_case(cfg: Config, *,
-                           total_time_factor: float = 4.0) -> Unsteady3DSetup:
+                           total_time_factor: float = 4.0,
+                           out_name: str | None = None,
+                           data: dict | None = None) -> Unsteady3DSetup:
     """Write the unsteady **telemac3d** case: the same hydrograph forcing on the 3D,
     non-hydrostatic mesh, hotstarted from the 2D result.
 
@@ -267,7 +269,9 @@ def build_unsteady_3d_case(cfg: Config, *,
     :func:`hydromate.threed.build_3d_cas` with the unsteady forcing (the 3D case has
     no DURATION keyword, so the run spans the hydrograph via its step count). Couples
     GAIA when enabled. The 3D horizontal mesh should already be validated (2D
-    mesh-convergence) before running this.
+    mesh-convergence) before running this. *out_name* overrides the steering filename
+    (default ``<case-name>3d-unsteady.cas``); *data* is an optional pre-read 2D
+    result so several 3D variants share one read of a large results file.
     """
     from hydromate import threed
 
@@ -276,9 +280,10 @@ def build_unsteady_3d_case(cfg: Config, *,
     setup = threed.build_3d_cas(
         cfg, unsteady=True, liquid_boundaries_file=liq.name, duration=duration,
         total_time_factor=total_time_factor, gaia_cas=gaia.name if gaia else None,
-        out_name=threed.cas3d_name(cfg, "-unsteady"),
+        out_name=out_name or threed.cas3d_name(cfg, "-unsteady"),
         results3d_name=cfg.results3d_unsteady_slf,
         results2d_name=cfg.results2d_from_3d_unsteady_slf,
+        data=data,
     )
     log.info("unsteady 3D case -> %s (hydrograph %s over %.0f s, %d sigma levels)",
              setup.cas.name, liq.name, duration, setup.n_levels)

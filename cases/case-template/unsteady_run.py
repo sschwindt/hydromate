@@ -27,7 +27,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hydromate import build_unsteady_3d_case, build_unsteady_case, setup_logging
+from hydromate import (build_unsteady_3d_case, build_unsteady_case,
+                       run_solver_streaming, setup_logging)
 from hydromate.config import load_config
 from hydromate.env import TelemacRuntime
 
@@ -95,16 +96,19 @@ def main(run: bool = False) -> None:
         return
 
     if not run:
-        print(f"\nnext: run it with  python cases/<your-case>/unsteady_run.py --run")
+        print("\nnext: run it with  python cases/<your-case>/unsteady_run.py --run")
         print(f"or directly:  {solver}.py {cas_name}  (in {cfg.model_dir})")
         return
 
     print(f"\nlaunching {solver}.py on {cas_name} ...")
+    print("streaming TELEMAC output (simulated-time progress bar below):\n")
     runtime = TelemacRuntime(cfg.telemac)
     try:
         runtime.check_available()
-        proc = runtime.run_solver(cas_name, cwd=cfg.model_dir,
-                                  ncsize=cfg.telemac.n_processors, solver=solver)
+        # stream the listing live with the progress bar (same look as
+        # initial_run.py), spanning the hydrograph duration
+        proc = run_solver_streaming(runtime, cfg, cas_file=cas_name, solver=solver,
+                                    duration=s.duration)
     except Exception as exc:  # noqa: BLE001 - report cleanly
         print(f"could not run {solver}: {type(exc).__name__}: {exc}")
         return

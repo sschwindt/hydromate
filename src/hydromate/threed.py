@@ -28,6 +28,8 @@ output ``r2d.slf``) into a ``<case-name>3d.cas`` for ``telemac3d.py``:
   k-epsilon when the horizontal model is k-epsilon).
 * **Non-hydrostatic** - ``NON-HYDROSTATIC VERSION : YES`` (with the pressure-Poisson
   solver), since a depth-resolved river model wants the non-hydrostatic pressure.
+  ``non_hydrostatic=False`` writes the cheaper hydrostatic solver instead (no PPE
+  keywords) - used for the long steady flux-convergence check ``add3d.py`` emits.
 * **Courant** - TELEMAC-3D has **no** ``DESIRED COURANT NUMBER`` / variable time
   step, so we size the fixed ``TIME STEP`` to hit a target Courant of
   :data:`TARGET_COURANT` (0.6) from the 2D velocity and the cell sizes.
@@ -68,6 +70,13 @@ MAX_ASPECT = 4.0         # dz must stay >= dx / MAX_ASPECT (the "max 4x finer" r
 TARGET_COURANT = 0.6     # target advective Courant number for the fixed 3D time step
 WET = 0.05               # [m] depth above which a node counts as wetted
 
+# the three steering files add3d.py emits (see build_3d_cases)
+HYDROSTATIC_CAS = "hotstart3d_hydrostatic.cas"
+HYDRODYN_CAS = "hotstart3d_hydrodyn.cas"
+UNSTEADY3D_CAS = "unsteady3d.cas"
+HYDROSTATIC_N_STEPS = 30_000       # fixed step count of the flux-convergence run
+HYDROSTATIC_LISTING_PERIOD = 100   # listing spacing -> ~300 flux printouts
+
 
 @dataclass
 class VerticalDiscretization:
@@ -93,6 +102,7 @@ class ThreeDSetup:
     courant: float
     turbulence_reason: str
     layers_reason: str
+    non_hydrostatic: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -220,17 +230,21 @@ def courant_time_step(dx: float, dz: float, u_char: float,
 # writing the 3D steering
 # --------------------------------------------------------------------------- #
 
-def _read_cas_value(path: Path, keyword: str) -> str | None:
-    """Return the value of *keyword* from a steering file (``KEY : value`` or
-    ``KEY = value``), ignoring comment lines."""
-    pat = re.compile(rf"^\s*{re.escape(keyword)}\s*[:=]\s*(.+?)\s*$", re.IGNORECASE)
+def _read_cas_values(path: Path, *keywords: str) -> dict[str, str | None]:
+    """Values of *keywords* from a steering file (``KEY : value`` or ``KEY = value``),
+    ignoring comment lines - one file read/pass for all keywords."""
+    pats = {kw: re.compile(rf"^\s*{re.escape(kw)}\s*[:=]\s*(.+?)\s*$", re.IGNORECASE)
+            for kw in keywords}
+    found: dict[str, str | None] = dict.fromkeys(keywords)
     for line in Path(path).read_text().splitlines():
         if line.lstrip().startswith(("/", "*")):
             continue
-        m = pat.match(line)
-        if m:
-            return m.group(1).strip()
-    return None
+        for kw, pat in pats.items():
+            if found[kw] is None:
+                m = pat.match(line)
+                if m:
+                    found[kw] = m.group(1).strip()
+    return found
 
 
 def cas3d_name(cfg: Config, suffix: str = "") -> str:
@@ -263,7 +277,12 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
                  gaia_cas: str | None = None,
                  out_name: str | None = None,
                  results3d_name: str | None = None,
-                 results2d_name: str | None = None) -> ThreeDSetup:
+                 results2d_name: str | None = None,
+                 non_hydrostatic: bool = True,
+                 n_time_steps: int | None = None,
+                 listing_period: int | None = None,
+                 graphic_period: int | None = None,
+                 data: dict | None = None) -> ThreeDSetup:
     """Write ``<case-name>3d.cas`` next to the 2D case and return the setup summary.
 
     *results_2d* defaults to ``<model_dir>/<results_slf>`` (the ``initial_run``
@@ -280,6 +299,15 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
     couples GAIA morphodynamics. *out_name* / *results3d_name* / *results2d_name*
     override the output filenames so an unsteady variant does not clobber the steady
     3D run's files.
+
+    *non_hydrostatic* toggles ``NON-HYDROSTATIC VERSION`` (``False`` writes the
+    hydrostatic solver and drops the pressure-Poisson keywords - the cheap variant
+    for a long boundary-flux convergence run). *n_time_steps* forces the step count
+    (overriding the flow-through/duration sizing); *listing_period* /
+    *graphic_period* override the printout spacing (e.g. a short listing period so
+    the flux-convergence analysis gets enough printouts). *data* is an optional
+    pre-read 2D result (``selafin.read_slf``) so several variants can be built from
+    one read of a large results file.
 
     *hotstart* selects how the 3D run is initialised from the 2D result:
 
@@ -301,7 +329,8 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
             "case can hotstart from the converged 2D field."
         )
 
-    data = selafin.read_slf(results_2d)
+    if data is None:
+        data = selafin.read_slf(results_2d)
     vd = infer_vertical_layers(cfg, data)
     if n_levels is not None:
         vd = _force_levels(vd, n_levels)
@@ -315,23 +344,29 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
     # no DURATION keyword, so convert to a step count at the fixed dt); otherwise a
     # few reach flow-through times so the 3D field settles from the 2D hotstart.
     reach_len = float(max(np.ptp(data["x"]), np.ptp(data["y"]))) or (u_char * dt * 1000)
-    if unsteady and duration is not None:
-        total_time = float(duration)
+    if n_time_steps is not None:
+        n_steps = max(1, int(n_time_steps))
     else:
-        total_time = total_time_factor * reach_len / max(u_char, 1e-6)
-    n_steps = int(np.clip(round(total_time / dt), 200, 200_000))
+        if unsteady and duration is not None:
+            total_time = float(duration)
+        else:
+            total_time = total_time_factor * reach_len / max(u_char, 1e-6)
+        n_steps = int(np.clip(round(total_time / dt), 200, 200_000))
     # 3D result writing is expensive; keep only a handful of frames over the spin-up
-    graphic = max(1, n_steps // 5)
-    listing = max(1, n_steps // 10)
+    graphic = graphic_period or max(1, n_steps // 5)
+    listing = listing_period or max(1, n_steps // 10)
 
     law, coef = _global_friction(cfg)
     # positive depth floor (~5% of a layer) so dry hotstart columns don't divide by 0
     depth_floor = round(max(0.005, 0.05 * vd.dz), 4)
-    cas_ok = cas_2d.exists()
-    flow = _read_cas_value(cas_2d, "PRESCRIBED FLOWRATES") if cas_ok else None
-    elev = _read_cas_value(cas_2d, "PRESCRIBED ELEVATIONS") if cas_ok else None
-    # reuse the 2D horizontal velocity profiles verbatim (boundary consistency)
-    prof = _read_cas_value(cas_2d, "VELOCITY PROFILES") if cas_ok else None
+    # reuse the 2D prescriptions + horizontal velocity profiles verbatim (boundary
+    # consistency); one pass over the 2D steering for all three keywords
+    vals = (_read_cas_values(cas_2d, "PRESCRIBED FLOWRATES", "PRESCRIBED ELEVATIONS",
+                             "VELOCITY PROFILES")
+            if cas_2d.exists() else {})
+    flow = vals.get("PRESCRIBED FLOWRATES")
+    elev = vals.get("PRESCRIBED ELEVATIONS")
+    prof = vals.get("VELOCITY PROFILES")
     n_liquid = (len(prof.split(";")) if prof else
                 (len(flow.split(";")) if flow else 0))
 
@@ -360,12 +395,13 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
             f"/ INITIAL DEPTH : {vd.depth:.3f}",
         ]
 
+    pressure = "non-hydrostatic" if non_hydrostatic else "hydrostatic"
     lines: list[str] = [
         "/" + "-" * 68,
         f"/ TELEMAC3D steering generated by hydromate for case '{cfg.name}'",
-        "/ non-hydrostatic; hotstarted from the 2D steady result; sigma layers",
+        f"/ {pressure}; hotstarted from the 2D steady result; sigma layers",
         "/" + "-" * 68,
-        f"TITLE : '{cfg.name} 3D non-hydrostatic'",
+        f"TITLE : '{cfg.name} 3D {pressure}'",
         "/",
         "/ INPUT / OUTPUT FILES",
         f"GEOMETRY FILE : {cfg.geometry_slf}",
@@ -376,6 +412,9 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
         f"3D RESULT FILE : {results3d_name or cfg.results3d_slf}",
         f"2D RESULT FILE : {results2d_name or cfg.results2d_from_3d_slf}",
         "MASS-BALANCE : YES",
+        # per-boundary flux printouts in the listing - what the boundary-flux
+        # convergence analysis (hydromate.flux_convergence / pythomac) reads
+        "PRINTING CUMULATED FLOWRATES : YES",
         "/",
         *hotstart_lines,
         "VARIABLES FOR 2D GRAPHIC PRINTOUTS : 'U,V,H,S,B,F'",
@@ -399,12 +438,13 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
         # IS REACHED' / 'STOP CRITERIA' keywords do not exist here), so the run always
         # marches the full NUMBER OF TIME STEPS above - size it for the spin-up.
         "/",
-        "/ NON-HYDROSTATIC SOLVER",
-        "NON-HYDROSTATIC VERSION : YES",
-        "SOLVER FOR PPE : 7",
-        # 1e-4 is the documented v8.1+ default and is plenty for a spin-up/hotstart;
-        # the tighter 1e-6/1e-8 tolerances just waste iterations in non-hydrostatic mode.
-        "ACCURACY FOR PPE : 1.E-4",
+        f"/ PRESSURE ({pressure})",
+        f"NON-HYDROSTATIC VERSION : {'YES' if non_hydrostatic else 'NO'}",
+        # the pressure-Poisson keywords only apply to the non-hydrostatic solver;
+        # 1e-4 is the documented v8.1+ default and is plenty for a spin-up/hotstart
+        # (tighter 1e-6/1e-8 tolerances just waste iterations).
+        *(["SOLVER FOR PPE : 7", "ACCURACY FOR PPE : 1.E-4"]
+          if non_hydrostatic else []),
         # use the previous water depth as the initial guess to cut solver work
         "INITIAL GUESS FOR DEPTH : 1",
         # segment-wise (edge-based) matrix storage - the recommended efficient option
@@ -480,4 +520,51 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
         time_step=dt, n_time_steps=n_steps, h_turbulence=h_turb,
         v_turbulence=v_turb, courant=TARGET_COURANT,
         turbulence_reason=turb_reason, layers_reason=vd.reason,
+        non_hydrostatic=non_hydrostatic,
     )
+
+
+def build_3d_cases(cfg: Config,
+                   hydrostatic_steps: int | None = None,
+                   hydrostatic_listing: int | None = None) -> dict:
+    """Write the three 3D steering files ``add3d.py`` provides and return their
+    setups as ``{"hydrostatic": ThreeDSetup, "hydrodyn": ThreeDSetup,
+    "unsteady": Unsteady3DSetup | None}``.
+
+    1. ``hotstart3d_hydrostatic.cas`` - ``NON-HYDROSTATIC VERSION : NO`` (the cheap
+       hydrostatic solver), constant in-file Q/H, marching *hydrostatic_steps*
+       (default :data:`HYDROSTATIC_N_STEPS`) fixed steps with a short listing period
+       (*hydrostatic_listing*, default :data:`HYDROSTATIC_LISTING_PERIOD`) so the
+       sortie carries enough ``FLUX BOUNDARY`` printouts to check **when the boundary
+       fluxes converge** in a steady telemac3d run.
+    2. ``hotstart3d_hydrodyn.cas`` - the steady **non-hydrostatic** run with the same
+       in-file prescribed Q (inflow) and H (outflow).
+    3. ``unsteady3d.cas`` - non-hydrostatic, hydrograph-driven: Q(t) inflow and the
+       stage-discharge outflow SL(t) come from the same ``LIQUID BOUNDARIES FILE``
+       as ``unsteady2d.cas``. Requires a *varying* ``boundaries.inflow`` series;
+       ``None`` (with a log notice) otherwise.
+
+    All three hotstart from the 2D steady result (v9 2D->3D continuation) and share
+    the sigma-level count, turbulence closure and Courant-sized time step inferred
+    from **one** read of ``r2d.slf``.
+    """
+    from hydromate.unsteady import build_unsteady_3d_case
+
+    data = selafin.read_slf(Path(cfg.model_dir) / cfg.results_slf)
+    setups: dict = {
+        "hydrostatic": build_3d_cas(
+            cfg, data=data, non_hydrostatic=False,
+            n_time_steps=hydrostatic_steps or HYDROSTATIC_N_STEPS,
+            listing_period=hydrostatic_listing or HYDROSTATIC_LISTING_PERIOD,
+            out_name=HYDROSTATIC_CAS,
+            results3d_name="r3d-hydrostatic.slf",
+            results2d_name="r3d-2d-hydrostatic.slf"),
+        "hydrodyn": build_3d_cas(cfg, data=data, out_name=HYDRODYN_CAS),
+    }
+    try:
+        setups["unsteady"] = build_unsteady_3d_case(cfg, out_name=UNSTEADY3D_CAS,
+                                                    data=data)
+    except Exception as exc:  # noqa: BLE001 - a missing hydrograph is a valid state
+        setups["unsteady"] = None
+        log.info("%s skipped: %s", UNSTEADY3D_CAS, exc)
+    return setups

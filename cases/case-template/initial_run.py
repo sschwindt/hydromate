@@ -13,6 +13,11 @@ simulation folder -- ``extracted-fluxes.csv`` + ``flux-convergence.png`` (per-bo
 fluxes) and ``convergence-rate.csv`` + ``convergence-rate.png`` (the relative flux
 imbalance and its convergence rate) -- and reports the simulation time at which the
 boundary fluxes reach mass balance to the hotstart tolerance (1e-4; 0.01% imbalance).
+When the fluxes stay balanced within 1e-3 m3/s over 10 consecutive listing printouts
+(or, on a noisy steady state, in the 10-printout mean), a ``hotstart2d.cas`` is
+written next to the steady case: it continues from the steady result ``r2d.slf``
+with that steady time as ``DURATION`` and the constant Q / H prescriptions kept
+alive. The per-processor ``*_p0000N.sortie`` copies of a parallel run are deleted.
 See ``hydromate.flux_convergence``.
 
 Needs ``telemac.pysource`` in case-config.yml to point at a real TELEMAC env, and

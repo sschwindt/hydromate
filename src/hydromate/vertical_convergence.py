@@ -293,6 +293,7 @@ def make_telemac3d_simulator(cfg: Config, *, results_2d: Path, base_dir: Path,
     import time
 
     from hydromate.env import TelemacRuntime
+    from hydromate.workflow import run_solver_streaming
 
     rt = runtime or TelemacRuntime(cfg.telemac)
     model = Path(cfg.model_dir)
@@ -315,9 +316,13 @@ def make_telemac3d_simulator(cfg: Config, *, results_2d: Path, base_dir: Path,
                                     total_time_factor=total_time_factor,
                                     hotstart="constant_depth")
         t0 = time.time()
-        proc = rt.run_solver(setup.cas.name, cwd=d,
-                             ncsize=(n_processors or cfg.telemac.n_processors),
-                             solver="telemac3d", check=False)
+        # stream the telemac3d listing live with the simulated-time progress bar
+        # (same look as initial_run.py); 3D has no DURATION keyword, so the bar's
+        # end time is the fixed step count times the per-layer time step
+        proc = run_solver_streaming(
+            rt, lc, cas_file=setup.cas.name, solver="telemac3d", cwd=d,
+            ncsize=(n_processors or cfg.telemac.n_processors),
+            duration=setup.time_step * setup.n_time_steps)
         runtime_s = time.time() - t0
         if proc.returncode != 0:
             raise RuntimeError(

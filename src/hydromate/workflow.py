@@ -133,10 +133,73 @@ def format_flux_convergence(fc) -> list[str]:
             f"fluxes did NOT reach {fc.tolerance:.0e} (final imbalance "
             f"{fc.final_imbalance:.2e}); extend the run (DURATION / NUMBER OF TIME STEPS)."
         )
+    if fc.steady_seconds is not None:
+        basis = ("per-printout" if fc.steady_strict
+                 else f"{fc.steady_window}-printout mean; instantaneous criterion "
+                      "not met (steady-state noise floor)")
+        lines.append(
+            f"sustained flux balance (abs imbalance < {fc.steady_abs_tolerance:.0e} m3/s "
+            f"over {fc.steady_window} printouts, {basis}) from "
+            f"{fc.steady_seconds:.1f} s simulated"
+        )
+        if fc.hotstart_cas:
+            lines.append(f"  -> hotstart case: {fc.hotstart_cas}")
+    else:
+        lines.append(
+            f"no sustained flux balance (abs imbalance < {fc.steady_abs_tolerance:.0e} "
+            f"m3/s over {fc.steady_window} printouts) - no hotstart case written."
+        )
     for label, p in (("fluxes csv", fc.fluxes_csv), ("flux plot", fc.flux_plot),
                      ("rate csv", fc.rate_csv), ("rate plot", fc.rate_plot)):
         if p:
             lines.append(f"  {label}: {p}")
+    return lines
+
+
+def format_3d_cases(setups: dict) -> list[str]:
+    """Render :func:`hydromate.threed.build_3d_cases` results as user-facing report
+    lines (one block per steering file; a ``None`` setup reports why it was skipped).
+
+    Kept here so every case's ``add3d.py`` prints the same summary; the builders
+    live in :mod:`hydromate.threed` / :mod:`hydromate.unsteady`.
+    """
+    purposes = {
+        "hydrostatic": ("steady boundary-flux convergence check (constant Q/H; the "
+                        "sortie's FLUX BOUNDARY printouts show when in/outflow "
+                        "balance)"),
+        "hydrodyn": "steady non-hydrostatic flow at the in-file prescribed Q and H",
+        "unsteady": ("hydrograph-driven: Q(t) inflow + outflow SL(t) via the same "
+                     "liquid-boundaries file as unsteady2d.cas"),
+    }
+    lines: list[str] = []
+    for key, s in setups.items():
+        if lines:
+            lines.append("")
+        if s is None:
+            lines.append(f"{key}: skipped - needs a varying boundaries.inflow "
+                         "hydrograph (see the log message for details)")
+            continue
+        nh = getattr(s, "non_hydrostatic", True)
+        lines.append(f"wrote {s.cas.name}:")
+        lines.append(f"  pressure    : {'non-hydrostatic' if nh else 'hydrostatic'}")
+        if hasattr(s, "liquid_boundaries"):        # the unsteady setup
+            lines.append(f"  hydrograph  : {s.liquid_boundaries.name} "
+                         f"over {s.duration:.0f} s")
+        if hasattr(s, "dx"):
+            lines.append(f"  vertical    : {s.n_levels} sigma levels "
+                         f"(dz~{s.dz:.2f} m, dx~{s.dx:.2f} m, depth~{s.depth:.2f} m)")
+        else:
+            lines.append(f"  vertical    : {s.n_levels} sigma levels (dz~{s.dz:.2f} m)")
+        if hasattr(s, "h_turbulence"):
+            lines.append(f"  turbulence  : H={s.h_turbulence} V={s.v_turbulence} "
+                         f"({s.turbulence_reason})")
+        lines.append(f"  time step   : {s.time_step} s ({s.n_time_steps} steps ~ "
+                     f"{s.time_step * s.n_time_steps:,.0f} s simulated)")
+        gaia = getattr(s, "gaia_cas", None)
+        if gaia:
+            lines.append(f"  GAIA        : {gaia.name}")
+        if key in purposes:
+            lines.append(f"  purpose     : {purposes[key]}")
     return lines
 
 
@@ -159,22 +222,30 @@ def run_solver_streaming(runtime: TelemacRuntime, cfg: Config, *,
                          cas_file: str | None = None,
                          solver: str | None = None,
                          ncsize: int | None = None,
+                         cwd: Path | str | None = None,
+                         duration: float | None = None,
                          show_progress: bool = True):
     """Run the TELEMAC solver, echoing its listing live with a progress bar.
 
     Unlike a plain :meth:`TelemacRuntime.run_solver`, this streams the solver's
     stdout/stderr to the console as the run marches (so it is not silent) and, when
-    *show_progress*, overlays a simulated-time-vs-:func:`expected_duration` progress
-    bar parsed from TELEMAC's listing header. Returns the ``CompletedProcess``
+    *show_progress*, overlays a simulated-time progress bar parsed from TELEMAC's
+    listing header. The bar's end time is *duration* when given (pass it whenever
+    the ``.cas`` does not march to the config's own time cap - e.g. a per-layer 3D
+    run or a hydrograph-spanning unsteady run), else :func:`expected_duration`.
+    *cwd* overrides the run folder (default ``cfg.model_dir`` - the convergence
+    studies run each level in its own subfolder). Returns the ``CompletedProcess``
     (its ``returncode`` reports success/failure; a non-zero exit does not raise).
     """
     cas_file = cas_file or cfg.cas_file
     if ncsize is None:
         ncsize = cfg.telemac.n_processors
-    progress = SolverProgress(expected_duration(cfg)) if show_progress else None
+    if duration is None:
+        duration = expected_duration(cfg)
+    progress = SolverProgress(duration) if show_progress else None
     on_line = progress.feed if progress else print
     try:
-        return runtime.run_solver(cas_file, cwd=cfg.model_dir, ncsize=ncsize,
+        return runtime.run_solver(cas_file, cwd=cwd or cfg.model_dir, ncsize=ncsize,
                                   solver=solver, check=False, on_line=on_line)
     finally:
         if progress is not None:

@@ -47,6 +47,12 @@ TELEMAC environment bridge
 .. automodule:: hydromate.env
    :members:
 
+Live solver progress
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.progress
+   :members:
+
 Stage 1 -- DEM ingest and clipping
 -------------------------------------------------------------------------------
 
@@ -60,6 +66,9 @@ Stage 2 -- mesh, bathymetry and SELAFIN geometry
    :members:
 
 .. automodule:: hydromate.selafin
+   :members:
+
+.. automodule:: hydromate.mesh_quality
    :members:
 
 Stage 3 -- boundary conditions
@@ -80,6 +89,12 @@ Hydraulic input readers
 .. automodule:: hydromate.hydraulics
    :members:
 
+Stage-discharge rating synthesis
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.rating
+   :members:
+
 Ground-truth ingestion
 -------------------------------------------------------------------------------
 
@@ -96,6 +111,48 @@ Pipeline orchestration
 -------------------------------------------------------------------------------
 
 .. automodule:: hydromate.pipeline
+   :members:
+
+Shared per-case workflow helpers
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.workflow
+   :members:
+
+Boundary-flux convergence (hotstart check)
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.flux_convergence
+   :members:
+
+Mesh-convergence study
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.convergence
+   :members:
+
+TELEMAC-3D extension
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.threed
+   :members:
+
+Vertical-layer (3D) convergence study
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.vertical_convergence
+   :members:
+
+Unsteady (hydrograph) extension
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.unsteady
+   :members:
+
+Logging
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.logsetup
    :members:
 
 Command-line interface

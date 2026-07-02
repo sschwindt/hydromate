@@ -164,7 +164,9 @@ The configuration is a single YAML file with these top-level sections:
     ``model_dir``, ``postprocessing_dir``, ``calibration_dir``).
 ``telemac``
     ``pysource`` (the TELEMAC environment script, *sourced* - not imported -
-    whenever the solver/SELAFIN tooling is needed), ``solver`` and ``n_processors``.
+    whenever the solver/SELAFIN tooling is needed), ``solver`` and ``n_processors``
+    (the default MPI core count; ``initial_run.py``'s module-level ``NCSIZE`` can
+    override it for that one test run).
 ``geodata``
     the :ref:`Geodata <input-geodata>` file paths (DEM(s), ROI boundary, mesh/
     roughness zones, centerline, breaklines, region/MATID points).

@@ -16,8 +16,9 @@ cases/<your-case>/
   preprocessing.py            step 1: build the full TELEMAC case into simulation/
   initial_run.py              step 1b: test-run the built case (confirms it works)
   mesh_convergence_study.py   step 2: grid-independence study + xlsx report
-  add3d.py                    optional: write/run a non-hydrostatic TELEMAC-3D case
-                              (<case-name>3d.cas) hotstarted from the 2D result
+  add3d.py                    optional: write/run the three TELEMAC-3D cases
+                              (hotstart3d_hydrostatic.cas, hotstart3d_hydrodyn.cas,
+                              unsteady3d.cas) hotstarted from the 2D result
   vertical_convergence_3d.py  optional: 3D grid-independence study over the number
                               of vertical (sigma) layers
   unsteady_run.py             optional: hydrograph (quasi-steady) run hotstarted from
@@ -71,8 +72,12 @@ cases/<your-case>/
    from the geodata if missing; HBC artifacts -> calibration-validation/):
      python cases/<your-case>/preprocessing.py
 
-5. Step 1b - test-run the built case once to confirm it does not crash
-   (this ends the preprocessing step; needs telemac.pysource set):
+5. Step 1b - test-run the built case once to confirm it does not crash, check
+   the boundary-flux convergence (extracted-fluxes.csv + plots via pythomac),
+   and - once the fluxes stay balanced (<1e-3 m3/s over 10 printouts, or in the
+   10-printout mean) - generate hotstart2d.cas (a continuation of r2d.slf capped
+   at that steady time, Q/H prescriptions kept). This ends the preprocessing
+   step; needs telemac.pysource set:
      python cases/<your-case>/initial_run.py
 
 6. Step 2 - mesh-convergence (grid-independence) study: runs five meshes
@@ -89,11 +94,21 @@ needs the 2D hotstart (step 1b -> r2d.slf) and reuses the horizontal mesh whose
 resolution the 2D mesh-convergence study has already validated (step 2). So run the
 two optional 3D steps only after steps 1b and 2:
 
-Optional 3D-a - 3D extension: write a non-hydrostatic TELEMAC-3D case
-(<case-name>3d.cas) hotstarted from the 2D result, with the number of sigma layers
-and the turbulence model inferred from r2d.slf, and a time step sized for Courant
-0.6 (add --run to also launch telemac3d.py):
-     python cases/<your-case>/add3d.py [--run]
+Optional 3D-a - 3D extension: write exactly three TELEMAC-3D cases hotstarted
+from the 2D result, with the number of sigma layers and the turbulence model
+inferred from r2d.slf and a fixed time step sized for Courant 0.6:
+  hotstart3d_hydrostatic.cas  NON-HYDROSTATIC VERSION : NO; constant Q/H, ~30k
+                              fixed steps, short listing period -> the steady
+                              boundary-flux convergence check in 3D
+  hotstart3d_hydrodyn.cas     NON-HYDROSTATIC VERSION : YES; steady run with the
+                              in-file prescribed Q (in) and H (out)
+  unsteady3d.cas              NON-HYDROSTATIC VERSION : YES; hydrograph Q(t) +
+                              outflow SL(t) via the same liquid-boundaries file
+                              as unsteady2d.cas (needs a varying
+                              boundaries.inflow series; skipped otherwise)
+(--run [hydrostatic|hydrodyn|unsteady] also launches telemac3d.py; default is
+the hydrostatic flux-convergence check):
+     python cases/<your-case>/add3d.py [--run [which]]
 
 Optional 3D-b - vertical-layer convergence: the vertical discretization dz (number
 of sigma layers) is a NEW discretization choice the 2D study never covered, so it

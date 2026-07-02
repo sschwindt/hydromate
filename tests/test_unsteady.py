@@ -104,6 +104,26 @@ def test_build_unsteady_case_couples_gaia_bedload_and_suspended(tmp_path):
     assert "SUSPENSION FOR ALL SANDS : YES" in gaia
 
 
+def test_build_3d_cas_hydrostatic_variant(tmp_path):
+    """add3d.py's flux-convergence case: hydrostatic solver (no pressure-Poisson
+    keywords), forced step count + listing period, cumulated-flowrate printouts."""
+    cfg = _cfg(tmp_path)
+    _write_case_fixtures(cfg)
+    s = threed.build_3d_cas(cfg, non_hydrostatic=False, n_time_steps=30_000,
+                            listing_period=100, out_name="hotstart3d_hydrostatic.cas",
+                            results3d_name="r3d-hydrostatic.slf",
+                            results2d_name="r3d-2d-hydrostatic.slf")
+    txt = s.cas.read_text()
+    assert s.cas.name == "hotstart3d_hydrostatic.cas"
+    assert s.non_hydrostatic is False and s.n_time_steps == 30_000
+    assert "NON-HYDROSTATIC VERSION : NO" in txt
+    assert "PPE" not in txt                      # pressure-Poisson keywords dropped
+    assert "NUMBER OF TIME STEPS : 30000" in txt
+    assert "LISTING PRINTOUT PERIOD : 100" in txt
+    assert "PRINTING CUMULATED FLOWRATES : YES" in txt
+    assert "3D RESULT FILE : r3d-hydrostatic.slf" in txt
+
+
 def test_build_unsteady_3d_case(tmp_path):
     """The 3D unsteady case reuses the hydrograph forcing on a distinct cas/result."""
     cfg = _cfg(tmp_path)
