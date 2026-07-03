@@ -94,6 +94,12 @@ def test_build_unsteady_case_couples_gaia_bedload_and_suspended(tmp_path):
     cfg.morphodynamics.suspended_load = True
     cfg.morphodynamics.sediment_classes = [{"diameter": 0.0008, "density": 2650}]
 
+    # exercise the extended morphodynamic capacities on the 2D unsteady run
+    cfg.morphodynamics.morphological_factor = 10.0
+    cfg.morphodynamics.secondary_currents = True
+    cfg.morphodynamics.active_layer_thickness = 0.1
+    cfg.morphodynamics.prescribed_solid_discharges = [0.0, 0.0006]
+
     s = unsteady.build_unsteady_case(cfg)
     cas = s.cas.read_text()
     assert "COUPLING WITH : 'GAIA'" in cas
@@ -102,6 +108,34 @@ def test_build_unsteady_case_couples_gaia_bedload_and_suspended(tmp_path):
     assert "BED LOAD FOR ALL SANDS : YES" in gaia
     assert "BED-LOAD TRANSPORT FORMULA FOR ALL SANDS : 1" in gaia
     assert "SUSPENSION FOR ALL SANDS : YES" in gaia
+    # GAIA needs its own geometry + boundary files even in coupled mode
+    assert f"GEOMETRY FILE : {cfg.geometry_slf}" in gaia
+    assert f"BOUNDARY CONDITIONS FILE : {cfg.boundary_cli}" in gaia
+    # the new bed-process capacities
+    assert "MORPHOLOGICAL FACTOR : 10" in gaia
+    assert "SLOPE EFFECT : YES" in gaia
+    assert "SECONDARY CURRENTS : YES" in gaia
+    assert "ACTIVE LAYER THICKNESS : 0.1" in gaia
+    assert "PRESCRIBED SOLID DISCHARGES : 0;0.0006" in gaia
+
+
+def test_build_unsteady_3d_case_couples_gaia(tmp_path):
+    """GAIA is coupled to the 3D hydrograph run too, sharing one GAIA steering file."""
+    cfg = _cfg(tmp_path)
+    _write_case_fixtures(cfg)
+    cfg.morphodynamics.enabled = True
+    cfg.morphodynamics.bedload = True
+    cfg.morphodynamics.morphological_factor = 5.0
+    cfg.morphodynamics.sediment_classes = [{"diameter": 0.0008, "density": 2650}]
+
+    s = unsteady.build_unsteady_3d_case(cfg)
+    cas = s.cas.read_text()
+    assert "COUPLING WITH : 'GAIA'" in cas
+    assert f"GAIA STEERING FILE : {cfg.gaia_cas}" in cas
+    assert s.gaia_cas is not None
+    gaia = s.gaia_cas.read_text()
+    assert "BED LOAD FOR ALL SANDS : YES" in gaia
+    assert "MORPHOLOGICAL FACTOR : 5" in gaia
 
 
 def test_build_3d_cas_hydrostatic_variant(tmp_path):

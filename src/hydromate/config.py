@@ -466,7 +466,34 @@ class Morphodynamics:
 
     When ``enabled`` the hydrodynamic ``.cas`` gets ``COUPLING WITH : 'GAIA'`` +
     ``GAIA STEERING FILE`` and a ``COUPLING PERIOD FOR GAIA`` (hydro steps per GAIA
-    step). Both 2D and 3D unsteady runs can drive GAIA.
+    step). The coupling is wired into **every** hydrodynamic run that can carry it -
+    the steady ``steady2d.cas`` and, most usefully for morphodynamics, the
+    hydrograph-driven ``unsteady2d.cas`` and its 3D twin ``unsteady3d.cas`` (a flood
+    wave is what actually reworks the bed), so the same GAIA steering file drives 2D
+    and 3D bed evolution.
+
+    Beyond the two transport switches, the block exposes the bed-process capacities a
+    real river morphodynamic run needs, all mapped to verified GAIA keywords:
+
+    * ``morphological_factor`` -> ``MORPHOLOGICAL FACTOR`` - scales the bed evolution
+      per hydraulic step so a long morphological response can be reached within a
+      shorter hydrograph (1.0 = no acceleration).
+    * ``slope_effect`` / ``slope_formula`` / ``friction_angle`` -> ``SLOPE EFFECT`` +
+      ``FORMULA FOR SLOPE EFFECT`` (1 = Koch & Flokstra) + ``FRICTION ANGLE OF THE
+      SEDIMENT`` [deg] - the gravitational pull that steers bedload down transverse
+      bed slopes (bank erosion, bar shaping).
+    * ``secondary_currents`` / ``secondary_currents_alpha`` -> ``SECONDARY CURRENTS``
+      + ``SECONDARY CURRENTS ALPHA COEFFICIENT`` - the spiral-flow deviation of
+      bedload in bends (relevant for a meandering reach).
+    * ``bed_layers`` / ``active_layer_thickness`` -> ``NUMBER OF LAYERS FOR INITIAL
+      STRATIFICATION`` + ``ACTIVE LAYER THICKNESS`` [m] - the bed stratigraphy for
+      graded sediment / hiding.
+    * ``prescribed_solid_discharges`` -> ``PRESCRIBED SOLID DISCHARGES`` [m3/s], one
+      value per liquid boundary in the driver's FRONT2 order (0 = no supply /
+      free-outflow; ``None`` = GAIA's equilibrium sediment inflow).
+    * ``sediment_type`` -> ``CLASSES TYPE OF SEDIMENT`` (``NCO`` non-cohesive /
+      ``CO`` cohesive), ``mass_balance`` -> ``MASS-BALANCE`` (log the sediment
+      budget), ``graphic_printouts`` -> the GAIA ``VARIABLES FOR GRAPHIC PRINTOUTS``.
     """
 
     enabled: bool = False
@@ -476,6 +503,19 @@ class Morphodynamics:
     coupling_period: int = 1             # COUPLING PERIOD FOR GAIA (hydro steps per GAIA step)
     gaia_results_base: str = "rgaia"
     sediment_classes: list[dict[str, Any]] = field(default_factory=list)
+    # --- bed-process capacities (all verified GAIA keywords; safe defaults) ---
+    sediment_type: str = "NCO"           # CLASSES TYPE OF SEDIMENT (NCO non-cohesive / CO cohesive)
+    morphological_factor: float = 1.0    # MORPHOLOGICAL FACTOR (bed-evolution acceleration)
+    slope_effect: bool = True            # SLOPE EFFECT (transverse bed-slope pull on bedload)
+    slope_formula: int = 1               # FORMULA FOR SLOPE EFFECT (1 = Koch & Flokstra)
+    friction_angle: float = 40.0         # FRICTION ANGLE OF THE SEDIMENT [deg]
+    secondary_currents: bool = False     # SECONDARY CURRENTS (spiral-flow bedload deviation in bends)
+    secondary_currents_alpha: float = 1.0  # SECONDARY CURRENTS ALPHA COEFFICIENT
+    bed_layers: int = 1                  # NUMBER OF LAYERS FOR INITIAL STRATIFICATION
+    active_layer_thickness: float | None = None  # ACTIVE LAYER THICKNESS [m]; None -> GAIA default
+    prescribed_solid_discharges: list[float] | None = None  # per liquid boundary (FRONT2 order)
+    mass_balance: bool = True            # MASS-BALANCE (log the sediment budget)
+    graphic_printouts: str | None = None  # GAIA VARIABLES FOR GRAPHIC PRINTOUTS; None -> default set
     extra_keywords: dict[str, Any] = field(default_factory=dict)
 
 

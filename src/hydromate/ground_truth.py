@@ -153,7 +153,10 @@ def read_flowtracker(xlsx: Path, positions: Path, crs_epsg: int,
     crs_epsg : int
         project CRS the output coordinates are expressed in.
 
-    Returns the tidy schema ``x, y, z`` then ``u, v, w, u_err, v_err, w_err, h``.
+    Returns
+    -------
+    pandas.DataFrame
+        the tidy schema ``x, y, z`` then ``u, v, w, u_err, v_err, w_err, h``.
     """
     import geopandas as gpd
 

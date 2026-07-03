@@ -39,9 +39,13 @@ cfg = load_config(CONFIG)
 MODE_3D = False           # False -> telemac2d unsteady; True -> telemac3d unsteady
 CONTROL_SECTIONS = True   # write CONTROL SECTIONS (per-boundary flux verification; 2D)
 
-# GAIA morphodynamics (bedload / suspended load). Enabling any of these couples GAIA;
-# suspended load is transported as TELEMAC tracers through the coupling. Needs
-# sediment classes (morphodynamics.sediment_classes) in case-config.yml.
+# GAIA morphodynamics (bedload / suspended load). Enabling any of these couples GAIA
+# to whichever run is built here - the unsteady 2D case (MODE_3D=False) or the
+# unsteady 3D case (MODE_3D=True); a flood wave is what reworks the bed. Suspended
+# load is transported as TELEMAC tracers through the coupling. Needs sediment classes
+# (morphodynamics.sediment_classes) in case-config.yml; the bed-process capacities
+# (morphological_factor, slope_effect, secondary_currents, active_layer_thickness,
+# prescribed_solid_discharges) also come from that morphodynamics block.
 GAIA_ENABLED = False      # master switch for morphodynamics
 GAIA_BEDLOAD = True       # BED LOAD FOR ALL SANDS
 GAIA_SUSPENDED = True     # SUSPENSION FOR ALL SANDS (suspended load / tracer)

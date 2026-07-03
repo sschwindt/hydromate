@@ -110,6 +110,50 @@ The ``cases/example-Inn/`` scripts drive the worked Inn example from its
 ``case-config.yml``; copy the data-free ``cases/case-template/`` folder to start
 your own case.
 
+.. _morphodynamics:
+
+Morphodynamics (GAIA)
+---------------------
+
+Sediment transport and bed evolution are handled by **GAIA**, coupled to the
+hydrodynamic run. Because a flood wave is what actually reworks the bed, GAIA is most
+useful on the **unsteady** runs: enabling ``morphodynamics`` couples it to the
+hydrograph-driven ``unsteady2d.cas`` **and** its 3D twin ``unsteady3d.cas`` (as well
+as the steady case), sharing a single generated GAIA steering file. The coupling adds
+``COUPLING WITH : 'GAIA'`` + ``GAIA STEERING FILE`` + ``COUPLING PERIOD FOR GAIA`` to
+the driver ``.cas`` and writes a GAIA ``.cas`` next to it.
+
+Turn it on in the config (or via the ``GAIA_*`` toggles at the top of
+``unsteady_run.py``) and declare the sediment and bed processes:
+
+.. code-block:: yaml
+
+   morphodynamics:
+     enabled: true
+     bedload: true                 # BED LOAD FOR ALL SANDS
+     suspended_load: false         # SUSPENSION FOR ALL SANDS (carried as tracers)
+     bedload_formula: 1            # 1 = Meyer-Peter & Mueller
+     sediment_classes:             # one entry per grain-size class
+       - {diameter: 0.0008, density: 2650, shields: 0.047}
+       - {diameter: 0.004,  density: 2650, shields: 0.047}
+     morphological_factor: 10.0    # accelerate bed evolution over the hydrograph
+     slope_effect: true            # transverse bed-slope pull on bedload
+     friction_angle: 40.0          # repose angle of the sediment [deg]
+     secondary_currents: true      # spiral-flow bedload deviation in bends
+     active_layer_thickness: 0.1   # bed active-layer thickness [m]
+     # prescribed_solid_discharges: [0.0, 0.00065]  # sediment supply per liquid boundary
+
+The generated GAIA ``.cas`` references the **same geometry and boundary files** as
+the coupled run (GAIA needs both even when coupled), enables the chosen transport
+modes and emits the bed-process keywords above. Sediment-transport parameters
+(Shields numbers, class diameters, …) are also the natural
+:doc:`calibration <hbc>` targets - perturbed by HydroBayesCal through the
+``gaia<KEYWORD>`` parameters. Run a morphodynamic case with the unsteady script:
+
+.. code-block:: bash
+
+   python cases/example-Inn/unsteady_run.py --run   # GAIA_ENABLED=True + MODE_3D toggles the 2D/3D run
+
 The command line
 ----------------
 

@@ -143,6 +143,12 @@ Mesh-convergence study
 .. automodule:: hydromate.convergence
    :members:
 
+Mesh-resolution validity checks
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.mesh_validity
+   :members:
+
 TELEMAC-3D extension
 -------------------------------------------------------------------------------
 

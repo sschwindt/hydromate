@@ -192,7 +192,17 @@ The configuration is a single YAML file with these top-level sections:
     finite elements, turbulence). The finite-element numerics ship **compute-stable
     defaults** (see :ref:`Numerics <numerics>`).
 ``morphodynamics`` *(optional)*
-    enable GAIA and declare sediment classes.
+    enable **GAIA** and declare the sediment classes and bed-process capacities. The
+    two transport switches ``bedload`` / ``suspended_load`` are joined by the
+    morphodynamic knobs a real river run needs, each a verified GAIA keyword:
+    ``morphological_factor`` (accelerate bed evolution over a hydrograph),
+    ``slope_effect`` / ``slope_formula`` / ``friction_angle`` (transverse bed-slope
+    pull on bedload), ``secondary_currents`` (+ ``secondary_currents_alpha``, the
+    spiral-flow deviation in bends), ``bed_layers`` / ``active_layer_thickness`` (bed
+    stratigraphy) and ``prescribed_solid_discharges`` (a sediment supply per liquid
+    boundary). GAIA is coupled to **every** hydrodynamic run that can carry it - the
+    steady case and, most usefully, the hydrograph-driven ``unsteady2d.cas`` and its
+    3D twin ``unsteady3d.cas`` (see :ref:`Morphodynamics <morphodynamics>`).
 ``dem_of_difference`` *(optional)*
     compute the DoD (``dem_target - dem_initial``) in pre-processing, clipped to the
     ROI and thresholded by a minimum **level of detection** - either an explicit
