@@ -147,9 +147,10 @@ def _match_tolerance(cfg: Config) -> float:
     grabbing wall nodes deep past the inflow/outflow line ends: ~2 floodplain
     edges for the anisotropic mesh, else the isotropic default/breakline size.
     """
+    scale = cfg.mesh.size_scale
     if _anisotropic_enabled(cfg):
-        return max(cfg.mesh.floodplain_size, cfg.mesh.channel_size) * 2.0
-    return max(cfg.mesh.default_size, cfg.mesh.breakline_size) * 1.5
+        return max(cfg.mesh.floodplain_size, cfg.mesh.channel_size) * scale * 2.0
+    return max(cfg.mesh.default_size, cfg.mesh.breakline_size) * scale * 1.5
 
 
 def _warn_node_balance(liquids: list[LiquidBoundary]) -> None:

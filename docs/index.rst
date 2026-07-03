@@ -42,5 +42,6 @@ From a region-of-interest DEM, inflow data, an optional stage-discharge relation
    installation
    input_files
    usage
+   troubleshoot
    codedocs
    license

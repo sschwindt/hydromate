@@ -15,12 +15,14 @@ Pipeline stage 5 writes two artifacts into the calibration directory
 * ``measurements-calibration.csv`` - the calibration points, one row per
   measurement location: ``id, x, y, z, <QTY>_DATA, <QTY>_ERROR`` for each
   configured ``calibration_quantity`` (``<QTY>`` is a SELAFIN variable name such as
-  ``WATER DEPTH`` or ``SCALAR VELOCITY``), compiled from the
-  :ref:`ground truth <input-ground-truth>`;
+  ``WATER DEPTH``, ``SCALAR VELOCITY``, ``TURBULENT ENERG.`` or ``CUMUL BED EVOL``),
+  compiled from the :ref:`ground truth <input-ground-truth>`;
 * ``config_Telemac.py`` - the ready HydroBayesCal configuration: it references the
   built ``steady2d.cas``, the calibration CSV, the calibration **parameters** and
   their ranges, and the sampling settings - all taken from the ``calibration``
-  block of the YAML.
+  block of the YAML **merged with the** :ref:`calibration-target template's
+  <input-target-template>` **parameters tab** (the template wins on a name
+  collision).
 
 The **hotstart**. The steady result confirmed by ``initial_run.py`` is also the
 hotstart seed for the calibration: every perturbed HBC run continues from it, so it
@@ -66,7 +68,20 @@ calibrated model can be checked against measurements it was not fitted to.
 
 .. note::
 
-   v1 covers the **2D hydraulic** calibration (water depth, velocity). The GAIA
-   morphodynamic / DEM-of-Difference (topographic-change) calibration is wired as
-   an extension point - enable ``morphodynamics`` and declare sediment classes, and
+   v1 covers the **2D hydraulic** calibration (water depth, velocity, and -
+   with the k-epsilon turbulence model - ``TURBULENT ENERG.`` from the FlowTracker
+   ``TKE``). The GAIA morphodynamic / DEM-of-Difference (topographic-change,
+   ``CUMUL BED EVOL`` vs. the ground-truth ``dz``) calibration is wired as an
+   extension point - enable ``morphodynamics`` and declare sediment classes, and
    add ``gaiaCLASSES ...`` calibration parameters.
+
+.. note:: SELAFIN quantity names must match exactly
+
+   A calibration quantity is only extracted if its name matches the SELAFIN
+   variable exactly (whitespace-normalised, not period-stripped). The TKE variable
+   is ``TURBULENT ENERG.`` **with the trailing period** (the real 16-character
+   TELEMAC name); hydromate emits this spelling, and HydroBayesCal's
+   ``classification_tm_gaia_dict`` must contain it (add
+   ``"TURBULENT ENERG.": "telemac"``) or the quantity is silently dropped. Extracting
+   ``TURBULENT ENERG.`` requires the **k-epsilon** turbulence model (graphic
+   printout ``K``); ``CUMUL BED EVOL`` requires **GAIA** enabled.

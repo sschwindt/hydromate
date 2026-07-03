@@ -41,7 +41,7 @@ inflow / outflow / measurements ───┤
 * **Stage 2** (`hydromate/mesh.py`, `selafin.py`) - triangular mesh from boundary + breaklines (anisotropic, flow-aligned in the channel) with per-MATID size fields; DEM interpolated onto nodes; friction zones written as a `FRIC_ID` variable inside the geometry SELAFIN (driven by `geodata.roughness_zones` when set - the polygon `Zone ID` becomes `FRIC_ID` and the table ks becomes the `BOTTOM FRICTION` variable). A **quality report** (`hydromate/mesh_quality.py`) is logged for every build: per-region (channel vs floodplain) internal angles, aspect ratio and skewness; the **shortest edge** (critical - it bounds the CFL-limited adaptive time step); and adjacent-cell area jumps (smooth-transition check). The channel's intended elongation is reported but exempt from shape warnings; invalid geometry (zero-area, inverted, duplicate nodes, non-manifold edges) aborts the build.
 * **Stage 3** (`hydromate/boundary.py`) - classify each contour node against the `boundaries.liquid_boundaries` lines (a line layer whose `Type (inflow/outflow)` field tags every line `inflow` or `outflow`; the lines must coincide with the mesh-zone outer bounds). Inflow nodes get a prescribed-Q boundary (`5 5 5`); outflow nodes get a prescribed-elevation boundary (`5 4 4`) whose water level comes from a fixed `boundaries.prescribed_elevation` (`outflow_condition: elevation`, the **default**) or from the `boundaries.stage_discharge` rating curve at the simulated Q (`outflow_condition: stage_discharge`), or a free/Neumann boundary (`4 4 4`, `outflow_condition: free`); every other outer node is a solid wall (`2 2 2`). If the total inflow- and outflow-node counts differ by more than ~10%, a **stability-risk warning** is logged (rebalance via mesh resolution or line lengths).
 * **Stage 4** (`hydromate/steering.py`) - friction `.tbl` (one row per friction zone, perturbed by HydroBayesCal) and the `.cas`; GAIA `.cas` when morphodynamics on. Zones come from `friction.zones` (MATID) or, for the Inn case, are derived from the roughness table (`<Zone ID> NIKU <ks> NULL`) so they match the geometry's per-node `FRIC_ID`.
-* **Stage 5** (`hydromate/calibration.py`) - calibration CSV from measurements and the HydroBayesCal `config_Telemac.py`.
+* **Stage 5** (`hydromate/calibration.py`, `targets.py`, `ground_truth.py`) - calibration CSV from measurements and the HydroBayesCal `config_Telemac.py`. The recommended way to structure the ground truth is the **calibration-target template**: `hydromate targets case-config.yml` generates a user-fillable `user-sources/ground-truth/calibration-target-data.xlsx` whose rows are keyed by **unique IDs** joining point layers (gpkg/shp, any CRS) in `user-sources/geodata/`. Its tabs: `hydraulics` (u_x/u_y/u_z, fluctuations u_x'/u_y'/u_z', auto-computed U_h/U_h'/TKE, water depth, bottom elevation - fillable from SonTek FlowTracker2 exports by the co-located `extract_flowtracker.py` script / `hydromate.flowtracker`, keyed by each point's ID; the fluctuation u' is the sample std-dev, not the `VxErr` standard error), `morphodynamics` (d16..d90 grain sizes, fine fraction < 1 mm, plus a `dz` column auto-sampled from the DEM-of-Difference when the case provides a second DEM), and `parameters` (a drop-down over a TELEMAC-2D/3D/GAIA calibration-parameter catalog - friction zones prefilled with their current ks, critical Shields stress, minimum depth, eddy viscosity/diffusivity, secondary currents, ... - with min/max test ranges and range tips; merged into `calibration.parameters`, the template winning on collisions). Reference the filled file under `ground_truth.targets` in the config.
 
 **Logging** - each script/phase writes a compound, timestamped `hydromate.log` into its own output folder (the build by `preprocessing.py`/`initial_run.py` -> `hydromate-case/simulation/`, the mesh-convergence study -> `hydromate-case/mesh-convergence/`), capturing all actions, the elapsed time of each calculation step (`START`/`DONE ... in N.NNs`), and every warning and error. The console mirrors it; pass `-v` for DEBUG.
 
@@ -56,6 +56,32 @@ inflow / outflow / measurements ───┤
 **3D extension & vertical-layer convergence** (`hydromate/threed.py`, `vertical_convergence.py`) - optional, and strictly *after* the 2D path. A 3D run needs the converged 2D result as its hotstart, so it follows `initial_run.py`; and you only build it on a horizontal mesh whose resolution the 2D mesh-convergence study (step 2) has already vouched for - the 3D case reuses that same horizontal mesh. `add3d.py` writes three steering files (`threed.build_3d_cases`): `hotstart3d_hydrostatic.cas` (`NON-HYDROSTATIC VERSION : NO`, constant Q/H, ~30k fixed steps with a short listing period - the steady boundary-flux convergence check), `hotstart3d_hydrodyn.cas` (non-hydrostatic steady, in-file prescribed Q and H), and `unsteady3d.cas` (non-hydrostatic, hydrograph Q(t) + outflow SL(t) via the same liquid-boundaries file as `unsteady2d.cas`; needs a varying `boundaries.inflow`). All use sigma layers, with the turbulence model and an initial layer count inferred from the 2D result and the time step sized for Courant 0.6; `--run [hydrostatic|hydrodyn|unsteady]` launches one of them. The vertical discretization `dz` is then its **own** discretization question - varying the horizontal cell size in step 2 tells you nothing about how many vertical layers you need - so `vertical_convergence_3d.py` re-runs the 3D case over a ladder of vertical-layer counts on the same horizontal mesh and reports the relative change / observed order / GCI against `dz`, recommending the **fewest grid-independent number of layers**. Outputs go to `hydromate-case/postprocessing/vertical-convergence/`.
 
 ## Install
+
+### Requirements
+
+## Installing conda/mamba on Debian Linux
+
+Debian does not provide `conda` or `mamba` by default. To install **Miniforge**, which provides both `conda` and `mamba` via conda-forge use:
+
+```bash
+# Install basic download dependencies
+sudo apt update
+sudo apt install -y wget ca-certificates bzip2
+
+# Download the latest Miniforge installer for 64-bit Linux
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+
+# Install Miniforge into ~/miniforge3
+bash Miniforge3-Linux-x86_64.sh -b -p "$HOME/miniforge3"
+
+# Initialize conda/mamba for bash
+"$HOME/miniforge3/bin/conda" init bash
+
+# Reload the shell configuration
+source ~/.bashrc
+```
+
+## Install environment
 
 The case-build pipeline runs in its **own** environment (`hydromate-env`); it does *not* import TELEMAC's Python. Instead it **sources** the TELEMAC `pysource.*.sh` (set in the config) whenever the solver or SELAFIN tooling is needed.
 
@@ -108,7 +134,19 @@ Config paths resolve relative to `case-config.yml`, so `user-sources/...` points
 2. Provide a **ROI boundary polygon** (`geodata.boundary`): a closed polygon (or closed polyline) delineating the maximum wetted extent, in EPSG:25832.
 3. Provide the **liquid boundaries** (`boundaries.liquid_boundaries`): a line layer in EPSG:25832 whose `Type (inflow/outflow)` field tags each line `inflow` or `outflow` (several of each are allowed). Draw them **exactly along the mesh-zone outer bounds** so contour nodes land on them. Keep the inflow and outflow lines a similar length relative to the mesh resolution so they carry comparable node counts (within ~10%), or the build logs a stability-risk warning.
 4. **Outflow water level** (`boundaries.outflow_condition`, default `elevation`): by default the downstream water level is a fixed `boundaries.prescribed_elevation` (m a.s.l.). Alternatively set `outflow_condition: stage_discharge` with a `boundaries.stage_discharge` `Q,WSE` CSV that sets the water level at the simulated discharge (one Q-h pair at the steady Q is enough); you don't have to make one - `preprocessing.py`/`mesh_convergence_study.py` **synthesise it** from the geodata if it is missing (width from the outflow boundary line, bed + reach slope from the DEM, trapezoidal banks, roughness from `friction.boundary_*`), or make your own with `hydromate rating -o user-sources/geodata/rating-curve.csv --strickler 38 --slope <S0> --width <b> --side-slope 1 --bed-elevation <z> --q 47`. Or set `free` for a Neumann outflow (nothing prescribed).
-5. Run the workflow, in order:
+5. **Ground truth + calibration ranges** (recommended): generate the calibration-target template, fill it in, and reference it in the config:
+
+```bash
+hydromate targets cases/example-Inn/case-config.yml   # writes calibration-target-data.xlsx + extract_flowtracker.py
+```
+
+   Enter each measurement with a **unique ID** matching the `ID` field of a point layer in `user-sources/geodata/` (declared as `ground_truth.targets.hydraulics_positions` / `sediment_positions`; any CRS - reprojected on ingest), or with explicit x/y. The `hydraulics` tab takes velocities, fluctuations, depth and bed elevation (U_h, U_h' and TKE compute themselves); the `morphodynamics` tab takes d16..d90 + fine fraction, and its `dz` column is auto-filled from the DEM-of-Difference; the `parameters` tab picks calibration parameters from a drop-down (with range tips) and feeds `calibration.parameters`. To fill the `hydraulics` tab straight from SonTek FlowTracker2 exports, run the `extract_flowtracker.py` script dropped next to the template (each point keyed by its ID):
+
+```bash
+mamba run -n hydromate-env python cases/example-Inn/user-sources/ground-truth/extract_flowtracker.py FlowTracker2-day1.xlsx FlowTracker2-day2.xlsx
+```
+
+6. Run the workflow, in order:
 
 ```bash
 # step 1 - build the complete TELEMAC case into hydromate-case/simulation/
@@ -133,7 +171,7 @@ python cases/example-Inn/vertical_convergence_3d.py
 ```
 
    (A one-shot build without the scripts: `hydromate cases/example-Inn/case-config.yml` - or `--check` to validate, `--dry-run` to also run the solver once.)
-6. **Step 3 - calibrate** (in the HydroBayesCal clone, with its env):
+7. **Step 3 - calibrate** (in the HydroBayesCal clone, with its env):
 
 ```bash
 cd cases/example-Inn/hydromate-case/calibration-validation
@@ -142,7 +180,7 @@ python /home/schwindt/github/hydrobayescal/bal_telemac.py --config config_Telema
 
 ## Configuration reference
 
-See `cases/example-Inn/case-config.yml` for a fully commented example. Key sections: `project` (name, CRS, output dirs), `telemac` (pysource, solver, processors), `geodata` (DEMs, ROI boundary, breaklines, region/MATID points, mesh/roughness zones, centerline), `boundaries` (liquid boundaries, prescribed inflow Q, outflow condition + prescribed elevation / stage-discharge, optional inflow series), `initialization` (dry-start / pre-wetting), `mesh`, `friction` (zones ↔ MATID), `hydrodynamics` (numerics), optional `morphodynamics` (GAIA), `ground_truth` (measurements / raw sources), and `calibration`.
+See `cases/example-Inn/case-config.yml` for a fully commented example. Key sections: `project` (name, CRS, output dirs), `telemac` (pysource, solver, processors), `geodata` (DEMs, ROI boundary, breaklines, region/MATID points, mesh/roughness zones, centerline), `boundaries` (liquid boundaries, prescribed inflow Q, outflow condition + prescribed elevation / stage-discharge, optional inflow series), `initialization` (dry-start / pre-wetting), `mesh`, `friction` (zones ↔ MATID), `hydrodynamics` (numerics), optional `morphodynamics` (GAIA), `ground_truth` (the calibration-target template under `targets`, a user-authored tidy `measurements` table, or raw `sources`), and `calibration`.
 
 ### Calibration parameter naming (HydroBayesCal convention)
 

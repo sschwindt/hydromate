@@ -9,6 +9,9 @@ Two forms:
 * ``hydromate rating -o <out.csv> --manning <n>|--strickler <Kst> --slope <S0>
   --width <b> [--side-slope <m>] [--bed-elevation <z>] --q <Q...>`` - synthesise a
   normal-flow outflow stage-discharge curve to use as ``boundaries.stage_discharge``.
+* ``hydromate targets <config.yml> [-o <out.xlsx>] [--force]`` - generate the
+  user-fillable ``calibration-target-data.xlsx`` template (hydraulics /
+  morphodynamics ground truth + calibration-parameter ranges) for a case.
 """
 
 from __future__ import annotations
@@ -108,6 +111,46 @@ def _run_rating(argv: list[str]) -> int:
     return 0
 
 
+def _targets_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="hydromate targets",
+        description="Generate the calibration-target-data.xlsx template for a case: "
+                    "a hydraulics tab (velocities, fluctuations, TKE, depth, bed "
+                    "elevation), a morphodynamics tab (grain sizes + DoD targets) - "
+                    "both keyed by unique IDs joining a point layer in "
+                    "user-sources/geodata/ - and a parameters tab with drop-down "
+                    "calibration parameters, min/max test ranges and range tips.",
+    )
+    p.add_argument("config", type=Path, help="path to the YAML configuration file")
+    p.add_argument("-o", "--out", type=Path, default=None,
+                   help="output .xlsx (default: ground_truth.targets.file from the "
+                        "config, else user-sources/ground-truth/calibration-target-data.xlsx)")
+    p.add_argument("--force", action="store_true",
+                   help="overwrite an existing (possibly filled-in) template")
+    p.add_argument("-v", "--verbose", action="store_true")
+    return p
+
+
+def _run_targets(argv: list[str]) -> int:
+    args = _targets_parser().parse_args(argv)
+    setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
+    log = logging.getLogger("hydromate")
+    from hydromate.targets import write_target_template
+
+    try:
+        cfg = load_config(args.config)
+        out = write_target_template(cfg, path=args.out, force=args.force)
+    except Exception as exc:
+        log.error("%s: %s", type(exc).__name__, exc)
+        if args.verbose:
+            raise
+        return 1
+    log.info("fill in %s, reference it under ground_truth.targets in %s, then "
+             "re-run the build to refresh the calibration CSV + HydroBayesCal config",
+             out, args.config)
+    return 0
+
+
 def _run_build(argv: list[str] | None) -> int:
     args = _build_parser().parse_args(argv)
     level = logging.DEBUG if args.verbose else logging.INFO
@@ -168,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_clip(argv[1:])
     if argv and argv[0] == "rating":
         return _run_rating(argv[1:])
+    if argv and argv[0] == "targets":
+        return _run_targets(argv[1:])
     return _run_build(argv)
 
 

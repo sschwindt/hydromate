@@ -86,12 +86,15 @@ def eddy_viscosity_estimate(cfg: Config) -> float:
 
 def _channel_cell_size(cfg: Config, mesh) -> float:
     """Representative channel cell edge length [m] (median edge of channel-side
-    cells). Falls back to the configured ``mesh.channel_size`` without a mesh."""
-    if mesh is None:
-        return float(cfg.mesh.channel_size)
+    cells). Without a mesh, falls back to the effective configured size
+    (:func:`hydromate.mesh.nominal_channel_size` - gpkg per-zone sizes and
+    ``mesh.size_scale`` included, so a scaled convergence level is seen)."""
     import numpy as np
 
     from hydromate import mesh as mesh_mod
+
+    if mesh is None:
+        return mesh_mod.nominal_channel_size(cfg)
 
     tri = mesh.triangles
     try:                                         # restrict to channel cells if zoned
@@ -107,7 +110,7 @@ def _channel_cell_size(cfg: Config, mesh) -> float:
         np.linalg.norm(p[tri[:, 1]] - p[tri[:, 2]], axis=1),
         np.linalg.norm(p[tri[:, 2]] - p[tri[:, 0]], axis=1),
     ])
-    return float(np.median(edges)) if edges.size else float(cfg.mesh.channel_size)
+    return float(np.median(edges)) if edges.size else mesh_mod.nominal_channel_size(cfg)
 
 
 def select_turbulence_model(cfg: Config, mesh=None) -> tuple[int, str]:
@@ -129,15 +132,25 @@ def select_turbulence_model(cfg: Config, mesh=None) -> tuple[int, str]:
     field); for a fixed ``L`` it cancels from the resolution ratio, so the cell size
     drives the choice. Returns ``(model_number, rationale)``.
     """
-    import numpy as np
-
     explicit = _coerce_turbulence_model(cfg.hydrodynamics.turbulence_model)
     if explicit is not None:
         return explicit, f"configured explicitly: {TURB_NAMES.get(explicit, explicit)}"
+    return turbulence_pick_for_dx(cfg, _channel_cell_size(cfg, mesh))
+
+
+def turbulence_pick_for_dx(cfg: Config, dx: float) -> tuple[int, str]:
+    """The mesh-resolution auto-selection of :func:`select_turbulence_model` for an
+    arbitrary channel cell size *dx* [m], ignoring any explicit
+    ``hydrodynamics.turbulence_model`` override.
+
+    Used by the mesh-convergence validity check to ask "what *would* auto-selection
+    pick at this refinement?" while the study runs with the closure pinned to the
+    baseline choice. Returns ``(model_number, rationale)``.
+    """
+    import numpy as np
 
     u = float(cfg.hydrodynamics.initial_velocity_guess)
     length = _turbulence_length_scale(cfg)
-    dx = _channel_cell_size(cfg, mesh)
     ratio = dx / length if length > 0 else np.inf
     cells = length / dx if dx > 0 else np.inf
     resolved = float(np.clip(1.0 - ratio ** (2.0 / 3.0), 0.0, 1.0)) if np.isfinite(ratio) else 0.0
@@ -322,7 +335,8 @@ def write_dry_start_conditions(cfg: Config, mesh) -> Path | None:
         return None
     init = cfg.initialization
     extent = (float(init.dry_start_extent) if init.dry_start_extent is not None
-              else max(cfg.mesh.channel_size, cfg.mesh.floodplain_size) * 5.0)
+              else max(cfg.mesh.channel_size, cfg.mesh.floodplain_size)
+              * cfg.mesh.size_scale * 5.0)
     seed = float(init.dry_start_depth)
     plug = np.asarray(contains_xy(inflow.buffer(extent), mesh.x, mesh.y), dtype=bool)
     depth = np.where(plug, seed, 0.0)

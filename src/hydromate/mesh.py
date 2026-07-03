@@ -108,7 +108,7 @@ def _read_region_seeds(cfg: Config):
     return xy, matids
 
 
-def _build_gmsh(cfg: Config):
+def _build_gmsh(cfg: Config, *, bg_budget: int = 40000, aniso_relax: float = 1.0):
     import gmsh
 
     m = cfg.mesh
@@ -123,7 +123,8 @@ def _build_gmsh(cfg: Config):
         pts = list(coords)
         if pts[0] == pts[-1]:
             pts = pts[:-1]
-        tags = [geo.addPoint(px, py, 0.0, m.default_size) for px, py in pts]
+        tags = [geo.addPoint(px, py, 0.0, m.default_size * m.size_scale)
+                for px, py in pts]
         lines = [geo.addLine(tags[i], tags[(i + 1) % len(tags)]) for i in range(len(tags))]
         return geo.addCurveLoop(lines)
 
@@ -135,7 +136,8 @@ def _build_gmsh(cfg: Config):
     embedded_lines: list[int] = []
     if cfg.geodata.breaklines is not None:
         for coords in _read_lines(Path(cfg.geodata.breaklines), cfg.crs_epsg):
-            pts = [geo.addPoint(px, py, 0.0, m.breakline_size) for px, py in coords]
+            pts = [geo.addPoint(px, py, 0.0, m.breakline_size * m.size_scale)
+                   for px, py in coords]
             for i in range(len(pts) - 1):
                 embedded_lines.append(geo.addLine(pts[i], pts[i + 1]))
 
@@ -144,7 +146,7 @@ def _build_gmsh(cfg: Config):
         gmsh.model.mesh.embed(1, embedded_lines, 2, surface)
 
     if _anisotropic_enabled(cfg):
-        _anisotropic_size_field(cfg, poly)
+        _anisotropic_size_field(cfg, poly, bg_budget=bg_budget, aniso_relax=aniso_relax)
     else:
         _size_fields(cfg, embedded_lines)
     return gmsh
@@ -158,6 +160,23 @@ def _build_gmsh(cfg: Config):
 def _anisotropic_enabled(cfg: Config) -> bool:
     return (cfg.geodata.mesh_zones is not None
             and cfg.geodata.channel_centerline is not None)
+
+
+_DEFAULT_BG_BUDGET = 40000
+# BAMG point-insertion can fail ("Fatal error in the meshgenerator 1001 / BAMG
+# failed") at fine, high-contrast anisotropic metrics: as the convergence study
+# refines (small refinement zone next to a coarser floodplain), the metric field
+# gets too steep for BAMG's Delaunay insertion to satisfy. Empirically a *coarser*
+# background metric grid rescues it (its larger triangles smooth the interpolated
+# metric, so BAMG is asked to honour a gentler gradient), as does a looser
+# anisotropy cap. Retry ladder of (background-grid node budget, anisotropy-cap
+# relaxation), each attempt gentler than the last, before giving up.
+_BAMG_RETRY_LADDER = [(_DEFAULT_BG_BUDGET, 1.0), (20000, 1.0), (10000, 1.5),
+                      (6000, 2.5)]
+
+
+def _is_bamg_failure(exc: BaseException) -> bool:
+    return "bamg" in str(exc).lower()
 
 
 _ZONE_PRIORITY = {"refinement": 0, "channel": 1, "floodplain": 2, "other": 3}
@@ -209,7 +228,9 @@ def _read_mesh_zones(cfg: Config):
       ``Max Edge Length (m)`` field (``mesh.zone_size_field``) and parsed with
       :func:`_parse_decimal`; if that field is absent or blank for a polygon, the
       configured per-type default (``channel_size`` / ``floodplain_size`` /
-      ``refinement_size``) is used,
+      ``refinement_size``) is used. Either way the value is multiplied by
+      ``mesh.size_scale`` (the global refinement factor the convergence study
+      varies - without it the gpkg sizes would override any per-level resizing),
     * ``_prio`` - overlap priority (refinement > channel > floodplain), so a point
       inside several zones takes the finest-intent zone.
 
@@ -231,10 +252,11 @@ def _read_mesh_zones(cfg: Config):
                 "refinement": cfg.mesh.refinement_size, "other": cfg.mesh.floodplain_size}
 
     ztypes = [_classify_zone(v) for v in gdf[name_field]]
+    scale = float(cfg.mesh.size_scale or 1.0)
     edge = []
     for zt, raw in zip(ztypes, (gdf[size_field] if size_field else [None] * len(gdf))):
         val = _parse_decimal(raw)
-        edge.append(val if (val is not None and val > 0.0) else defaults[zt])
+        edge.append((val if (val is not None and val > 0.0) else defaults[zt]) * scale)
     return gdf.assign(_zone_type=ztypes, _edge_length=edge,
                       _prio=[_ZONE_PRIORITY[zt] for zt in ztypes])
 
@@ -277,6 +299,28 @@ def _channel_union(cfg: Config):
     return _fill_holes(unary_union(channel.geometry.values))
 
 
+def nominal_channel_size(cfg: Config) -> float:
+    """Effective (scaled) target channel edge length [m].
+
+    The smallest channel-zone ``_edge_length`` from the mesh-zones gpkg when
+    configured (per-zone ``Max Edge Length (m)`` values override the ``*_size``
+    fallbacks, so ``channel_size`` alone can misstate the built resolution), else
+    ``channel_size * size_scale``. Both already include ``mesh.size_scale``.
+    """
+    fallback = float(cfg.mesh.channel_size * cfg.mesh.size_scale)
+    if cfg.geodata.mesh_zones is None:
+        return fallback
+    try:
+        zones = _read_mesh_zones(cfg)
+        channel = zones[zones["_zone_type"] == "channel"]
+        if channel.empty:
+            return fallback
+        return float(channel["_edge_length"].min())
+    except Exception as exc:  # pragma: no cover - geodata unavailable
+        log.debug("nominal_channel_size fell back to config sizes: %s", exc)
+        return fallback
+
+
 def _centerline_tangents(cfg: Config, spacing: float):
     """Sample the channel centerline -> (points, unit tangents, KD-tree)."""
     import geopandas as gpd
@@ -316,11 +360,13 @@ def _assign_point_zones(cfg: Config, zones, pts: np.ndarray):
     j = (j.sort_values("_prio").reset_index()
          .drop_duplicates("index", keep="first").set_index("index").sort_index())
     ztype = j["_zone_type"].fillna("other").to_numpy()
-    edge = j["_edge_length"].fillna(cfg.mesh.floodplain_size).to_numpy(dtype=float)
+    edge = (j["_edge_length"]
+            .fillna(cfg.mesh.floodplain_size * cfg.mesh.size_scale)
+            .to_numpy(dtype=float))
     return ztype, edge
 
 
-def _metric_view(cfg: Config, poly):
+def _metric_view(cfg: Config, poly, *, bg_budget: int = 40000):
     """Build the metric-tensor background mesh as a gmsh list view.
 
     The metric M at a node encodes the target edge lengths (a unit edge in
@@ -342,8 +388,9 @@ def _metric_view(cfg: Config, poly):
     minx, miny, maxx, maxy = poly.bounds
     area = (maxx - minx) * (maxy - miny)
     # coarse background grid, node budget capped so any domain stays in memory
-    step = max(m.floodplain_size, math.sqrt(area / 40000.0))
-    cpts, tang, tree = _centerline_tangents(cfg, spacing=max(step, m.floodplain_size))
+    fp = m.floodplain_size * m.size_scale
+    step = max(fp, math.sqrt(area / float(bg_budget)))
+    cpts, tang, tree = _centerline_tangents(cfg, spacing=max(step, fp))
 
     gx, gy = np.meshgrid(np.arange(minx, maxx + step, step),
                          np.arange(miny, maxy + step, step))
@@ -378,11 +425,12 @@ def _metric_view(cfg: Config, poly):
     return view
 
 
-def _anisotropic_size_field(cfg: Config, poly) -> None:
+def _anisotropic_size_field(cfg: Config, poly, *, bg_budget: int = 40000,
+                            aniso_relax: float = 1.0) -> None:
     import gmsh
 
     m = cfg.mesh
-    view = _metric_view(cfg, poly)
+    view = _metric_view(cfg, poly, bg_budget=bg_budget)
     bg = gmsh.model.mesh.field.add("PostView")
     gmsh.model.mesh.field.setNumber(bg, "ViewIndex", 0)
     gmsh.model.mesh.field.setAsBackgroundMesh(bg)
@@ -394,7 +442,9 @@ def _anisotropic_size_field(cfg: Config, poly) -> None:
     # Cap the metric anisotropy. BAMG overshoots the metric in the tail by ~1.6x,
     # so target max_aspect_ratio/1.6 here; the post-mesh edge flips then trim the
     # remaining over-sharp cells so no triangle exceeds ~max_aspect_ratio:1.
-    gmsh.option.setNumber("Mesh.AnisoMax", max(1.5, m.max_aspect_ratio / 1.6))
+    # *aniso_relax* (>1 on a retry) loosens the cap to coax BAMG past a point-
+    # insertion failure at fine, high-contrast metrics (see build_mesh's retry).
+    gmsh.option.setNumber("Mesh.AnisoMax", max(1.5, m.max_aspect_ratio / 1.6 * aniso_relax))
     gmsh.option.setNumber("Mesh.Algorithm", 7)   # BAMG (anisotropic 2D)
     _ = view
 
@@ -403,6 +453,9 @@ def _size_fields(cfg: Config, breakline_curves: list[int]):
     import gmsh
 
     m = cfg.mesh
+    scale = float(m.size_scale or 1.0)
+    default_size = m.default_size * scale
+    breakline_size = m.breakline_size * scale
     field = gmsh.model.mesh.field
     thresholds: list[int] = []
 
@@ -412,16 +465,17 @@ def _size_fields(cfg: Config, breakline_curves: list[int]):
         field.setNumber(dist, "Sampling", 100)
         thr = field.add("Threshold")
         field.setNumber(thr, "InField", dist)
-        field.setNumber(thr, "SizeMin", m.breakline_size)
-        field.setNumber(thr, "SizeMax", m.default_size)
-        field.setNumber(thr, "DistMin", m.breakline_size)
-        field.setNumber(thr, "DistMax", m.default_size * 3)
+        field.setNumber(thr, "SizeMin", breakline_size)
+        field.setNumber(thr, "SizeMax", default_size)
+        field.setNumber(thr, "DistMin", breakline_size)
+        field.setNumber(thr, "DistMax", default_size * 3)
         thresholds.append(thr)
 
     # per-region refinement around MATID seed points
     xy, matids = _read_region_seeds(cfg)
     if xy is not None and m.region_sizes:
         for matid, size in m.region_sizes.items():
+            size = size * scale
             sel = xy[matids == matid]
             if len(sel) == 0:
                 continue
@@ -432,9 +486,9 @@ def _size_fields(cfg: Config, breakline_curves: list[int]):
             thr = field.add("Threshold")
             field.setNumber(thr, "InField", dist)
             field.setNumber(thr, "SizeMin", size)
-            field.setNumber(thr, "SizeMax", m.default_size)
+            field.setNumber(thr, "SizeMax", default_size)
             field.setNumber(thr, "DistMin", size)
-            field.setNumber(thr, "DistMax", m.default_size * 5)
+            field.setNumber(thr, "DistMax", default_size * 5)
             thresholds.append(thr)
 
     if thresholds:
@@ -445,7 +499,7 @@ def _size_fields(cfg: Config, breakline_curves: list[int]):
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
     gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 1)
     gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", 0)
-    gmsh.option.setNumber("Mesh.MeshSizeMin", m.min_size)
+    gmsh.option.setNumber("Mesh.MeshSizeMin", m.min_size * scale)
     gmsh.option.setNumber("Mesh.Algorithm", m.algorithm)
 
 
@@ -675,7 +729,7 @@ def channel_node_mask(cfg: Config, mesh: "Mesh") -> np.ndarray:
     from shapely import contains_xy
 
     channel = _channel_union(cfg)
-    tol = max(cfg.mesh.channel_size, cfg.mesh.floodplain_size)
+    tol = max(cfg.mesh.channel_size, cfg.mesh.floodplain_size) * cfg.mesh.size_scale
     return np.asarray(contains_xy(channel.buffer(tol), mesh.x, mesh.y), dtype=bool)
 
 
@@ -714,39 +768,62 @@ def build_mesh(cfg: Config, dem_initial_roi: Path | None = None) -> Mesh:
             f"{zt} {grp['_edge_length'].min():.2f}-{grp['_edge_length'].max():.2f} m"
             f" (x{len(grp)})"
             for zt, grp in zones.groupby("_zone_type"))
+        scale_note = (f", size scale x{cfg.mesh.size_scale:.3f}"
+                      if cfg.mesh.size_scale != 1.0 else "")
         log.info("  mesh strategy: anisotropic (channel x%.1f along centerline, "
-                 "growth %.2f); zones from %s: %s", cfg.mesh.channel_anisotropy,
-                 cfg.mesh.growth_ratio, Path(cfg.geodata.mesh_zones).name, summary)
+                 "growth %.2f%s); zones from %s: %s", cfg.mesh.channel_anisotropy,
+                 cfg.mesh.growth_ratio, scale_note,
+                 Path(cfg.geodata.mesh_zones).name, summary)
     else:
         log.info("  mesh strategy: isotropic (default %.2f m, breakline %.2f m)",
-                 cfg.mesh.default_size, cfg.mesh.breakline_size)
-    gmsh = _build_gmsh(cfg)
-    try:
-        with log_step("  gmsh triangulation"):
-            gmsh.model.mesh.generate(2)
-        node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
-        node_coords = np.array(node_coords).reshape(-1, 3)
-        all_tag2idx = {int(t): i for i, t in enumerate(node_tags)}
+                 cfg.mesh.default_size * cfg.mesh.size_scale,
+                 cfg.mesh.breakline_size * cfg.mesh.size_scale)
+    # BAMG can hit a point-insertion failure at fine, high-contrast anisotropic
+    # metrics; retry with a denser background metric grid + looser cap before
+    # giving up (see _BAMG_RETRY_LADDER). Isotropic meshing has a single attempt.
+    anisotropic = _anisotropic_enabled(cfg)
+    attempts = _BAMG_RETRY_LADDER if anisotropic else [(_DEFAULT_BG_BUDGET, 1.0)]
+    x = y = triangles = None
+    for attempt, (bg_budget, aniso_relax) in enumerate(attempts):
+        gmsh = _build_gmsh(cfg, bg_budget=bg_budget, aniso_relax=aniso_relax)
+        step_name = ("  gmsh triangulation" if attempt == 0
+                     else f"  gmsh triangulation (BAMG retry {attempt}: background "
+                          f"{bg_budget // 1000}k nodes, anisotropy x{aniso_relax:g})")
+        try:
+            with log_step(step_name):
+                gmsh.model.mesh.generate(2)
+            node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
+            node_coords = np.array(node_coords).reshape(-1, 3)
+            all_tag2idx = {int(t): i for i, t in enumerate(node_tags)}
 
-        etypes, _, enodes = gmsh.model.mesh.getElements(dim=2)
-        tris = None
-        for et, en in zip(etypes, enodes):
-            if et == 2:  # 3-node triangle
-                tris = np.array(en, dtype=np.int64).reshape(-1, 3)
-        if tris is None:
-            raise RuntimeError("gmsh produced no triangles")
-        # keep only nodes referenced by triangles (gmsh also returns geometry /
-        # 1D-curve nodes); remap those to dense 0-based indices so the geometry
-        # carries no orphan or duplicate nodes.
-        used_tags = np.unique(tris)
-        tag2idx = {int(t): i for i, t in enumerate(used_tags)}
-        src = np.fromiter((all_tag2idx[int(t)] for t in used_tags), dtype=np.int64,
-                          count=used_tags.size)
-        x = node_coords[src, 0].copy()
-        y = node_coords[src, 1].copy()
-        triangles = np.vectorize(tag2idx.get)(tris)
-    finally:
-        gmsh.finalize()
+            etypes, _, enodes = gmsh.model.mesh.getElements(dim=2)
+            tris = None
+            for et, en in zip(etypes, enodes):
+                if et == 2:  # 3-node triangle
+                    tris = np.array(en, dtype=np.int64).reshape(-1, 3)
+            if tris is None:
+                raise RuntimeError("gmsh produced no triangles")
+            # keep only nodes referenced by triangles (gmsh also returns geometry /
+            # 1D-curve nodes); remap those to dense 0-based indices so the geometry
+            # carries no orphan or duplicate nodes.
+            used_tags = np.unique(tris)
+            tag2idx = {int(t): i for i, t in enumerate(used_tags)}
+            src = np.fromiter((all_tag2idx[int(t)] for t in used_tags), dtype=np.int64,
+                              count=used_tags.size)
+            x = node_coords[src, 0].copy()
+            y = node_coords[src, 1].copy()
+            triangles = np.vectorize(tag2idx.get)(tris)
+            break
+        except Exception as exc:
+            if anisotropic and _is_bamg_failure(exc) and attempt < len(attempts) - 1:
+                nb, nr = attempts[attempt + 1]
+                log.warning("  BAMG meshing failed (%s); retrying with a coarser "
+                            "background metric grid (%d nodes) and a relaxed "
+                            "anisotropy cap (x%.1f) for a gentler metric", exc, nb, nr)
+                continue
+            raise
+        finally:
+            gmsh.finalize()
 
     npoin = x.size
     # enforce consistent counter-clockwise winding (no inverted elements)

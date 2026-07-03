@@ -8,6 +8,7 @@ and BAL settings declared in the hydromate config.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +16,8 @@ import pandas as pd
 
 from hydromate.config import Config
 from hydromate import ground_truth
+
+log = logging.getLogger("hydromate")
 
 
 def _resolve_quantity(df: pd.DataFrame, qty: str) -> tuple[pd.Series, pd.Series | None] | None:
@@ -28,6 +31,13 @@ def _resolve_quantity(df: pd.DataFrame, qty: str) -> tuple[pd.Series, pd.Series 
     q = qty.upper()
     if q == "WATER DEPTH" and "h" in df:
         return df["h"].astype(float), None
+    if q in ("TURBULENT ENERG.", "TURBULENT ENERGY") and "tke" in df:
+        return df["tke"].astype(float), None
+    if q in ("CUMUL BED EVOL", "BED EVOLUTION") and "dz" in df:
+        return df["dz"].astype(float), None
+    if q == "SCALAR VELOCITY" and "u_mag" in df:
+        err = df["u_mag_std"].astype(float) if "u_mag_std" in df else None
+        return df["u_mag"].astype(float), err
     if q == "SCALAR VELOCITY" and any(c in df for c in ("u", "v", "w")):
         vel = ground_truth.scalar_velocity(df)
         # propagate component errors: sigma_V = (1/V) * sqrt(sum((c_i * sigma_i)^2))
@@ -66,7 +76,15 @@ def build_calibration_csv(cfg: Config) -> Path | None:
     is configured.
     """
     compile_ground_truth(cfg)            # no-op when the table is user-supplied
-    if not cfg.ground_truth.sources and cfg.ground_truth.measurements is None:
+    if not cfg.ground_truth.sources and cfg.ground_truth.measurements is None \
+            and cfg.ground_truth.targets is None:
+        return None
+    if not Path(cfg.ground_truth_path).exists():
+        # e.g. a calibration-target template with only the parameters tab filled:
+        # no measurement points yet, but the parameter ranges still reach the HBC
+        # config via merged_parameters()
+        log.info("no ground-truth measurements compiled (yet); skipping the "
+                 "calibration-points CSV")
         return None
     tables = ground_truth.read_tidy(cfg.ground_truth_path)
     quantities = cfg.calibration.calibration_quantities
@@ -95,11 +113,27 @@ def compile_ground_truth(cfg: Config) -> Path | None:
     return ground_truth.compile_ground_truth(cfg)
 
 
+def merged_parameters(cfg: Config) -> list:
+    """Calibration parameters: config ``calibration.parameters`` merged with the
+    ``parameters`` tab of the filled calibration-target template (template rows
+    win on a name collision, so the spreadsheet is the live source of truth)."""
+    from hydromate import targets as targets_mod
+
+    template = targets_mod.read_target_parameters(cfg)
+    if not template:
+        return list(cfg.calibration.parameters)
+    by_name = {p.name: p for p in cfg.calibration.parameters}
+    for p in template:
+        by_name[p.name] = p
+    return list(by_name.values())
+
+
 def emit_hbc_config(cfg: Config, calibration_csv: Path | None) -> Path:
     """Emit a HydroBayesCal ``config_Telemac.py`` for the produced case."""
     c = cfg.calibration
-    params = [p.name for p in c.parameters]
-    ranges = [[p.min, p.max] for p in c.parameters]
+    parameters = merged_parameters(cfg)
+    params = [p.name for p in parameters]
+    ranges = [[p.min, p.max] for p in parameters]
     results_base = Path(cfg.results_slf).stem
 
     def pylist(items, q=True):

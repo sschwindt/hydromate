@@ -6,7 +6,9 @@ Usage
 chain - each step only makes sense once the previous one has succeeded:
 
 #. **Prepare the input files** - the :ref:`geodata <input-geodata>`, the
-   :ref:`ground truth <input-ground-truth>`, and the :ref:`config YAML <input-config>`.
+   :ref:`ground truth <input-ground-truth>` (generate the
+   :ref:`calibration-target template <input-target-template>` with ``hydromate
+   targets <config>`` and fill it in), and the :ref:`config YAML <input-config>`.
 #. **Preprocessing / build** (``preprocessing.py``, or ``hydromate <config>``) -
    clip the DEM(s), build the mesh + bathymetry, classify the liquid boundaries,
    and write the complete TELEMAC case (``geometry.slf``, ``boundaries.cli``,
@@ -131,6 +133,25 @@ Useful flags:
 ``--dry-run``
     After building, launch the configured solver once to confirm the case is
     accepted by TELEMAC.
+
+Generating the calibration-target template
+------------------------------------------
+
+The ``targets`` subcommand writes the :ref:`calibration-target template
+<input-target-template>` (``calibration-target-data.xlsx`` + a co-located
+``extract_flowtracker.py`` helper) for a case, prefilled with its friction zones
+and DoD status:
+
+.. code-block:: bash
+
+   hydromate targets cases/example-Inn/case-config.yml            # -> user-sources/ground-truth/
+   hydromate targets cases/example-Inn/case-config.yml -o out.xlsx --force
+
+Fill in the ``hydraulics`` / ``morphodynamics`` measurement tabs (the
+``extract_flowtracker.py`` script populates the hydraulics tab straight from SonTek
+FlowTracker2 exports) and the ``parameters`` tab, reference the file under
+``ground_truth.targets``, and re-build so the calibration CSV and HydroBayesCal
+config pick it up.
 
 Clipping a raster to the region of interest
 -------------------------------------------

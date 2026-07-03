@@ -103,7 +103,7 @@ Tabular geodata (CSV):
 ``boundaries.stage_discharge`` *(optional; e.g.* ``rating-curve.csv`` *)*
     the outlet rating curve as a ``Q,WSE`` CSV (discharge [m³/s], water-surface elevation [m]); extra rows are interpolated. One pair at the steady discharge suffices. Only used when ``outflow_condition: stage_discharge``; auto-synthesised from a Manning/Strickler value + channel geometry by ``hydromate rating`` (or ``preprocessing.py``) when absent.
 
-Measurement **positions** (point layers joined to the ground-truth value files by ``ID`` / row order) also live in geodata and are reprojected on ingest; see :ref:`Ground truth <input-ground-truth>`.
+Measurement **positions** (point layers joined to the ground-truth value files or the :ref:`calibration-target template <input-target-template>` by ``ID`` / row order) also live in geodata and are reprojected on ingest; see :ref:`Ground truth <input-ground-truth>`.
 
 .. _digitising-geodata:
 
@@ -201,8 +201,9 @@ The configuration is a single YAML file with these top-level sections:
     ``confidence_level``); sub-LoD change is masked to nodata or set to 0
     (``mask_below_lod``).
 ``ground_truth``
-    the calibration ground truth: a tidy ``measurements`` table or the raw
-    ``sources`` hydromate compiles into it.
+    the calibration ground truth: the :ref:`calibration-target template
+    <input-target-template>` (``targets``), a tidy ``measurements`` table, or the
+    raw ``sources`` hydromate compiles into it.
 ``calibration``
     the calibration and extraction quantities, the calibration parameters with
     their ranges, and the sampling settings forwarded to HydroBayesCal.
@@ -256,6 +257,10 @@ Name                                        Target
 any literal TELEMAC keyword                 written straight into the ``.cas``
 ==========================================  ====================================
 
+The :ref:`calibration-target template <input-target-template>`'s ``parameters``
+tab produces these names for you from a drop-down catalog, so you rarely type them
+by hand.
+
 Graphical configurator
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -302,26 +307,36 @@ matched case-insensitively with common aliases (``easting`` / ``northing`` for
 ``w``).
 
 For FlowTracker-style hydraulics a row carries velocity components ``u``, ``v``,
-``w`` (m/s), their per-component errors ``u_err``, ``v_err``, ``w_err`` (m/s), and
-the water depth ``h`` (m). **Not every dataset has every column** - provide only
+``w`` (m/s), their RMS fluctuations ``u_std``, ``v_std``, ``w_std`` (m/s), the
+horizontal magnitude and its spread ``u_mag`` / ``u_mag_std``, the turbulent
+kinetic energy ``tke`` (m²/s²), and the water depth ``h`` (m); a morphodynamics
+row carries grain sizes ``d16`` … ``d90`` (m), the ``fine_fraction`` (<1 mm) and
+the bed-change ``dz`` (m). **Not every dataset has every column** - provide only
 what you measured. The calibration stage derives each requested
 ``calibration_quantity`` from whatever columns are present (``WATER DEPTH`` from
-``h``; ``SCALAR VELOCITY`` from the velocity components, with its error propagated
-from ``u_err`` / ``v_err`` / ``w_err`` when given) and falls back to the configured
+``h``; ``SCALAR VELOCITY`` from the components or from ``u_mag``, with its error
+from ``u_mag_std`` / the propagated component errors; ``TURBULENT ENERG.`` from
+``tke``; ``CUMUL BED EVOL`` from ``dz``) and falls back to the configured
 ``measurement_error`` fraction where no measured error exists. A quantity whose
 columns are missing is reported as an error rather than silently skipped.
 
-There are two ways to provide the table:
+There are three ways to provide the table:
 
-#. **Author it yourself** (the general case): create the ``.xlsx`` with the
-   structure above and point ``ground_truth.measurements`` at it.
-#. **Let hydromate compile it** from raw field exports (the Inn showcase): declare
-   the raw sources under ``ground_truth.sources`` and the tidy table is generated
-   for you (written to ``preprocessing/ground-truth.xlsx`` unless
-   ``ground_truth.measurements`` sets an explicit output path). Each source names a
-   ``category``, an adapter ``kind``, the ``values`` file and - when the values
-   file has no coordinates - a ``positions`` point layer to join on (by
-   ``join_key``), reprojected to the project CRS:
+#. **The calibration-target template** (recommended). ``hydromate targets
+   <config>`` generates a user-fillable
+   ``user-sources/ground-truth/calibration-target-data.xlsx`` (plus a co-located
+   ``extract_flowtracker.py`` helper). You fill it in and point
+   ``ground_truth.targets`` at it - see :ref:`the template section below
+   <input-target-template>`.
+#. **Author the tidy table yourself** (the general case): create the ``.xlsx``
+   with the structure above and point ``ground_truth.measurements`` at it.
+#. **Let hydromate compile it** from raw field exports: declare the raw sources
+   under ``ground_truth.sources`` and the tidy table is generated for you (written
+   to ``preprocessing/ground-truth.xlsx`` unless ``ground_truth.measurements``
+   sets an explicit output path). Each source names a ``category``, an adapter
+   ``kind``, the ``values`` file and - when the values file has no coordinates - a
+   ``positions`` point layer to join on (by ``join_key``), reprojected to the
+   project CRS:
 
    .. code-block:: yaml
 
@@ -335,3 +350,92 @@ There are two ways to provide the table:
    joins each measurement vertical (by ``ID``) to its surveyed position; the
    ``points`` adapter reads a point layer (or CSV) that already carries the quantity
    columns. Sources sharing a ``category`` are concatenated into one tab.
+
+.. _input-target-template:
+
+The calibration-target template
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The template gives ground truth a **consistent, user-friendly structure** whose
+rows are keyed by **unique IDs** that link to a point layer in
+``user-sources/geodata/``. Generate it for a case with:
+
+.. code-block:: bash
+
+   hydromate targets cases/<your-case>/case-config.yml
+
+This writes ``calibration-target-data.xlsx`` (and ``extract_flowtracker.py``) into
+``user-sources/ground-truth/``. The workbook has these tabs:
+
+``hydraulics``
+    one row per measurement vertical: the velocity components ``u_x``/``u_y``/``u_z``,
+    their RMS fluctuations ``u_x'``/``u_y'``/``u_z'``, the horizontal magnitude
+    ``U_h`` and its spread ``U_h'`` and the ``TKE`` (all three derived by **live
+    Excel formulas** - ``U_h = sqrt(u_x²+u_y²)``, ``TKE = 0.5·(u_x'²+u_y'²+u_z'²)`` -
+    and recomputed on ingest when left blank), the water depth and the bottom
+    elevation.
+``morphodynamics``
+    grain-size characteristics ``d16`` … ``d90`` [mm] and the fine-sediment fraction
+    (<1 mm) per sample point; the ``dz DoD`` column is **filled automatically on
+    ingest** from the :ref:`DEM-of-Difference <input-config>` at each point (leave it
+    blank).
+``parameters``
+    the calibration parameters: a **drop-down** over a catalog of TELEMAC-2D /
+    TELEMAC-3D / GAIA calibration keywords (friction zones - prefilled with each
+    zone's current :math:`k_s` - critical Shields stress, minimum depth, eddy
+    viscosity / diffusivity, secondary currents, GAIA transport knobs, …), a
+    zone/class column, the current value, the **min/max test range** and a **tips**
+    column that shows the catalog's typical range for the selected parameter. These
+    rows are merged into ``calibration.parameters`` (the template wins on a name
+    collision).
+``parameter-catalog``
+    the reference table backing the drop-down and the tips lookup.
+
+Reference the filled file in the config, joining each tab's IDs to its own point
+layer (any CRS, reprojected on ingest; explicit ``x``/``y`` in the sheet win over
+the layer):
+
+.. code-block:: yaml
+
+   ground_truth:
+     targets:
+       file: ../ground-truth/calibration-target-data.xlsx
+       hydraulics_positions: ../geodata/flowtracker2/dgps-points.gpkg  # point layer with 'ID'
+       sediment_positions: ../geodata/sediment/samples.gpkg            # point layer with 'ID'
+       join_key: ID
+
+.. tip:: Fluctuations are the sample std-dev, not ``VxErr``
+
+   In a FlowTracker2 export, ``VxErr`` is the **standard error of the mean**
+   (the velocity's measurement uncertainty, ≈ std/√Npts), **not** the turbulent
+   fluctuation. The RMS fluctuation ``u'`` is the sample **standard deviation**
+   (``u std`` / ``Std Dev v'(x)`` / σ).
+
+Filling the hydraulics tab from FlowTracker2
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The co-located ``extract_flowtracker.py`` script populates the ``hydraulics`` tab
+straight from SonTek FlowTracker2 exports, one row per point keyed by the point's
+own ID:
+
+.. code-block:: bash
+
+   cd cases/<your-case>/user-sources/ground-truth
+   mamba run -n hydromate-env python extract_flowtracker.py FlowTracker2-day1.xlsx FlowTracker2-day2.xlsx
+
+It auto-detects the three real export layouts - the SonTek ``.ft.sum`` summary, a
+TKE-stats export, and the multi-sheet ``FT_TKE_Summary`` (raw per-sample sheets are
+skipped). The velocity components come from ``VelX``/``VelY``/``VelZ``; the RMS
+fluctuations from the sample standard deviation (``u std`` / ``Std Dev v'(x)`` / σ)
+where present, otherwise **reconstructed** as ``u' ≈ VxErr·√Npts``; ``U_h``,
+``U_h'`` and ``TKE`` recompute in the sheet (or a measured ``TKE`` is used when the
+file provides one). The same logic is available programmatically as
+:func:`hydromate.read_flowtracker` / :func:`hydromate.fill_template_hydraulics`.
+
+.. note::
+
+   The hydraulics tab needs **globally-unique IDs** to join a single position
+   layer. Multi-day surveys whose files each restart IDs at 0 (e.g.
+   ``FlowTracker2-day1``/``day2``) must be extracted into separate templates /
+   position layers, or their IDs made unique first - otherwise the ID join reports
+   a duplicate-ID error.

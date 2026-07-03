@@ -101,6 +101,18 @@ Ground-truth ingestion
 .. automodule:: hydromate.ground_truth
    :members:
 
+Calibration-target template
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.targets
+   :members:
+
+FlowTracker2 velocity extraction
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.flowtracker
+   :members:
+
 Stage 5 -- calibration CSV and HydroBayesCal config
 -------------------------------------------------------------------------------
 

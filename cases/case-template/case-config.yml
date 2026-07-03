@@ -123,6 +123,9 @@ mesh:
   channel_size: 0.5            # fallback channel edge length (m)
   floodplain_size: 1.5         # fallback floodplain edge length (m); default outside zones
   refinement_size: 0.5         # fallback 'refinement' zone edge length (m)
+  # size_scale: 1.0            # global multiplier on EVERY target edge length above
+  #                            # INCLUDING the per-zone gpkg values; the mesh-
+  #                            # convergence study varies this per level - leave at 1
   growth_ratio: 1.2            # max edge-size growth per element (channel -> floodplain)
   channel_anisotropy: 4.0      # along-flow / cross-flow edge ratio in the channel
   max_aspect_ratio: 4.0        # hard cap on cell aspect ratio (longest:shortest edge);
@@ -240,16 +243,42 @@ dem_of_difference:
 
 ground_truth:
   # The calibration consumes a tidy, multi-tab "measurements" table: one tab per
-  # category (hydraulics, sediment, ...), first three columns x,y,z (project CRS),
-  # then quantity columns. Provide it one of two ways:
+  # category (hydraulics, morphodynamics, ...), first three columns x,y,z (project
+  # CRS), then quantity columns. Provide it one of three ways:
   #
-  #   (a) author it yourself and point `measurements` at the .xlsx (general case);
-  #   (b) declare raw sources under `sources` and hydromate compiles the tidy table
+  #   (a) RECOMMENDED - the calibration-target template: run
+  #           hydromate targets case-config.yml
+  #       to generate user-sources/ground-truth/calibration-target-data.xlsx (plus
+  #       a co-located extract_flowtracker.py helper), fill it in, and reference it
+  #       under `targets` below. Its tabs:
+  #         hydraulics      - per vertical: u_x/u_y/u_z, fluctuations u_x'/u_y'/u_z',
+  #                           U_h + U_h' + TKE (live formulas; recomputed on ingest),
+  #                           water depth, bottom elevation. Fill straight from SonTek
+  #                           FlowTracker2 exports with the co-located script:
+  #                             python extract_flowtracker.py FT-day1.xlsx FT-day2.xlsx
+  #                           (each point keyed by its ID; u' = sample std-dev, not VxErr)
+  #         morphodynamics  - grain sizes d16..d90 [mm], fine fraction < 1 mm, and a
+  #                           dz column auto-sampled from the DEM of Difference when
+  #                           geodata.dem_target / dem_of_difference provides one
+  #         parameters      - drop-down calibration parameters (TELEMAC-2D/3D/GAIA
+  #                           catalog incl. friction zones, critical Shields stress,
+  #                           minimum depth, eddy viscosity/diffusivity, secondary
+  #                           currents ...) with min/max test ranges + range tips;
+  #                           merged into `calibration.parameters` (template wins)
+  #       Rows are keyed by a UNIQUE ID joining the point layers below (any CRS;
+  #       reprojected on ingest), or carry explicit x/y.
+  #   (b) author the tidy table yourself and point `measurements` at the .xlsx;
+  #   (c) declare raw sources under `sources` and hydromate compiles the tidy table
   #       for you. Compiled to preprocessing/ground-truth.xlsx unless `measurements`
   #       gives an explicit output path.
   #
-  # measurements: user-sources/ground-truth/ground-truth.xlsx   # (a) user-authored tidy table
-  # sources:                                     # (b) raw sources -> compiled tidy table
+  # targets:                                     # (a) filled calibration-target template
+  #   file: user-sources/ground-truth/calibration-target-data.xlsx
+  #   hydraulics_positions: user-sources/geodata/dgps-points.gpkg    # point layer with 'ID'
+  #   sediment_positions: user-sources/geodata/sediment-samples.gpkg # point layer with 'ID'
+  #   join_key: ID
+  # measurements: user-sources/ground-truth/ground-truth.xlsx   # (b) user-authored tidy table
+  # sources:                                     # (c) raw sources -> compiled tidy table
   #   # e.g. FlowTracker velocities (values) joined by ID to DGPS survey points
   #   # (positions, reprojected to the project CRS); one entry per source/tab.
   #   - { category: hydraulics, kind: flowtracker, join_key: ID,

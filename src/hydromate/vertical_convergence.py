@@ -28,7 +28,7 @@ import numpy as np
 from hydromate import selafin, threed
 from hydromate.config import Config
 from hydromate.convergence import (
-    DEFAULT_QUANTITIES, _order_and_gci, _rel_change, default_probes,
+    DEFAULT_QUANTITIES, _gci_triplet, _rel_change, default_probes,
     extract_at_points,
 )
 
@@ -274,7 +274,8 @@ def _build_report(levels, quantities, tolerance, probes, case="") \
     for q in quantities:
         rep.rel_change[q] = [_rel_change(levels[i].qoi[q], levels[i + 1].qoi[q])
                              for i in range(len(levels) - 1)]
-        rep.observed_order[q], rep.gci_fine[q] = _order_and_gci(levels, q)
+        g = _gci_triplet(levels, q)
+        rep.observed_order[q], rep.gci_fine[q] = g.p, g.gci_fine
     rep.converged = all(rep.rel_change[q] and rep.rel_change[q][-1] < tolerance
                         for q in quantities)
     return rep

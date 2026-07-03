@@ -23,6 +23,12 @@ from hydromate.dem import (
     clip_dem_to_roi, clip_to_roi, dem_of_difference, propagated_lod, resolve_lod,
 )
 from hydromate.ground_truth import compile_ground_truth, read_tidy
+from hydromate.targets import (
+    read_target_parameters, read_targets, write_target_template,
+)
+from hydromate.flowtracker import (
+    fill_template_hydraulics, read_flowtracker, read_flowtrackers,
+)
 from hydromate.mesh import (
     build_mesh, channel_node_mask, interpolate_elevations, interpolate_roughness,
     write_mesh,
@@ -38,7 +44,8 @@ from hydromate.vertical_convergence import (
 from hydromate.rating import (
     generate_stage_discharge, normal_depth, synthesize_outflow_rating,
 )
-from hydromate.convergence import percent_levels, run_mesh_convergence
+from hydromate.convergence import percent_levels, ratio_levels, run_mesh_convergence
+from hydromate.mesh_validity import MeshValidity, channel_ks, check_level
 from hydromate.unsteady import (
     build_unsteady_case, build_unsteady_3d_case, load_hydrograph,
     write_control_sections,
@@ -55,6 +62,8 @@ from hydromate.logsetup import setup_logging, log_step, logging_to
 __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "dem_of_difference", "propagated_lod", "resolve_lod",
            "compile_ground_truth", "read_tidy",
+           "write_target_template", "read_targets", "read_target_parameters",
+           "read_flowtracker", "read_flowtrackers", "fill_template_hydraulics",
            "build_mesh", "channel_node_mask", "interpolate_elevations",
            "interpolate_roughness", "write_mesh", "assess_quality",
            "select_turbulence_model", "eddy_viscosity_estimate",
@@ -62,7 +71,8 @@ __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "select_3d_turbulence",
            "layer_levels", "run_vertical_convergence",
            "generate_stage_discharge", "normal_depth", "synthesize_outflow_rating",
-           "run_mesh_convergence", "percent_levels",
+           "run_mesh_convergence", "percent_levels", "ratio_levels",
+           "MeshValidity", "channel_ks", "check_level",
            "build_unsteady_case", "build_unsteady_3d_case", "load_hydrograph",
            "write_control_sections",
            "analyze_flux_convergence", "FluxConvergence",

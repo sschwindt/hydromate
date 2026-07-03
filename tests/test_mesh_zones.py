@@ -90,3 +90,38 @@ def test_read_zones_uses_field_with_fallback_and_priority(tmp_path):
     assert list(ztype) == ["floodplain", "channel", "refinement", "other"]
     assert math.isclose(edge[2], 0.4)             # refinement priority over channel
     assert math.isclose(edge[3], 1.5)             # outside -> default floodplain_size
+
+
+def test_size_scale_scales_gpkg_and_fallback_sizes(tmp_path):
+    """mesh.size_scale must scale the gpkg per-zone sizes too - they override the
+    config *_size fallbacks, which is what silently defeated the first ering
+    convergence study (five 'levels', one mesh)."""
+    import geopandas as gpd
+
+    from hydromate.mesh import nominal_channel_size
+
+    zones = gpd.GeoDataFrame(
+        {"Zone Name": ["floodplain", "channel", "refinement"],
+         "Max Edge Length (m)": [2.0, 0.5, None]},
+        geometry=[_box(0, 0, 100, 100), _box(0, 40, 100, 60), _box(45, 45, 55, 55)],
+        crs="EPSG:25832",
+    )
+    gpkg = tmp_path / "mesh-zones.gpkg"
+    zones.to_file(gpkg)
+    cfg = _zone_cfg(tmp_path, gpkg)
+    cfg.mesh.size_scale = 1.3
+
+    z = _read_mesh_zones(cfg)
+    by_type = dict(zip(z["_zone_type"], z["_edge_length"]))
+    assert math.isclose(by_type["floodplain"], 2.0 * 1.3)    # gpkg value scaled
+    assert math.isclose(by_type["channel"], 0.5 * 1.3)
+    assert math.isclose(by_type["refinement"], 0.4 * 1.3)    # config fallback scaled
+
+    _, edge = _assign_point_zones(cfg, z, np.array([[200.0, 200.0]]))
+    assert math.isclose(edge[0], 1.5 * 1.3)                  # outside-zones default
+
+    # effective channel size: smallest scaled channel-zone edge length
+    assert math.isclose(nominal_channel_size(cfg), 0.5 * 1.3)
+    # and the gpkg-free fallback path scales channel_size directly
+    cfg.geodata.mesh_zones = None
+    assert math.isclose(nominal_channel_size(cfg), cfg.mesh.channel_size * 1.3)

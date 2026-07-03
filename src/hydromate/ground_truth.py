@@ -78,6 +78,12 @@ def read_xlsx_sheet(path: Path, sheet: int | str = 0) -> pd.DataFrame:
     for r in ws.iter(_NS + "row"):
         cells: dict[int, object] = {}
         for c in r.findall(_NS + "c"):
+            if c.get("t") == "inlineStr":     # openpyxl writes strings inline
+                inline = c.find(_NS + "is")
+                if inline is not None:
+                    cells[_col_index(c.get("r"))] = "".join(
+                        t.text or "" for t in inline.iter(_NS + "t"))
+                continue
             v = c.find(_NS + "v")
             if v is None or v.text is None:
                 continue
@@ -139,10 +145,13 @@ def read_flowtracker(xlsx: Path, positions: Path, crs_epsg: int,
 
     Parameters
     ----------
-    xlsx : the ``.ft.sum`` export with the measured velocities/depths.
-    positions : point layer (shp/gpkg) of the survey points, with a matching
+    xlsx : Path
+        the ``.ft.sum`` export with the measured velocities/depths.
+    positions : Path
+        point layer (shp/gpkg) of the survey points, with a matching
         ``join_key`` column; reprojected to ``crs_epsg`` for the x/y output.
-    crs_epsg : project CRS the output coordinates are expressed in.
+    crs_epsg : int
+        project CRS the output coordinates are expressed in.
 
     Returns the tidy schema ``x, y, z`` then ``u, v, w, u_err, v_err, w_err, h``.
     """
@@ -258,15 +267,22 @@ def _compile_source(src, crs_epsg: int) -> pd.DataFrame:
 def compile_ground_truth(cfg) -> Path | None:
     """Compile the configured raw sources into the tidy multi-tab table.
 
-    Sources sharing a ``category`` are concatenated into one sheet. Returns the
-    written path (``cfg.ground_truth_path``), or ``None`` when no sources are
-    configured (the user supplies the tidy table directly).
+    Sources sharing a ``category`` are concatenated into one sheet; a filled
+    calibration-target template (``ground_truth.targets``) contributes its
+    ``hydraulics`` / ``morphodynamics`` tabs the same way. Returns the written
+    path (``cfg.ground_truth_path``), or ``None`` when neither is configured
+    (the user supplies the tidy table directly).
     """
-    if not cfg.ground_truth.sources:
-        return None
     tables: dict[str, list[pd.DataFrame]] = {}
     for src in cfg.ground_truth.sources:
         tables.setdefault(src.category, []).append(_compile_source(src, cfg.crs_epsg))
+    if cfg.ground_truth.targets is not None:
+        from hydromate import targets as targets_mod
+
+        for category, df in targets_mod.read_targets(cfg).items():
+            tables.setdefault(category, []).append(df)
+    if not tables:
+        return None
     merged = {cat: pd.concat(parts, ignore_index=True) for cat, parts in tables.items()}
     out = cfg.ground_truth_path
     write_tidy(merged, out)
