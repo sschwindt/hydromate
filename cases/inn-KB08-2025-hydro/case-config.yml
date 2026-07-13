@@ -128,14 +128,13 @@ ground_truth:
   # `measurements` gives an explicit output path.
   # measurements: path/to/ground-truth.xlsx    # (a) user-authored tidy table
   sources:                                      # (b) raw sources -> compiled tidy table
-    # FlowTracker velocities (values) joined by ID to the DGPS survey points
-    # (positions, reprojected to the project CRS); two survey days -> one tab.
+    # FlowTracker2 Sept-2025 campaign (KB8 sheet = sheet 0 of the revised
+    # FT_TKE_Summary.xlsx: one row per vertical at ~0.6 x depth, numeric IDs
+    # 801..831), joined by ID to the DGPS positions GeoPackage (EPSG:25832,
+    # z = bed elevation from the DGPS survey).
     - { category: hydraulics, kind: flowtracker, join_key: ID,
-        values: user-sources/ground-truth/hydraulics/FlowTracker2-TRASH-day1.xlsx,
-        positions: user-sources/geodata/TRASH/dgps-flowtracker-day1_utm33.shp }
-    - { category: hydraulics, kind: flowtracker, join_key: ID,
-        values: user-sources/ground-truth/hydraulics/FlowTracker2-TRASH-day2.xlsx,
-        positions: user-sources/geodata/TRASH/dgps-flowtracker-day2_utm33.shp }
+        values: user-sources/ground-truth/FT_TKE_Summary.xlsx,
+        positions: user-sources/geodata/FlowTracker2/dgps-flowtracker-kb8-sept25.gpkg }
 
 calibration:
   calibration_quantities: ["WATER DEPTH"]                    # measured columns used for calibration

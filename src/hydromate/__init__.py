@@ -58,6 +58,11 @@ from hydromate.workflow import (
 )
 from hydromate.progress import SolverProgress
 from hydromate.logsetup import setup_logging, log_step, logging_to
+from hydromate import campaigns
+from hydromate.bayescal import (
+    FlowSpec, run_single_flow_calibration, run_multiflow_calibration,
+    build_velocity_csv, hbc_dir, hbc_env,
+)
 
 __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "dem_of_difference", "propagated_lod", "resolve_lod",
@@ -80,4 +85,7 @@ __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "prepare_steady_inputs", "resolve_discharge",
            "synthesize_constant_inflow", "synthesize_rating_if_missing",
            "run_solver_streaming", "expected_duration", "SolverProgress",
-           "setup_logging", "log_step", "logging_to", "__version__"]
+           "setup_logging", "log_step", "logging_to",
+           "campaigns", "FlowSpec", "run_single_flow_calibration",
+           "run_multiflow_calibration", "build_velocity_csv", "hbc_dir", "hbc_env",
+           "__version__"]

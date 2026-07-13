@@ -592,6 +592,11 @@ class Calibration:
     max_runs: int = 50
     parameter_sampling_method: str = "sobol"
     gp_library: str = "gpy"
+    # HydroBayesCal predicts the surrogate at prior_samples points by building a
+    # (prior_samples x prior_samples) dense covariance PER calibration location in
+    # gpytorch; 25000 OOM-kills a 16 GB box. A low-dimensional roughness posterior
+    # needs only a few thousand - 5000 is ample and memory-safe. Raise with RAM.
+    prior_samples: int = 5000
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Calibration":

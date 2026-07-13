@@ -197,7 +197,9 @@ sampling = {{
     'parameter_sampling_method': {c.parameter_sampling_method!r},
     'tp_selection_criteria': 'dkl',
     'eval_steps': 1,
-    'prior_samples': 25000,
+    # prior_samples drives a (prior_samples x prior_samples) dense covariance PER
+    # location in gpytorch; kept modest (calibration.prior_samples) to stay in RAM.
+    'prior_samples': {c.prior_samples},
     'mc_samples_al': 2000,
     'mc_exploration': 1000,
     'gp_library': {c.gp_library!r},
