@@ -1,0 +1,138 @@
+==============================================================================
+ hydromate case template - USAGE
+==============================================================================
+This folder is a ready-to-copy scaffold for one TELEMAC-2D (+ optional GAIA)
+simulation case driven by the `hydromate` package. Copy the whole folder to
+cases/<your-case>/, drop your data into user-sources/, edit case-config.yml,
+then run the three workflow scripts. A worked example is in cases/example-Inn/.
+
+------------------------------------------------------------------------------
+ FOLDER STRUCTURE
+------------------------------------------------------------------------------
+cases/<your-case>/
+  case-config.yml      the case configuration (paths, mesh, friction,
+                       hydrodynamics, calibration). All paths resolve relative
+                       to this file. [edit this]
+  preprocessing.py            step 1: build the full TELEMAC case into simulation/
+  initial_run.py              step 1b: test-run the built case (confirms it works)
+  mesh_convergence_study.py   step 2: grid-independence study + xlsx report
+  add3d.py                    optional: write/run the three TELEMAC-3D cases
+                              (hotstart3d_hydrostatic.cas, hotstart3d_hydrodyn.cas,
+                              unsteady3d.cas) hotstarted from the 2D result
+  vertical_convergence_3d.py  optional: 3D grid-independence study over the number
+                              of vertical (sigma) layers
+  unsteady_run.py             optional: hydrograph (quasi-steady) run hotstarted from
+                              the steady result; in-script toggles for 2D/3D + GAIA
+                              bedload / suspended load (needs boundaries.inflow series)
+  USAGE.info                  this file
+
+  user-sources/        YOUR input data (gitignored; not shipped with the template)
+    geodata/           DEM(s), ROI polygon, liquid boundaries, mesh zones,
+                       channel centerline, roughness zones (+ table), rating curve
+    ground-truth/      field measurements (e.g. FlowTracker velocities, GSDs)
+    hydraulics/        inflow discharge series / value
+    (see user-sources/README.md for the expected files)
+
+  tm-simulation/       ALL produced artifacts (created on first run; gitignored),
+                       split by workflow phase - each phase also writes its own
+                       hydromate.log here:
+    preprocessing/         DEM clips, mesh-raw.slf, mesh-elevations.slf,
+                           ground-truth.xlsx
+    simulation/            the TELEMAC case: geometry.slf, boundaries.cli,
+                           steady2d.cas, friction.tbl, results
+    postprocessing/
+      mesh-convergence/    convergence study: mesh-convergence.xlsx/.txt, per-mesh
+                           runs, log (this subfolder is created by preprocessing.py)
+    calibration-validation/  HydroBayesCal artifacts: measurements-calibration.csv,
+                           config_Telemac.py
+
+------------------------------------------------------------------------------
+ PRINCIPAL WORK STEPS
+------------------------------------------------------------------------------
+0. Install the env and activate it (see docs/installation.rst):
+     mamba env create -f environment.yml && mamba activate hydromate-env
+     pip install -e .
+
+1. Put your data in user-sources/ (EPSG:25832 / a metric CRS; see
+   user-sources/README.md and the "Coordinate system" note in CLAUDE.md).
+
+2. Edit case-config.yml:
+     - telemac.pysource  -> your TELEMAC pysource.*.sh
+     - inputs.*          -> your files under user-sources/
+     - mesh / friction / hydrodynamics / calibration -> your values
+   No measured outlet rating curve? Synthesise one from normal-flow hydraulics:
+     hydromate rating -o user-sources/geodata/rating-curve.csv \
+       --manning 0.035 --slope <S0> --width <b> --bed-elevation <z> --q <Q>
+
+3. Validate the configuration:
+     hydromate cases/<your-case>/case-config.yml --check
+
+4. Step 1 - build the complete TELEMAC case into tm-simulation/simulation/
+   (final mesh, .cli, .tbl, .cas; the inflow + outflow rating are synthesised
+   from the geodata if missing; HBC artifacts -> calibration-validation/):
+     python cases/<your-case>/preprocessing.py
+
+5. Step 1b - test-run the built case once to confirm it does not crash, check
+   the boundary-flux convergence (extracted-fluxes.csv + plots via pythomac),
+   and - once the fluxes stay balanced (<1e-3 m3/s over 10 printouts, or in the
+   10-printout mean) - generate hotstart2d.cas (a continuation of r2d.slf capped
+   at that steady time, Q/H prescriptions kept). This ends the preprocessing
+   step; needs telemac.pysource set:
+     python cases/<your-case>/initial_run.py
+
+6. Step 2 - mesh-convergence (grid-independence) study: runs five meshes
+   (+40%/+20% coarser, baseline, -20%/-40% finer) and writes a styled
+   mesh-convergence.xlsx with a recommended cell size (convergence vs. compute):
+     python cases/<your-case>/mesh_convergence_study.py
+
+7. Step 3 - calibrate / validate with HydroBayesCal using the emitted config:
+     cd cases/<your-case>/tm-simulation/calibration-validation
+     python /path/to/hydrobayescal/bal_telemac.py --config config_Telemac.py
+
+The 2D path above is the foundation. A 3D simulation is built ONLY after it - it
+needs the 2D hotstart (step 1b -> r2d.slf) and reuses the horizontal mesh whose
+resolution the 2D mesh-convergence study has already validated (step 2). So run the
+two optional 3D steps only after steps 1b and 2:
+
+Optional 3D-a - 3D extension: write exactly three TELEMAC-3D cases hotstarted
+from the 2D result, with the number of sigma layers and the turbulence model
+inferred from r2d.slf and a fixed time step sized for Courant 0.6:
+  hotstart3d_hydrostatic.cas  NON-HYDROSTATIC VERSION : NO; constant Q/H, ~30k
+                              fixed steps, short listing period -> the steady
+                              boundary-flux convergence check in 3D
+  hotstart3d_hydrodyn.cas     NON-HYDROSTATIC VERSION : YES; steady run with the
+                              in-file prescribed Q (in) and H (out)
+  unsteady3d.cas              NON-HYDROSTATIC VERSION : YES; hydrograph Q(t) +
+                              outflow SL(t) via the same liquid-boundaries file
+                              as unsteady2d.cas (needs a varying
+                              boundaries.inflow series; skipped otherwise)
+(--run [hydrostatic|hydrodyn|unsteady] also launches telemac3d.py; default is
+the hydrostatic flux-convergence check):
+     python cases/<your-case>/add3d.py [--run [which]]
+
+Optional 3D-b - vertical-layer convergence: the vertical discretization dz (number
+of sigma layers) is a NEW discretization choice the 2D study never covered, so it
+needs its own grid-independence study (the 3D analogue of step 2). This re-runs the
+hotstarted 3D case for a ladder of vertical-layer counts on the same horizontal mesh
+and reports grid independence vs. the number of layers (styled .xlsx in
+tm-simulation/postprocessing/vertical-convergence/). Runs telemac3d once per count
+and is slow:
+     python cases/<your-case>/vertical_convergence_3d.py
+
+   (A one-shot build without the scripts: hydromate cases/<your-case>/case-config.yml)
+
+Logging: every script writes a compound, timestamped hydromate.log into the
+folder it outputs to, with the elapsed time of each calculation step plus all
+warnings and errors.
+
+------------------------------------------------------------------------------
+ WHERE TO READ MORE
+------------------------------------------------------------------------------
+  README.md                 overview, pipeline stages, case layout, CLI
+  docs/installation.rst     environment + TELEMAC setup
+  docs/usage.rst            CLI, GUI editor, example scripts, inputs
+  CLAUDE.md                 in-depth design notes (meshing, boundaries,
+                            friction, ground truth, conventions)
+  cases/example-Inn/        a complete, filled-in worked example
+  hydromate <config> -h     command-line help (also: hydromate rating -h)
+==============================================================================

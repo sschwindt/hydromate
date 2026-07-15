@@ -63,3 +63,6 @@ dist/
 
 # --- Sphinx docs build ---
 docs/_build/
+
+# --- Local backup tooling ---------------------------------------------------
+/scripts/backup-logs/

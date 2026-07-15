@@ -195,6 +195,22 @@ See `cases/example-Inn/case-config.yml` for a fully commented example. Key secti
 
 All inputs/outputs are **EPSG:25832 (ETRS89 / UTM 32N)**, metres - see `CLAUDE.md`. Inputs in another CRS are reprojected on ingest.
 
+## Cases (Backup)
+
+`cases/*/user-sources/` (raw DEMs, orthos, gauge/FlowTracker/GSD data) and `cases/*/hydromate-case/` (produced TELEMAC artifacts) are gitignored and local-only - some of that data (field campaign exports, DGPS shapefiles, gauge CSVs) is irreplaceable raw field data, not just reproducible output. `scripts/backup_cases_to_drive.sh` mirrors both folders for every case to Google Drive via [rclone](https://rclone.org/):
+
+```bash
+sudo apt install rclone
+rclone config                              # one-time: create a remote named "gdrive" (OAuth in browser)
+rclone lsd gdrive:                         # sanity check
+
+./scripts/backup_cases_to_drive.sh         # dry run: prints what would change
+./scripts/backup_cases_to_drive.sh --run   # actually syncs (uploads AND deletes remote-only
+                                            #   files, mirroring local - review the dry run first)
+```
+
+Remote layout mirrors local: `gdrive:HydroMate-Cases/<case-name>/user-sources/` and `.../hydromate-case/`. Restore a case with `rclone copy gdrive:HydroMate-Cases/<case-name> cases/<case-name>`. It's manual/on-demand (no cron) - rerun it yourself after a case produces new heavy data. Each run logs to `scripts/backup-logs/` (gitignored).
+
 ## Status
 
 v1 covers the **2D hydraulic** path end to end (friction-zone calibration against water depth / velocity). The **DEM-of-Difference** with a level of detection is implemented in pre-processing (`dem_of_difference` config block); GAIA morphodynamics and turning the DoD into per-point topographic-change calibration targets are wired as extension points (`morphodynamics` config block, GAIA `.cas` writer) and built out next.
