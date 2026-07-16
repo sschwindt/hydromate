@@ -24,7 +24,10 @@ ks+, cell size vs. ks, turbulence-model consistency; these also appear per level
 in the report). In a non-interactive session (nohup/batch) the study stops and
 writes the report instead of extending. The .xlsx/.txt reports include the
 validity block and a recommended cell size balancing grid independence against
-compute time. The study creates and works in its own
+compute time. A ``README.md`` documenting the study folder for external readers
+(the central .xlsx summary, the governing equations and quantities examined,
+and the purpose of every produced file) is written alongside, ready for data
+publication. The study creates and works in its own
 ``hydromate-case/mesh-convergence/`` folder.
 
 The discharge and the outflow stage prescription come from ``case-config.yml``
@@ -119,9 +122,11 @@ def main(mode: str = "standard") -> None:
     print(report.format())
     xlsx = report.to_xlsx(mc_dir / "mesh-convergence.xlsx")
     report.save(mc_dir / "mesh-convergence.txt")
+    readme = convergence.write_readme(mc_dir, report=report)
     rec = report.recommendation()
     print(f"\nRECOMMENDED cell size: {rec['cell_size']:.3f} m - {rec['reason']}")
     print(f"styled report -> {xlsx}")
+    print(f"dataset README (for sharing/review) -> {readme}")
 
 
 if __name__ == "__main__":

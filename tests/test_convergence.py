@@ -389,6 +389,57 @@ def test_geom_stats_ignores_zero_length_edges():
     assert np.isfinite(convergence._cfl_dt(min_edge, depth, vel))
 
 
+def test_write_readme_from_report(tmp_path):
+    levels = [_rt_level("coarser x1.30", 1.3, 1.20, 0.80, 20),
+              _rt_level("baseline", 1.0, 1.03, 0.89, 60),
+              _rt_level("finer x1.30", 1 / 1.3, 1.015, 0.90, 120),
+              _rt_level("finer x1.69", 1 / 1.69, 1.012, 0.905, 260)]
+    rep = build_report(levels, ["WATER DEPTH", "SCALAR VELOCITY"], 0.05,
+                       np.zeros((6, 2)))
+    rep.case = "inn"
+    out = convergence.write_readme(tmp_path, report=rep)
+    assert out == tmp_path / "README.md"
+    text = out.read_text()
+    # the reviewer-requested pointers: central xlsx + what it compares
+    assert "mesh-convergence.xlsx" in text
+    assert ("compares them with 3 additional simulations: 1 performed on a "
+            "coarser mesh and 2 performed on successively refined meshes") in text
+    # governing equations, quantities, criteria, file inventory, packaging
+    assert "shallow water" in text and "TELEMAC-2D" in text
+    assert "water depth h [m]" in text and "sampled at 6 fixed probe points" in text
+    assert "Celik" in text and "Grid" in text and "tolerance: 5%" in text
+    assert "| baseline | 1.000 |" in text and "| finer x1.69 |" in text
+    assert "geometry.slf" in text and "r2d.slf" in text and "tar czf" in text
+    # the README is deliberately tool-agnostic
+    assert "hydromate" not in text.lower()
+
+
+def test_write_readme_scan_mode(tmp_path):
+    # no report: the levels are recovered from the per-level level.json files
+    for lbl, cs, ne in (("baseline", 0.40, 75919), ("coarser x1.30", 0.52, 45873),
+                        ("finer x1.30", 0.31, 119960)):
+        d = tmp_path / convergence._slug(lbl)
+        d.mkdir()
+        (d / "level.json").write_text(json.dumps(
+            {"label": lbl, "channel_size": cs, "floodplain_size": 3 * cs,
+             "scale": 1.0, "cell_size": cs, "n_elem": ne, "n_nodes": ne // 2,
+             "min_edge": 0.03, "dt": 0.01, "runtime_s": 100.0}))
+    out = convergence.write_readme(
+        tmp_path, case="ering", tolerance=0.05, n_probes=40,
+        turbulence="Spalart-Allmaras",
+        extra_entries={"old/": "a superseded earlier study run"})
+    text = out.read_text()
+    assert "case 'ering'" in text and "sampled at 40 fixed probe points" in text
+    assert ("compares them with 2 additional simulations: 1 performed on a "
+            "coarser mesh and 1 performed on successively refined meshes") in text
+    # rows come out coarse -> fine
+    assert text.index("| coarser x1.30 |") < text.index("| baseline |") \
+        < text.index("| finer x1.30 |")
+    assert "Spalart-Allmaras turbulence closure" in text
+    assert "`old/`: a superseded earlier study run" in text
+    assert "hydromate" not in text.lower()
+
+
 if __name__ == "__main__":
     test_relative_change_and_verdict()
     print("CONVERGENCE TESTS PASSED")
