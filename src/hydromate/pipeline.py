@@ -123,10 +123,17 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
         else:
             art.initial_conditions = steering.write_dry_start_conditions(cfg, the_mesh)
             prev_comp = art.initial_conditions.name if art.initial_conditions else None
+        # internal point sources/sinks for a losing-gaining reach (empty unless the
+        # liquid-boundary layer carries internal 'int-*' lines); shared by every .cas
+        sources = boundary.load_internal_sources(cfg)
+        for s in sources:
+            log.info("  internal source %s: %+.4f m3/s at (%.1f, %.1f)",
+                     s.name, s.discharge, s.x, s.y)
         # the initial run is ALWAYS steady (steady2d.cas)
         art.cas_file = steering.write_cas(
             cfg, liquids, inflow_q, outflow_wse, gaia_cas=gaia_name,
             previous_computation=prev_comp, turbulence_model=turb_model,
+            sources=sources,
         )
         # additionally write the unsteady hydrograph case when a varying inflow
         # series is available (a constant-Q inflow needs no unsteady run)
@@ -138,6 +145,7 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
                 previous_computation=prev_comp, turbulence_model=turb_model,
                 unsteady=True, liquid_boundaries_file=art.liquid_boundaries.name,
                 duration=_hydrograph_duration(inflow), out_name=cfg.unsteady_cas_file,
+                sources=sources,
             )
             log.info("  unsteady hydrograph case -> %s (Q(t) from %s)",
                      art.unsteady_cas.name, art.liquid_boundaries.name)

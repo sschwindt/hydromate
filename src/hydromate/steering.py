@@ -359,19 +359,22 @@ def _prescribed_arrays(cfg: Config, liquids: list[LiquidBoundary],
     A free (Neumann) outflow prescribes nothing, so its elevation slot is a
     placeholder; ``stage_discharge`` / ``elevation`` instead prescribe *outflow_wse*.
 
-    *inflow_q* is the **total** reach discharge. When several inflow boundaries
-    exist (e.g. an upstream cross-section split by an island), it is distributed
-    across them in proportion to their node count (a width/conveyance proxy) so the
-    total prescribed inflow stays *inflow_q* - prescribing the full Q on each would
-    multiply the supplied discharge and flood the domain.
+    *inflow_q* is the **total** reach discharge. When each inflow boundary carries
+    its **own** ``LiquidBoundary.discharge`` (per-line values from the layer's flow
+    column, e.g. two upstream inflows of 1.6 and 0.8 m3/s), those are prescribed
+    directly. Otherwise *inflow_q* is distributed across the inflow boundaries in
+    proportion to their node count (a width/conveyance proxy) so the total prescribed
+    inflow stays *inflow_q* - prescribing the full Q on each would multiply the
+    supplied discharge and flood the domain.
     """
     free_outflow = cfg.boundaries.outflow_condition == "free"
     inflows = [b for b in liquids if b.kind == "inflow"]
+    per_line = bool(inflows) and all(b.discharge is not None for b in inflows)
     inflow_nodes = sum(b.n_nodes for b in inflows) or 1
     flow, elev, prof = [], [], []
     for lb in sorted(liquids, key=lambda b: b.index):
         if lb.kind == "inflow":
-            share = inflow_q * lb.n_nodes / inflow_nodes
+            share = lb.discharge if per_line else inflow_q * lb.n_nodes / inflow_nodes
             flow.append(f"{share:.4f}")
             elev.append("0.")                   # ignored for an inflow boundary
             prof.append("4")                    # ~ proportional to sqrt(depth)
@@ -398,6 +401,8 @@ def write_liquid_boundaries(cfg: Config, liquids: list[LiquidBoundary],
     free_outflow = cfg.boundaries.outflow_condition == "free"
     ordered = sorted(liquids, key=lambda b: b.index)
     inflows = [b for b in ordered if b.kind == "inflow"]
+    per_line = bool(inflows) and all(b.discharge is not None for b in inflows)
+    disch_total = sum(b.discharge for b in inflows) if per_line else 0.0
     inflow_nodes = sum(b.n_nodes for b in inflows) or 1
     times = inflow.times_s
     q = np.asarray(inflow.discharge, dtype=float)
@@ -414,7 +419,12 @@ def write_liquid_boundaries(cfg: Config, liquids: list[LiquidBoundary],
         row = [f"{t:.1f}"]
         for lb in ordered:
             if lb.kind == "inflow":
-                row.append(f"{qt * lb.n_nodes / inflow_nodes:.4f}")
+                # split the total hydrograph value qt by the per-line discharge ratio
+                # when available, else by node share (matching the steady prescription)
+                if per_line and disch_total > 0:
+                    row.append(f"{qt * lb.discharge / disch_total:.4f}")
+                else:
+                    row.append(f"{qt * lb.n_nodes / inflow_nodes:.4f}")
             elif not free_outflow:
                 row.append(f"{(outflow_wse_fn(qt) if outflow_wse_fn else 0.0):.4f}")
         lines.append(" ".join(row))
@@ -433,7 +443,8 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
               results_name: str | None = None,
               n_distributive_corrections: int | None = None,
               sections_input: str | None = None, sections_output: str | None = None,
-              hotstart_note: str | None = None) -> Path:
+              hotstart_note: str | None = None,
+              sources: "list | None" = None) -> Path:
     """Write a TELEMAC-2D steering (.cas) file.
 
     The default (``unsteady=False``, ``out_name=None``) writes the **steady** initial
@@ -631,6 +642,28 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         f"PRESCRIBED ELEVATIONS : {elev}",
         f"VELOCITY PROFILES : {prof}",
         f"OPTION FOR LIQUID BOUNDARIES : {';'.join(['1'] * n_liquid)}",
+    ]
+
+    if sources:
+        # internal point sources/sinks for a losing-gaining reach: a 2D model has no
+        # subsurface, so surface water that leaves through a losing line and returns
+        # through a gaining line is a withdrawal (-Q) and an injection (+Q) at the
+        # respective line midpoints (TELEMAC snaps each to the nearest mesh node). No
+        # source velocity is prescribed, so each takes the local flow velocity.
+        xs = ";".join(f"{s.x:.3f}" for s in sources)
+        ys = ";".join(f"{s.y:.3f}" for s in sources)
+        qs = ";".join(f"{s.discharge:g}" for s in sources)
+        tags = ", ".join(f"{s.name} {s.discharge:+g}" for s in sources)
+        lines += [
+            "/",
+            f"/ INTERNAL SOURCES / SINKS (losing-gaining reach: {tags} m3/s)",
+            f"ABSCISSAE OF SOURCES : {xs}",
+            f"ORDINATES OF SOURCES : {ys}",
+            f"WATER DISCHARGE OF SOURCES : {qs}",
+            "TYPE OF SOURCES : 1",
+        ]
+
+    lines += [
         "/",
         "/ FRICTION (zonal; coefficients calibrated by HydroBayesCal)",
         f"LAW OF BOTTOM FRICTION : {_global_friction(cfg)[0]}",
