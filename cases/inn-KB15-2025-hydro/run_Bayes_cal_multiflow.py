@@ -40,14 +40,25 @@ CONFIG = HERE / "case-config.yml"
 GT = HERE / "user-sources/ground-truth/hydraulics"
 GEO = HERE / "user-sources/geodata"
 
-# case-specific flow set (the only thing this script declares)
+# case-specific flow set (the only thing this script declares).
+# Since July 2026 the targets come pre-compiled by prepare_corrected_targets.py
+# (kind "csv"): pole-corrected DGPS z, bathymetry-corrected water-level depth
+# targets, profile-averaged velocities with a structural discrepancy term -
+# see README.md "Data particularities". Run that script first after any
+# ground-truth change. (The raw adapter/transect specs are kept below for
+# reference, commented out.)
+PREP = HERE / "hydromate-case/preprocessing"
 FLOWS = [
-    FlowSpec(name="q47-3", discharge=47.3, kind="adapter", duration=1500.0,
-             values=GT / "FT_TKE_Summary.xlsx",
-             positions=GEO / "flowtracker2/dgps-flowtracker-kb15-sept25.gpkg"),
-    FlowSpec(name="q48-45", discharge=48.45, kind="transect", duration=1500.0,
-             values=GT / "FT_TKE_Summary_Nov25.xlsx",
-             positions=GEO / "TKE_KB15_Nov25.gpkg", vel_err_floor=0.05),
+    FlowSpec(name="q47-3", discharge=47.3, kind="csv", duration=1500.0,
+             values=PREP / "measurements-corrected-q47-3.csv"),
+    FlowSpec(name="q48-45", discharge=48.45, kind="csv", duration=1500.0,
+             values=PREP / "measurements-corrected-q48-45.csv"),
+    # FlowSpec(name="q47-3", discharge=47.3, kind="adapter", duration=1500.0,
+    #          values=GT / "FT_TKE_Summary.xlsx",
+    #          positions=GEO / "flowtracker2/dgps-flowtracker-kb15-sept25-zcorrected.gpkg"),
+    # FlowSpec(name="q48-45", discharge=48.45, kind="transect", duration=1500.0,
+    #          values=GT / "FT_TKE_Summary_Nov25.xlsx",
+    #          positions=GEO / "TKE_KB15_Nov25.gpkg", vel_err_floor=0.05),
     # EXCLUDED (wadeable margins not comparable to modelled channel velocity):
     # FlowSpec(name="q168", discharge=168.0, kind="inline", duration=3000.0,
     #          values=GT / "FT_TKE_Summary_March26.xlsx"),

@@ -243,14 +243,21 @@ class FlowSpec:
     """
     name: str                       # short tag (steering + results names)
     discharge: float                # m3/s
-    kind: str                       # adapter | transect | inline
-    values: Path                    # FlowTracker xlsx
+    kind: str                       # adapter | transect | inline | csv
+    values: Path                    # FlowTracker xlsx (or a ready CSV for kind "csv")
     positions: Path | None = None   # DGPS point layer (adapter/transect)
     sheet: str = "KB15"
     duration: float | None = None   # steady sim seconds (default: cfg duration)
     vel_err_floor: float = campaigns.VELOCITY_ERROR_FLOOR
 
     def compile(self, crs_epsg: int) -> pd.DataFrame:
+        if self.kind == "csv":
+            # pre-compiled calibration points (already in the HydroBayesCal
+            # schema: id, x, y, z, <QTY>_DATA, <QTY>_ERROR); passed through so
+            # case-specific target preparation (e.g. bathymetry-corrected
+            # depths, profile-averaged velocities) survives the launcher's
+            # recompilation step.
+            return pd.read_csv(self.values)
         if self.kind == "adapter":
             return campaigns.compile_adapter(self.values, self.positions, crs_epsg,
                                              self.vel_err_floor, self.name)
@@ -463,7 +470,8 @@ def run_multiflow_smoke(cfg: Config, flows: list[FlowSpec], multiflow_dir: Path,
         print(f"missing combined results {combined}")
         return 3
     arr = np.loadtxt(combined, delimiter=",", skiprows=1, ndmin=2)
-    n_pts = sum(len(pd.read_csv(p)) for p in csv_paths.values())
+    n_pts = (sum(len(pd.read_csv(p)) for p in csv_paths.values())
+             * len(cfg.calibration.calibration_quantities))
     checks = {
         "shape": arr.shape == (init_runs, n_pts),
         "no all-zero run": bool(np.all(arr.any(axis=1))),
