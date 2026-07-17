@@ -22,9 +22,9 @@ project:
 
 telemac:
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported).
-  pysource: /home/schwindt/opt/telemac-v911/telemac-mascaret/configs/pysource.mint22.sh
+  pysource: //home/IWS/public/telemac/telemac-mascaret/configs/pysource.debian12.sh
   solver: telemac2d            # telemac2d | telemac3d
-  n_processors: 8              # = physical cores (OpenMPI slots; 16 CPUs are hyperthreads)
+  n_processors: 16              # = physical cores (OpenMPI slots; 16 CPUs are hyperthreads)
 
 geodata:
   # Pure geodata files (boundary CONDITIONS are in `boundaries`, ground truth in
@@ -114,6 +114,10 @@ hydrodynamics:
   # locally-implicit distributive scheme takes it; ~2x larger dt than the 0.30
   # default that guards the dry start).
   desired_courant: 0.60        # target Courant for the CFL-adaptive march (default 0.30)
+  # Ambient (background) eddy viscosity added to the Spalart-Allmaras closure;
+  # emitted as VELOCITY DIFFUSIVITY so HydroBayesCal can perturb it (July-2026
+  # 3-parameter calibration; midpoint of the [0.001, 0.05] m2/s prior).
+  velocity_diffusivity: 0.01   # m2/s
 
 # morphodynamics:              # optional GAIA extension (v1 focuses on 2D hydraulics)
 #   enabled: true
@@ -149,21 +153,34 @@ ground_truth:
 calibration:
   # calibration target set by run_Bayes_cal.py: SCALAR VELOCITY (FlowTracker at
   # 0.6 x depth ~ depth-averaged velocity); WATER DEPTH is extracted alongside.
-  calibration_quantities: ["SCALAR VELOCITY"]                # measured columns used for calibration
+  # Combined water-level + velocity calibration (July 2026): WATER DEPTH_DATA
+  # carries the bathymetry-corrected water-level target (WSE_measured - model
+  # bed), SCALAR VELOCITY the profile-averaged FlowTracker speed with a
+  # structural discrepancy error term - see prepare_corrected_targets.py.
+  calibration_quantities: ["WATER DEPTH", "SCALAR VELOCITY"] # measured columns used for calibration
   extraction_quantities: ["WATER DEPTH", "SCALAR VELOCITY"]  # quantities pulled from results
   measurement_error: 0.10      # fraction of the measured value
-  # initial design of experiments: factorial (equidistant grid over the parameter
-  # ranges, bayesvalidrox/chaospy rule "grid") -> 8 full-complexity telemac2d runs,
+  # initial design of experiments: Sobol sequence over the 3D parameter space
+  # (a factorial grid would degenerate to the cube corners at 8-16 samples),
   # then Bayesian Active Learning adds up to (max_runs - init_runs) more.
-  parameter_sampling_method: grid
-  init_runs: 8                 # initial (factorial) design samples
-  max_runs: 15                 # total runs (initial + active-learning iterations)
+  parameter_sampling_method: sobol
+  init_runs: 16                # initial (Sobol) design samples
+  max_runs: 25                 # total runs (initial + active-learning iterations)
   gp_library: gpy
   # Calibrate the CHANNEL roughness only (zone1 = roughness zone 1 in friction.tbl).
   # Bounds from the bed GSD (d50 ~ 0.05 m, d90 ~ 0.15 m): ks in [d50, 3*d90]
   # = [0.05, 0.45] m (van Rijn: ks = 1..3 x d90). The floodplain (zone2) stays at
   # its roughness-table value (0.5 m).
+  # July-2026 3-parameter extension: the ks-only calibration parked an inflated
+  # effective roughness (0.41 m vs measured pool-profile ks ~0.09 m) because the
+  # margin-velocity misfit has no roughness remedy. VELOCITY DIFFUSIVITY governs
+  # the lateral momentum exchange toward the slow near-bank measurement points;
+  # the wall roughness (Strickler, law 3) acts on the same margins.
   parameters:
     - { name: zone1, min: 0.05, max: 0.45, comment: "channel ks [m] (Nikuradse), d50..3*d90" }
+    - { name: "VELOCITY DIFFUSIVITY", min: 0.001, max: 0.05,
+        comment: "ambient eddy viscosity [m2/s]; Elder ~3e-3, transverse mixing ~0.02" }
+    - { name: "ROUGHNESS COEFFICIENT OF BOUNDARIES", min: 15, max: 45,
+        comment: "bank Strickler Kst; riprap/blocks 15-25 .. smooth gravel 45" }
     # - { name: zone2, min: 0.10, max: 1.00, comment: "floodplain ks [m] (Nikuradse)" }
     # - { name: "gaiaCLASSES SHIELDS PARAMETERS 1", min: 0.030, max: 0.060 }
