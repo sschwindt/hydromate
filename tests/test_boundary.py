@@ -9,7 +9,9 @@ outflow), then checks:
 * every non-liquid contour node is a solid wall (``2 2 2``);
 * the default outflow is free / Neumann (``4 4 4``); ``outflow_condition:
   elevation`` switches it to ``5 4 4``;
-* a >10% inflow/outflow node-count imbalance logs a STABILITY RISK warning.
+* an inflow/outflow node-SPACING (resolution) mismatch, or an under-resolved
+  boundary, logs a STABILITY RISK warning (unequal raw counts alone do not);
+* internal losing/gaining lines are distributed across the mesh nodes under them.
 
 Requires the ``hydromate-env`` environment (geopandas). No TELEMAC needed.
 
@@ -167,6 +169,59 @@ def test_node_balance_warning(tmp_path, caplog):
         boundary.classify_nodes(cfg, _rect_mesh(n_left=9, n_right=5))
     assert "STABILITY RISK" in caplog.text, "expected a node-imbalance warning"
     print("NODE-BALANCE WARNING TEST PASSED")
+
+
+def test_internal_sources_distributed(tmp_path):
+    """Internal losing/gaining lines are distributed across the mesh nodes under
+    them (conserving each line's total), and collapse to one midpoint source when
+    no mesh is given."""
+    from types import SimpleNamespace
+
+    import geopandas as gpd
+    import pytest
+    from shapely.geometry import LineString
+
+    from hydromate import boundary
+    from hydromate.config import load_config
+
+    geo = tmp_path / "geo"
+    geo.mkdir(parents=True, exist_ok=True)
+    lose = LineString([(X0, Y0), (X0 + 30.0, Y0)])                # 30 m losing line
+    gain = LineString([(X0, Y0 + 50.0), (X0 + 45.0, Y0 + 50.0)])  # 45 m gaining line
+    gpd.GeoDataFrame(
+        {"Type": ["int-outflow-lose", "int-inflow-gain"], "Target flow": [0.065, 0.065]},
+        geometry=[lose, gain], crs="EPSG:25832",
+    ).to_file(geo / "liquid-boundaries.gpkg", driver="GPKG")
+    cfg_yaml = tmp_path / "cfg.yml"
+    cfg_yaml.write_text(
+        "project:\n  name: t\n  crs_epsg: 25832\n"
+        "telemac:\n  pysource: x\n"
+        "geodata:\n  dem_initial: geo/dem.tif\n  boundary: geo/boundary.shp\n"
+        "boundaries:\n  liquid_boundaries: geo/liquid-boundaries.gpkg\n"
+    )
+    cfg = load_config(cfg_yaml)
+
+    # a mesh with nodes every 0.5 m along both internal lines
+    lose_x = np.arange(0.0, 30.01, 0.5)
+    gain_x = np.arange(0.0, 45.01, 0.5)
+    mx = np.concatenate([X0 + lose_x, X0 + gain_x])
+    my = np.concatenate([np.full(lose_x.size, Y0), np.full(gain_x.size, Y0 + 50.0)])
+    mesh = SimpleNamespace(x=mx, y=my)
+
+    srcs = boundary.load_internal_sources(cfg, mesh)
+    assert len(srcs) > 10, "expected the exchange distributed over many nodes"
+    lose_q = sum(s.discharge for s in srcs if "lose" in s.name)
+    gain_q = sum(s.discharge for s in srcs if "gain" in s.name)
+    assert lose_q == pytest.approx(-0.065)   # withdrawal, conserved
+    assert gain_q == pytest.approx(+0.065)   # injection, conserved
+    node_xy = set(zip(mesh.x.tolist(), mesh.y.tolist()))
+    assert all((s.x, s.y) in node_xy for s in srcs), "every source sits on a mesh node"
+
+    # no mesh -> legacy single midpoint source per line, net exchange zero
+    pts = boundary.load_internal_sources(cfg)
+    assert len(pts) == 2
+    assert sum(s.discharge for s in pts) == pytest.approx(0.0)
+    print("INTERNAL-SOURCE DISTRIBUTION TEST PASSED")
 
 
 if __name__ == "__main__":

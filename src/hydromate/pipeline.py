@@ -125,7 +125,7 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
             prev_comp = art.initial_conditions.name if art.initial_conditions else None
         # internal point sources/sinks for a losing-gaining reach (empty unless the
         # liquid-boundary layer carries internal 'int-*' lines); shared by every .cas
-        sources = boundary.load_internal_sources(cfg)
+        sources = boundary.load_internal_sources(cfg, the_mesh)
         for s in sources:
             log.info("  internal source %s: %+.4f m3/s at (%.1f, %.1f)",
                      s.name, s.discharge, s.x, s.y)

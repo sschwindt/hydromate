@@ -152,7 +152,7 @@ def synthesize_outflow_rating(cfg, discharge, *, side_slope: float = 0.0,
     from rasterio.warp import transform as warp_transform
     from shapely.ops import unary_union
 
-    from hydromate.boundary import _normalise_kind, _type_column
+    from hydromate.boundary import _is_internal, _normalise_kind, _type_column
 
     if manning is None and strickler is None:        # roughness from the config
         law, coef = cfg.friction.boundary_law, cfg.friction.boundary_coefficient
@@ -172,7 +172,11 @@ def synthesize_outflow_rating(cfg, discharge, *, side_slope: float = 0.0,
     if type_col is None:
         raise ValueError(f"{Path(cfg.boundaries.liquid_boundaries).name}: no inflow/"
                          "outflow type column to find the outflow line")
-    outflow = lb[[_normalise_kind(v) == "outflow" for v in lb[type_col]]]
+    # only true outflow boundary lines size the section - internal 'int-*' source/
+    # sink lines (e.g. 'int-outflow-lose') also contain 'out' and must be excluded,
+    # or they inflate the outflow width and corrupt the normal-depth rating.
+    outflow = lb[[(not _is_internal(v)) and _normalise_kind(v) == "outflow"
+                  for v in lb[type_col]]]
     if outflow.empty:
         raise ValueError(f"no 'outflow' line in {Path(cfg.boundaries.liquid_boundaries).name}")
     outline = unary_union(outflow.geometry.values)

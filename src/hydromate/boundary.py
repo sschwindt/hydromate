@@ -45,8 +45,15 @@ INFLOW = (4, 5, 5)
 OUTFLOW_FREE = (4, 4, 4)   # Neumann / free outflow: nothing prescribed
 OUTFLOW_ELEV = (5, 4, 4)   # prescribed downstream water level
 
-# imbalance above this fraction triggers a stability-risk warning
-NODE_BALANCE_TOL = 0.10
+# inflow/outflow node SPACING differing by more than this fraction triggers a
+# stability-risk warning (a resolution mismatch matters; unequal raw counts on
+# boundaries of different physical width do not)
+SPACING_BALANCE_TOL = 0.35
+# a liquid boundary with fewer nodes than this is flagged as under-resolved
+MIN_BOUNDARY_NODES = 4
+# an internal (losing/gaining) line is discretised into point sources ~this far
+# apart (m) along the line, each snapped to the nearest mesh node
+INTERNAL_SOURCE_SPACING = 2.0
 
 
 @dataclass
@@ -64,9 +71,11 @@ class InternalSource:
 
     A 2D depth-averaged model has no subsurface, so hyporheic / underflow exchange
     where the surface flow *loses* water in one place and *gains* it back downstream
-    is represented as TELEMAC point sources: a withdrawal (``discharge < 0``) at the
-    losing line and an injection (``discharge > 0``) at the gaining line, each placed
-    at its line's midpoint (TELEMAC snaps it to the nearest mesh node).
+    is represented as TELEMAC point sources: a withdrawal (``discharge < 0``) on the
+    losing line and an injection (``discharge > 0``) on the gaining line. The line's
+    total exchange is **distributed** across the mesh nodes lying under it (one
+    ``InternalSource`` per node, discharges summing to the line total), so a 30-45 m
+    line acts as a distributed line source rather than a single point.
     """
     name: str
     x: float
@@ -230,11 +239,40 @@ def _boundary_line_details(cfg: Config) -> list[dict] | None:
     return details
 
 
-def load_internal_sources(cfg: Config) -> list["InternalSource"]:
+def _distribute_line_source(geom, mesh: Mesh, total_discharge: float):
+    """Split *total_discharge* across the mesh nodes lying under *geom*.
+
+    The line is sampled every :data:`INTERNAL_SOURCE_SPACING` m and each sample is
+    snapped to the nearest mesh node; each unique node's share is proportional to
+    the number of samples nearest to it (~the length of line it represents), so the
+    shares sum to *total_discharge*. Yields ``(node_index, x, y, discharge)``.
+    """
+    import numpy as np
+    from scipy.spatial import cKDTree
+
+    length = float(geom.length)
+    n = max(2, int(np.ceil(length / INTERNAL_SOURCE_SPACING)) + 1)
+    ss = np.linspace(0.0, length, n)
+    pts = np.array([list(geom.interpolate(float(s)).coords)[0] for s in ss])
+    tree = cKDTree(np.column_stack([np.asarray(mesh.x), np.asarray(mesh.y)]))
+    _, idx = tree.query(pts)
+    nodes, counts = np.unique(idx, return_counts=True)
+    weights = counts / counts.sum()
+    for node, w in zip(nodes, weights):
+        yield (int(node), float(mesh.x[node]), float(mesh.y[node]),
+               total_discharge * float(w))
+
+
+def load_internal_sources(cfg: Config,
+                          mesh: "Mesh | None" = None) -> list["InternalSource"]:
     """Internal losing/gaining lines -> TELEMAC point sources (see
     :class:`InternalSource`). A line whose type tag starts with 'int' becomes a
-    withdrawal (``lose``) or injection (``gain``) of its flow-column discharge,
-    placed at the line midpoint. Empty when the layer has no internal lines.
+    withdrawal (``lose``) or injection (``gain``) of its flow-column discharge.
+    Empty when the layer has no internal lines.
+
+    With a *mesh* the exchange is **distributed** across the nodes under each line
+    (weighted by the length each node represents); without one each line collapses
+    to a single point source at its midpoint (the legacy behaviour).
     """
     import geopandas as gpd
 
@@ -246,7 +284,11 @@ def load_internal_sources(cfg: Config) -> list["InternalSource"]:
         return []
     flow_col = _flow_column(gdf)
     name = Path(cfg.boundaries.liquid_boundaries).name
-    sources: list[InternalSource] = []
+    # node index -> [summed signed discharge, x, y, line name]; accumulating by node
+    # keeps a node shared by repeated samples (or by two lines) as one source that
+    # sums the exchanges, so the total is conserved exactly
+    by_node: dict[int, list] = {}
+    point_sources: list[InternalSource] = []
     for _, row in gdf.iterrows():
         raw = str(row[type_col])
         if not _is_internal(raw):
@@ -263,14 +305,25 @@ def load_internal_sources(cfg: Config) -> list["InternalSource"]:
             raise ValueError(
                 f"internal source line {raw!r} has no numeric {flow_col!r} value."
             )
+        signed = _internal_sign(raw) * magnitude
         geom = row.geometry
-        try:
-            pt = geom.interpolate(0.5, normalized=True)   # midpoint along the line
-        except Exception:                                 # pragma: no cover
-            pt = geom.centroid
-        sources.append(InternalSource(name=raw, x=float(pt.x), y=float(pt.y),
-                                      discharge=_internal_sign(raw) * magnitude))
-    return sources
+        if mesh is None:
+            try:
+                pt = geom.interpolate(0.5, normalized=True)   # midpoint along the line
+            except Exception:                                 # pragma: no cover
+                pt = geom.centroid
+            point_sources.append(InternalSource(name=raw, x=float(pt.x),
+                                                 y=float(pt.y), discharge=signed))
+            continue
+        for node, x, y, q in _distribute_line_source(geom, mesh, signed):
+            if node in by_node:
+                by_node[node][0] += q
+            else:
+                by_node[node] = [q, x, y, raw]
+    if mesh is None:
+        return point_sources
+    return [InternalSource(name=meta[3], x=meta[1], y=meta[2], discharge=meta[0])
+            for _, meta in sorted(by_node.items())]
 
 
 def _match_tolerance(cfg: Config) -> float:
@@ -286,10 +339,31 @@ def _match_tolerance(cfg: Config) -> float:
     return max(cfg.mesh.default_size, cfg.mesh.breakline_size) * scale * 1.5
 
 
-def _warn_node_balance(liquids: list[LiquidBoundary]) -> None:
-    """Log a stability-risk warning when inflow/outflow node counts differ >10%."""
-    n_in = sum(lb.n_nodes for lb in liquids if lb.kind == "inflow")
-    n_out = sum(lb.n_nodes for lb in liquids if lb.kind == "outflow")
+def _contour_length(node_ids: list[int], mesh: Mesh) -> float:
+    """Length along the contour of a run of consecutive boundary node ids."""
+    import numpy as np
+
+    if len(node_ids) < 2:
+        return 0.0
+    xs = np.asarray([mesh.x[i] for i in node_ids], dtype=float)
+    ys = np.asarray([mesh.y[i] for i in node_ids], dtype=float)
+    return float(np.sum(np.hypot(np.diff(xs), np.diff(ys))))
+
+
+def _warn_node_balance(liquids: list[LiquidBoundary], mesh: Mesh,
+                       node_map: dict[int, list[int]]) -> None:
+    """Stability check on liquid-boundary *resolution* (node spacing), not raw counts.
+
+    Comparing total inflow vs total outflow node counts mislabels a legitimately
+    narrower outflow - or an inflow split across several lines - as a risk. What
+    actually matters numerically is that each boundary is adequately resolved and
+    that inflow and outflow share a comparable node **spacing**, so this compares
+    mean node spacing (and flags any under-resolved boundary) instead.
+    """
+    inflow = [lb for lb in liquids if lb.kind == "inflow"]
+    outflow = [lb for lb in liquids if lb.kind == "outflow"]
+    n_in = sum(lb.n_nodes for lb in inflow)
+    n_out = sum(lb.n_nodes for lb in outflow)
     if n_in == 0 or n_out == 0:
         log.warning(
             "STABILITY RISK: liquid boundaries have %d inflow and %d outflow "
@@ -298,17 +372,40 @@ def _warn_node_balance(liquids: list[LiquidBoundary]) -> None:
             n_in, n_out,
         )
         return
-    imbalance = abs(n_in - n_out) / max(n_in, n_out)
-    if imbalance > NODE_BALANCE_TOL:
+
+    def _spacing(group) -> tuple[int, float, float]:
+        nodes = sum(lb.n_nodes for lb in group)
+        length = sum(_contour_length(node_map.get(lb.index, []), mesh) for lb in group)
+        segments = sum(max(lb.n_nodes - 1, 1) for lb in group)
+        return nodes, length, (length / segments if segments else 0.0)
+
+    ni, li, si = _spacing(inflow)
+    no, lo, so = _spacing(outflow)
+
+    thin = [lb for lb in liquids if lb.n_nodes < MIN_BOUNDARY_NODES]
+    if thin:
+        lb = min(thin, key=lambda b: b.n_nodes)
         log.warning(
-            "STABILITY RISK: inflow nodes (%d) and outflow nodes (%d) differ by "
-            "%.0f%% (> %.0f%%). Adjust the mesh resolution near the boundaries or "
-            "the inflow/outflow line lengths so they carry a similar node count.",
-            n_in, n_out, imbalance * 100, NODE_BALANCE_TOL * 100,
+            "STABILITY RISK: %s boundary %d has only %d node(s) (< %d) - too coarse "
+            "to resolve the flux profile. Refine the mesh near it or lengthen the line.",
+            lb.kind, lb.index, lb.n_nodes, MIN_BOUNDARY_NODES,
         )
-    else:
-        log.info("liquid-boundary node balance OK: %d inflow vs %d outflow nodes "
-                 "(%.0f%% difference)", n_in, n_out, imbalance * 100)
+
+    spread = abs(si - so) / max(si, so) if max(si, so) > 0 else 0.0
+    if spread > SPACING_BALANCE_TOL:
+        log.warning(
+            "STABILITY RISK: inflow and outflow are resolved at different node "
+            "spacings (inflow ~%.2f m over %d nodes, outflow ~%.2f m over %d nodes; "
+            "%.0f%% apart, > %.0f%%). Refine the coarser side so both carry a "
+            "comparable node density.",
+            si, ni, so, no, spread * 100, SPACING_BALANCE_TOL * 100,
+        )
+    elif not thin:
+        log.info(
+            "liquid-boundary resolution OK: inflow %d nodes over %.1f m (~%.2f m "
+            "spacing) vs outflow %d nodes over %.1f m (~%.2f m spacing)",
+            ni, li, si, no, lo, so,
+        )
 
 
 def _front2_runs(loop_nodes, loop_kinds: list[str], x, y) -> list[tuple[str, list[int]]]:
@@ -465,7 +562,7 @@ def classify_nodes(cfg: Config, mesh: Mesh) -> tuple[list[str], list[LiquidBound
             f"the matching tolerance (~{tol:.1f} m) suits the mesh resolution."
         )
     _assign_line_discharges(cfg, mesh, liquids, node_map)
-    _warn_node_balance(liquids)
+    _warn_node_balance(liquids, mesh, node_map)
     return kinds, liquids
 
 

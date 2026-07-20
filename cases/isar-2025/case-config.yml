@@ -12,7 +12,7 @@
 # -----------------------------------------------------------------------------
 
 project:
-  name: isar-marm-2025                    # case name; used in titles and file headers
+  name: isar-mar-2025                    # case name; used in titles and file headers
   crs_epsg: 25832              # [REQUIRED] project CRS, metric. 25832 = ETRS89/UTM32N
   sim_dir: hydromate-case
   preprocessing_dir: hydromate-case/preprocessing
@@ -68,7 +68,13 @@ initialization:
   # run starts from a wet channel instead of marching the wetting front from the
   # inflow (the dry-start march took ~17 h of wall time on this 680k-element mesh;
   # comment this out to return to the dry start).
-  prewet_depth: 1.0         # ALTERNATIVE hotstart: wet the whole channel zone (needs geodata.mesh_zones)
+  # SEED DEPTH MUST BE NEAR THE STEADY NORMAL DEPTH. At Q=2.4 m3/s the outflow
+  # rating (rating-curve.csv, 9.5 m-wide outflow) gives a normal depth of ~0.27 m,
+  # so seed just above it. A deep seed (e.g. 1.0 m, right for a ~1 m-deep reach like
+  # KB15) dumps several times too much water into this shallow, low-flow reach; the
+  # excess then drains far too slowly and the boundary fluxes never balance - the run
+  # cannot reach steady state.
+  prewet_depth: 0.30        # ~normal depth at Q=2.4 m3/s; wets the channel zone (needs geodata.mesh_zones)
 
 mesh:
   # Anisotropic, flow-aligned strategy (used when geodata.mesh_zones +
@@ -98,9 +104,10 @@ hydrodynamics:
   # With variable_timestep on, time_step is only the conservative CFL START step; the
   # run marches to steady state for `duration` seconds while TELEMAC holds the Courant.
   time_step: 0.25              # conservative CFL start step [s]
-  # 1500 s suffices for the PRE-WETTED hotstart: the monitored run balanced its
-  # boundary fluxes to <1% after ~430 s of simulated time (3x margin here); the
-  # dry-start wetting march needed 5000 s.
+  # With the seed at ~normal depth (initialization.prewet_depth ~0.30 m) the flow
+  # starts near equilibrium and only needs to settle, so 1500 s of simulated time is
+  # ample; a deep over-wet seed instead needs many thousands of seconds just to drain
+  # (and still may not balance). The dry-start wetting march needs ~5000 s.
   duration: 1500.0             # simulated time [s] for the steady march to convergence
   n_time_steps: 15000          # only bounds a FIXED-step run (variable_timestep: false)
   graphic_printout_period: 500

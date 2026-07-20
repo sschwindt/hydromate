@@ -653,7 +653,15 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         xs = ";".join(f"{s.x:.3f}" for s in sources)
         ys = ";".join(f"{s.y:.3f}" for s in sources)
         qs = ";".join(f"{s.discharge:g}" for s in sources)
-        tags = ", ".join(f"{s.name} {s.discharge:+g}" for s in sources)
+        # each line is distributed over many nodes; summarise the comment per line
+        # (name -> total m3/s over N nodes) rather than listing every point source
+        from collections import OrderedDict
+        totals: "OrderedDict[str, list]" = OrderedDict()
+        for s in sources:
+            entry = totals.setdefault(s.name, [0.0, 0])
+            entry[0] += s.discharge
+            entry[1] += 1
+        tags = ", ".join(f"{name} {q:+g} over {k} node(s)" for name, (q, k) in totals.items())
         lines += [
             "/",
             f"/ INTERNAL SOURCES / SINKS (losing-gaining reach: {tags} m3/s)",
