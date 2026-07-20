@@ -442,10 +442,10 @@ def _readme_ladder_sentence(levels) -> str:
                          + ("a coarser mesh" if n_coarser == 1 else "coarser meshes"))
         if n_finer:
             parts.append(f"{n_finer} performed on successively refined meshes")
-        return (f"It summarizes the results of the baseline simulation and compares "
+        return (f"which lists the results of the baseline simulation and compares "
                 f"them with {len(labels) - 1} additional simulations: "
                 + " and ".join(parts) + ".")
-    return (f"It summarizes and compares {len(labels)} simulations performed on "
+    return (f"which lists and compares {len(labels)} simulations performed on "
             "successively refined meshes.")
 
 
@@ -456,11 +456,10 @@ def write_readme(base_dir, *, report: ConvergenceReport | None = None,
                  extra_entries: dict[str, str] | None = None) -> Path:
     """Write a ``README.md`` documenting the study folder for external readers.
 
-    Explains (per reviewer request) that ``mesh-convergence.xlsx`` is the central
-    summary file and what it contains, the governing equations and quantities
-    examined, the purpose of every file in the folder, and how to bundle the raw
-    TELEMAC-2D simulation data into a tarball for publication. The text is
-    deliberately software-agnostic (it names TELEMAC-2D, not the build tooling).
+    Explains that ``mesh-convergence.xlsx`` is the central summary file and what it
+    contains, the governing equations and quantities examined, and the purpose of
+    every file in each per-level model folder. The text is deliberately
+    software-agnostic (it names TELEMAC-2D, not the build tooling).
 
     Normally called with the finished *report* at the end of a study; with
     ``report=None`` the per-level folders are scanned instead (``level.json``),
@@ -492,21 +491,22 @@ def write_readme(base_dir, *, report: ConvergenceReport | None = None,
                 else "with the turbulence closure held fixed across all meshes")
 
     # one logical line per paragraph/bullet - no hard wrapping (readers soft-wrap)
-    title = "# Mesh convergence study" + (f" (case '{case}')" if case else "")
+    title = ("# Mesh convergence study"
+             + (f" (Telemac case name: '{case}')" if case else ""))
     lines = [
         title,
         "",
         "This folder documents a grid-independence (mesh convergence) study for a "
-        "two-dimensional river flow model. The same steady-flow simulation was "
-        "repeated with the simulation software TELEMAC-2D on a ladder of "
-        "computational meshes of increasing resolution, to quantify the spatial "
-        "discretization error and to identify the coarsest mesh that yields "
-        "grid-independent results.",
+        "TELEMAC-2D model simulating fluvial hydraulics in two-dimensions based on "
+        "the shallow-water approximation. The same steady-flow simulation was "
+        "repeated on a series of computational meshes with increasing resolution to "
+        "quantify the spatial discretization error and identify the coarsest mesh "
+        "yielding grid-independent results.",
         "",
-        "## Central summary file: mesh-convergence.xlsx",
+        "## Summary: mesh-convergence.xlsx",
         "",
-        "The outcome of the whole study is summarized in **`mesh-convergence.xlsx`** "
-        "(start there). " + _readme_ladder_sentence(levels)
+        "The outcome of the mesh-convergence study is summarized in "
+        "**`mesh-convergence.xlsx`** (start there), " + _readme_ladder_sentence(levels)
         + " For every mesh, the spreadsheet lists:",
         "",
         "- mesh metrics: representative cell size [m], number of elements and nodes, "
@@ -548,7 +548,7 @@ def write_readme(base_dir, *, report: ConvergenceReport | None = None,
         "- the relative change of each quantity between successive meshes (L2 norm "
         "over the probe points, normalized by the finer mesh);",
         "- the observed order of convergence p from the finest three meshes;",
-        "- the Grid Convergence Index (GCI) of the finest grid triplet with a safety "
+        "- the GCI of the finest grid triplet with a safety "
         f"factor of {GCI_SAFETY}, accepted only when an asymptotic-range check "
         "passes (otherwise the relative change is the fallback criterion);",
         f"- tolerance: {tolerance * 100:g}% on the finest mesh.",
@@ -577,58 +577,28 @@ def write_readme(base_dir, *, report: ConvergenceReport | None = None,
         "",
         "- `level.json`: machine-readable metadata of the level (cell sizes, element "
         "and node counts, shortest edge, time step, runtime, creation date).",
-        "- `model/`: the TELEMAC-2D input files and results of the run:",
-        "  - `geometry.slf`: the computational mesh with the bed elevation "
+        "- `geometry.slf`: the computational mesh with the bed elevation "
         "interpolated from the digital elevation model (double-precision SERAFIN "
         "format);",
-        "  - `boundaries.cli`: the boundary-conditions file (wall, inflow, and "
+        "- `boundaries.cli`: the boundary-conditions file (wall, inflow, and "
         "outflow codes per boundary node);",
-        "  - `friction.tbl`: the zonal bed-friction table;",
-        "  - `steady2d.cas`: the TELEMAC-2D steering file with all numerical "
+        "- `friction.tbl`: the zonal bed-friction table;",
+        "- `steady2d.cas`: the TELEMAC-2D steering file with all numerical "
         "settings of the run;",
-        "  - `initial-conditions.slf`: the initial state the run starts from "
+        "- `initial-conditions.slf`: the initial state the run starts from "
         "(pre-wetted channel);",
-        "  - `liquid-boundaries.json`: metadata on the open (inflow/outflow) "
+        "- `liquid-boundaries.json`: metadata on the open (inflow/outflow) "
         "boundaries;",
-        "  - `r2d.slf`: the simulation results; the last time frame is the steady "
+        "- `r2d.slf`: the simulation results; the last time frame is the steady "
         "state evaluated by the study;",
-        "  - `steady2d.cas_<timestamp>*.sortie`: the solver listing (console log) "
+        "- `steady2d.cas_<timestamp>*.sortie`: the solver listing (console log) "
         "of the run, including the boundary-flux printouts.",
-        "- `preprocessing/`: the input digital elevation model clipped to the model "
-        "domain (the source of the mesh node elevations).",
-        "- `postprocessing/`, `calibration/`: placeholder folders of the automated "
-        "workflow; they may be empty.",
         "",
     ]
     if extra_entries:
         lines += ["In addition, this folder contains:", ""]
         lines += [f"- `{name}`: {desc}" for name, desc in extra_entries.items()]
         lines.append("")
-    lines += [
-        "## Log files",
-        "",
-        "The `*.log` files are the chronological record of the automated study: "
-        "mesh generation and mesh-quality statistics per level, the TELEMAC-2D "
-        "runs with their timings, and the convergence evaluation with its "
-        "warnings. They are useful to trace how a specific mesh or run was "
-        "produced; for the results themselves, refer to `mesh-convergence.xlsx`.",
-        "",
-        "## Data packaging",
-        "",
-        "Only `README.md` and `mesh-convergence.xlsx` are needed to understand the "
-        "outcome of the study; all remaining files are the raw simulation data "
-        "generated with TELEMAC-2D. When the dataset is published or shared, "
-        "bundle the raw data into a single archive so that the summary stays "
-        "visible at the top level, for example:",
-        "",
-        "    tar czf mesh-convergence-data.tar.gz "
-        "--exclude=mesh-convergence-data.tar.gz --exclude=README.md "
-        "--exclude=mesh-convergence.xlsx .",
-        "",
-        "The archive then contains all TELEMAC-2D input files, results, and logs "
-        "of the individual runs described above.",
-        "",
-    ]
     path = base_dir / "README.md"
     path.write_text("\n".join(lines))
     return path
@@ -867,6 +837,8 @@ def make_telemac_simulator(cfg: Config, discharge: float, *, base_dir: Path,
     the same mesh (the bug behind the invalid first ering study).
     """
     import copy
+    import shutil
+    import tempfile
     import time
 
     from hydromate import mesh as mesh_mod
@@ -898,16 +870,26 @@ def make_telemac_simulator(cfg: Config, discharge: float, *, base_dir: Path,
         lc.hydrodynamics.desired_courant = 0.6
         if n_processors:
             lc.telemac.n_processors = n_processors
+        # the level folder IS the TELEMAC case: geometry/cli/tbl/cas + results and
+        # level.json land directly in it, with no redundant model/ subfolder. The
+        # build's preprocessing (a per-level DEM clip, identical across the ladder)
+        # and any ground-truth/calibration products are irrelevant to a grid-
+        # independence run, so they go to a throwaway scratch dir that is discarded -
+        # keeping every level folder a clean, self-contained model.
         d = base_dir / _slug(label)
-        lc.preprocessing_dir = d / "preprocessing"
-        lc.model_dir = d / "model"
-        lc.postprocessing_dir = d / "postprocessing"
-        lc.calibration_dir = d / "calibration"
+        scratch = Path(tempfile.mkdtemp(prefix=f"hydromate-mc-{_slug(label)}-"))
+        lc.preprocessing_dir = scratch
+        lc.model_dir = d
+        lc.postprocessing_dir = scratch
+        lc.calibration_dir = scratch
         lc.ensure_dirs()
 
         t0 = time.time()
-        # reuse the parent run's one compound logfile (no per-level logfiles)
-        pipeline.run(lc, validate_env=False, dry_run=True, log_to_file=False)
+        try:
+            # reuse the parent run's one compound logfile (no per-level logfiles)
+            pipeline.run(lc, validate_env=False, dry_run=True, log_to_file=False)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
         runtime_s = time.time() - t0
 
         eff = mesh_mod.nominal_channel_size(lc)   # effective (gpkg-aware) size
@@ -1003,7 +985,7 @@ def _scan_completed(cfg: Config, base_dir: Path, levels) -> dict[str, Path]:
     for label, ch, fp in levels:
         d = Path(base_dir) / _slug(label)
         jf = d / "level.json"
-        if not (jf.exists() and (d / "model" / results_slf).exists()):
+        if not (jf.exists() and (d / results_slf).exists()):
             continue
         try:
             meta = json.loads(jf.read_text())
@@ -1027,7 +1009,7 @@ def _load_completed_level(cfg: Config, level_dir: Path, label: str, probes,
     result SELAFIN; runtime and sizes come from ``level.json``."""
     try:
         meta = json.loads((Path(level_dir) / "level.json").read_text())
-        res = Path(level_dir) / "model" / getattr(cfg, "results_slf", "r2d.slf")
+        res = Path(level_dir) / getattr(cfg, "results_slf", "r2d.slf")
         data = selafin.read_slf(res, frame=-1)
         min_edge, mean_depth, mean_vel = _geom_stats(data, probes)
         dt = _cfl_dt(min_edge, mean_depth, mean_vel)

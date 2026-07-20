@@ -324,13 +324,13 @@ def probes_lin():
 
 def _write_fake_result(level_dir, depth_value):
     """A real (tiny) result SELAFIN + level.json for the resume scan."""
-    model = level_dir / "model"
-    model.mkdir(parents=True)
+    # the level folder is a flat, self-contained model (no model/ subfolder)
+    level_dir.mkdir(parents=True, exist_ok=True)
     x = np.array([0.0, 2.0, 2.0, 0.0])
     y = np.array([0.0, 0.0, 2.0, 2.0])
     ikle = np.array([[1, 2, 3], [1, 3, 4]])
     ipobo = np.array([1, 2, 3, 4])
-    selafin.write_initial_state(model / "r2d.slf", x, y, ikle, ipobo,
+    selafin.write_initial_state(level_dir / "r2d.slf", x, y, ikle, ipobo,
                                 depth=np.full(4, depth_value),
                                 velocity_u=np.full(4, 0.8),
                                 velocity_v=np.zeros(4))
@@ -409,7 +409,9 @@ def test_write_readme_from_report(tmp_path):
     assert "water depth h [m]" in text and "sampled at 6 fixed probe points" in text
     assert "Celik" in text and "Grid" in text and "tolerance: 5%" in text
     assert "| baseline | 1.000 |" in text and "| finer x1.69 |" in text
-    assert "geometry.slf" in text and "r2d.slf" in text and "tar czf" in text
+    # each level folder is a flat, self-contained model (no redundant model/ subdir)
+    assert "geometry.slf" in text and "r2d.slf" in text
+    assert "- `model/`" not in text and "  - `geometry.slf`" not in text
     # the README is deliberately tool-agnostic
     assert "hydromate" not in text.lower()
 
@@ -429,7 +431,8 @@ def test_write_readme_scan_mode(tmp_path):
         turbulence="Spalart-Allmaras",
         extra_entries={"old/": "a superseded earlier study run"})
     text = out.read_text()
-    assert "case 'ering'" in text and "sampled at 40 fixed probe points" in text
+    assert "Telemac case name: 'ering'" in text \
+        and "sampled at 40 fixed probe points" in text
     assert ("compares them with 2 additional simulations: 1 performed on a "
             "coarser mesh and 1 performed on successively refined meshes") in text
     # rows come out coarse -> fine
