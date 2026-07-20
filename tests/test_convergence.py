@@ -266,6 +266,34 @@ def test_extension_flow(tmp_path):
     assert len(rep2.levels) == 3
 
 
+def test_default_ask_timeout_assumes_yes(monkeypatch):
+    """An unanswered interactive [y/N] prompt assumes 'yes' after the timeout (so an
+    unattended study keeps refining); explicit replies are still honoured."""
+    import io
+    import select
+
+    from hydromate import convergence
+
+    class _TTY(io.StringIO):
+        def isatty(self):
+            return True
+
+    # (a) nothing ready before the timeout -> 'yes', even though the default is 'no'
+    monkeypatch.setattr(select, "select", lambda r, w, x, t: ([], [], []))
+    monkeypatch.setattr("sys.stdin", _TTY(""))
+    assert convergence._default_ask("refine?", default=False, timeout=0.01) is True
+
+    # (b)-(d) input ready before the timeout: explicit answers win, Enter -> default
+    monkeypatch.setattr(select, "select", lambda r, w, x, t: (list(r), [], []))
+    monkeypatch.setattr("sys.stdin", _TTY("n\n"))
+    assert convergence._default_ask("refine?", default=False) is False
+    monkeypatch.setattr("sys.stdin", _TTY("y\n"))
+    assert convergence._default_ask("refine?", default=False) is True
+    monkeypatch.setattr("sys.stdin", _TTY("\n"))
+    assert convergence._default_ask("refine?", default=False) is False
+    print("PROMPT-TIMEOUT TEST PASSED")
+
+
 def test_auto_extend_refines_until_converged(tmp_path):
     # QoI is constant (1.0) once the cell size drops to <= 1.0, so the first
     # refinement below the baseline drives the successive relative change to 0.

@@ -55,6 +55,8 @@ THEORETICAL_ORDER = 2.0  # TELEMAC's FE scheme is formally <= 2nd order; the
 #                          noise-driven p (e.g. 7) cannot fake a tiny GCI
 ASYMPTOTIC_BAND = (0.8, 1.25)  # GCI ratio band within which the triplet is taken
 #                                to be in the asymptotic range (GCI trustworthy)
+PROMPT_TIMEOUT_S = 60.0  # unanswered interactive [y/N] prompt -> assume 'yes' after
+#                          this, so an unattended study keeps refining (never stalls)
 
 
 # --------------------------------------------------------------------------- #
@@ -1067,9 +1069,17 @@ def estimate_next_runtime(levels: list[LevelResult],
     return float(t_f * (dx_f / next_cell_size) ** 3), "theoretical t ~ dx^-3"
 
 
-def _default_ask(prompt: str, *, default: bool = False) -> bool:
-    """Yes/no prompt on stdin; returns *default* in a non-interactive session
-    (so a batch/nohup run never hangs: extension stops, resume reuses)."""
+def _default_ask(prompt: str, *, default: bool = False,
+                 timeout: float = PROMPT_TIMEOUT_S) -> bool:
+    """Yes/no prompt on stdin.
+
+    A non-interactive session returns *default* (so a batch/nohup run never hangs:
+    extension stops, resume reuses). At an interactive terminal the prompt waits up
+    to *timeout* seconds for a reply; if the user does not respond it assumes
+    **'yes'** - an unattended mesh-convergence study then keeps refining to the
+    finest feasible mesh instead of stalling on the prompt.
+    """
+    import select
     import sys
 
     if not sys.stdin.isatty():
@@ -1077,8 +1087,19 @@ def _default_ask(prompt: str, *, default: bool = False) -> bool:
                  prompt.splitlines()[0][:70], "yes" if default else "no")
         return default
     suffix = " [Y/n] " if default else " [y/N] "
+    sys.stdout.write(prompt + suffix)
+    sys.stdout.flush()
     try:
-        reply = input(prompt + suffix).strip().lower()
+        ready, _, _ = select.select([sys.stdin], [], [], timeout)
+    except (OSError, ValueError):                # stdin not selectable -> block
+        ready = [sys.stdin]
+    if not ready:                                # no response within the timeout
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        log.info("no response within %.0f s: assuming 'yes'", timeout)
+        return True
+    try:
+        reply = sys.stdin.readline().strip().lower()
     except EOFError:                             # stdin closed mid-run
         return default
     return default if not reply else reply in ("y", "yes")
@@ -1112,7 +1133,11 @@ def run_mesh_convergence(cfg: Config, *, discharge: float, levels=None,
     each preceded by a runtime estimate and the mesh-validity check of the
     candidate size. Both go through *ask(prompt, default=...) -> bool* (default:
     stdin prompt; non-interactive sessions take the stated default: resume = yes,
-    extend = no). Inject a callable for scripted runs/tests.
+    extend = no). An interactive prompt left **unanswered for
+    ``PROMPT_TIMEOUT_S`` seconds assumes 'yes'**, so an attended-then-abandoned run
+    keeps refining rather than stalling. A candidate whose turbulence/roughness
+    model no longer matches the pinned closure is still run (the caveat is warned,
+    not enforced as a stop). Inject a callable for scripted runs/tests.
 
     **Auto-refinement**: with *auto_extend* set, resume and every extension are
     auto-approved (no prompt, interactive or not), so the study keeps refining one
@@ -1201,9 +1226,24 @@ def run_mesh_convergence(cfg: Config, *, discharge: float, levels=None,
                 estimated=finest.mean_depth is None or finest.mean_velocity is None)
             validity_txt = "\n".join("  " + ln for ln in cand.lines())
             if cand.dx_below_ks or cand.regime_change:
-                validity_txt += ("\n  *** VALIDITY WARNING: refining past this "
-                                 "point strains the roughness/turbulence closures "
-                                 "(see above) ***")
+                reasons = []
+                if cand.regime_change:
+                    reasons.append("the auto-selected turbulence closure "
+                                   f"({cand.turbulence_pick_name}) differs from the "
+                                   "pinned model")
+                if cand.dx_below_ks:
+                    reasons.append("the cell size falls below the roughness height ks")
+                why = "; ".join(reasons)
+                validity_txt += ("\n  *** VALIDITY WARNING: this refinement may not "
+                                 f"match the turbulence/roughness model compatibility "
+                                 f"({why}); the refinement is run anyway, treat its "
+                                 "results with that caveat ***")
+                # log it too, so the caveat is recorded even when auto-approved or
+                # run non-interactively (no prompt shown) - the finest still runs
+                log.warning(
+                    "mesh convergence: refinement '%s' (channel %.3f m) may not match "
+                    "the turbulence/roughness model compatibility at this resolution "
+                    "(%s); running it anyway.", label, ch, why)
         except Exception as exc:
             log.debug("candidate validity check skipped: %s", exc)
         worst = max((report.gci_fine.get(q) if report.verdict_basis == "gci"
