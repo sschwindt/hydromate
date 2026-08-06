@@ -283,13 +283,25 @@ def _build_report(levels, quantities, tolerance, probes, case="") \
 
 def make_telemac3d_simulator(cfg: Config, *, results_2d: Path, base_dir: Path,
                              runtime=None, n_processors: int | None = None,
-                             total_time_factor: float = 4.0):
+                             total_time_factor: float = 4.0,
+                             hotstart: str = "constant_depth",
+                             n_time_steps: int | None = None,
+                             target_time: float | None = None,
+                             min_depth: float | None = None):
     """Build a ``simulate(n_levels, probes, quantities) -> VerticalLevel``.
 
     Each layer count runs in its own ``base_dir/L<n>/`` folder (the fixed geometry
     and boundary files are symlinked in, so the horizontal mesh is *not* rebuilt),
     launches ``telemac3d.py`` once and samples the depth-averaged QoI from the run's
-    2D result."""
+    2D result.
+
+    *target_time* (s), when set, holds the **simulated physical time constant** across
+    all layer counts: each level's ``NUMBER OF TIME STEPS`` is scaled to
+    ``round(target_time / dt_level)`` (``dt`` shrinks with the layer count for a fixed
+    Courant, so a finer grid takes proportionally more steps). This removes the
+    fixed-step-count confound where finer levels reach a much *earlier* transient state
+    (and so appear "not converged" for reasons of unequal spin-up, not resolution). It
+    overrides *n_time_steps*."""
     import copy
     import time
 
@@ -299,23 +311,53 @@ def make_telemac3d_simulator(cfg: Config, *, results_2d: Path, base_dir: Path,
     rt = runtime or TelemacRuntime(cfg.telemac)
     model = Path(cfg.model_dir)
     base_dir = Path(base_dir)
+    # the built 2D steering carries the PRESCRIBED FLOWRATES/ELEVATIONS/VELOCITY
+    # PROFILES that build_3d_cas copies into each 3D run. It lives in the ORIGINAL
+    # model dir; since each level runs in its own L<n>/ subdir (lc.model_dir = d),
+    # build_3d_cas's default (lc.model_dir / cas_file) would miss it and silently drop
+    # the prescribed inflow discharge - leaving the inflow unforced. Pin it explicitly.
+    cas_2d_src = model / cfg.cas_file
 
     def simulate(n_levels, probes, quantities):
         d = base_dir / f"L{n_levels}"
         d.mkdir(parents=True, exist_ok=True)
-        # the 3D case reads the same horizontal mesh + boundary file as the 2D case
-        for fname in (cfg.geometry_slf, cfg.boundary_cli):
+        # the 3D case reads the same horizontal mesh + boundary file as the 2D case;
+        # a user_fortran/ dir (e.g. the KB15 Spalart-Allmaras source-term fix) is
+        # symlinked in too so FORTRAN FILE resolves and the patch compiles per run
+        links = [cfg.geometry_slf, cfg.boundary_cli]
+        if (model / "user_fortran").is_dir():
+            links.append("user_fortran")
+        # the continuation hotstart reads FILE FOR 2D CONTINUATION (r2d.slf) from
+        # the run dir, so it must be linked in too
+        if hotstart == "continuation" and Path(results_2d).name == cfg.results_slf:
+            links.append(cfg.results_slf)
+        for fname in links:
             src, dst = model / fname, d / fname
             if src.exists() and not dst.exists():
                 dst.symlink_to(src)
         lc = copy.deepcopy(cfg)
         lc.model_dir = d
-        # robust uniform-depth seed so every per-layer run reaches steady state (the
-        # v9 2D-continuation hotstart can abort on the prescribed-Q inflow); the seed
-        # only affects the transient, not the converged depth-averaged QoI compared here
-        setup = threed.build_3d_cas(lc, results_2d=results_2d, n_levels=n_levels,
+        # hotstart: "constant_depth" (default) is a robust uniform seed so every
+        # per-layer run reaches steady state; "continuation" lifts the equilibrium 2D
+        # field for a far shorter spin-up (paired with an explicit n_time_steps cap).
+        # The seed only affects the transient, not the converged depth-averaged QoI.
+        steps = n_time_steps
+        if target_time is not None:
+            # dt is sized from the Courant target + cell sizes, independent of the step
+            # count, so build once to read it, then scale steps to hold time constant.
+            probe = threed.build_3d_cas(lc, results_2d=results_2d, cas_2d=cas_2d_src,
+                                        n_levels=n_levels,
+                                        total_time_factor=total_time_factor,
+                                        hotstart=hotstart, n_time_steps=n_time_steps,
+                                        min_depth=min_depth)
+            steps = max(1, round(float(target_time) / probe.time_step))
+            log.info("  L%d: dt~%.4f s -> %d steps to reach %.0f s simulated time",
+                     n_levels, probe.time_step, steps, float(target_time))
+        setup = threed.build_3d_cas(lc, results_2d=results_2d, cas_2d=cas_2d_src,
+                                    n_levels=n_levels,
                                     total_time_factor=total_time_factor,
-                                    hotstart="constant_depth")
+                                    hotstart=hotstart, n_time_steps=steps,
+                                    min_depth=min_depth)
         t0 = time.time()
         # stream the telemac3d listing live with the simulated-time progress bar
         # (same look as initial_run.py); 3D has no DURATION keyword, so the bar's
@@ -346,13 +388,21 @@ def run_vertical_convergence(cfg: Config, *, results_2d: str | Path | None = Non
                              tolerance: float = 0.02, simulate=None,
                              base_dir: Path | None = None, runtime=None,
                              n_processors: int | None = None,
-                             total_time_factor: float = 4.0
+                             total_time_factor: float = 4.0,
+                             hotstart: str = "constant_depth",
+                             n_time_steps: int | None = None,
+                             target_time: float | None = None,
+                             min_depth: float | None = None
                              ) -> VerticalConvergenceReport:
     """Run the vertical-layer convergence study and return the report.
 
     Needs the converged 2D result (``initial_run`` output) for the hotstart, the
     horizontal mesh and the probe points. *counts* overrides the auto-derived layer
-    ladder; *simulate* overrides the TELEMAC runner (used in tests)."""
+    ladder; *simulate* overrides the TELEMAC runner (used in tests).
+
+    *target_time* (s) holds the simulated physical time constant across layer counts
+    (steps scaled per level's ``dt``), removing the fixed-step-count spin-up confound;
+    it overrides *n_time_steps*."""
     model = Path(cfg.model_dir)
     results_2d = Path(results_2d) if results_2d else model / cfg.results_slf
     missing = (
@@ -373,7 +423,9 @@ def run_vertical_convergence(cfg: Config, *, results_2d: str | Path | None = Non
             base_dir = cfg.postprocessing_path("vertical-convergence")
         simulate = make_telemac3d_simulator(
             cfg, results_2d=results_2d, base_dir=base_dir, runtime=runtime,
-            n_processors=n_processors, total_time_factor=total_time_factor)
+            n_processors=n_processors, total_time_factor=total_time_factor,
+            hotstart=hotstart, n_time_steps=n_time_steps, target_time=target_time,
+            min_depth=min_depth)
 
     results: list[VerticalLevel] = []
     for n in counts:

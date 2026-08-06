@@ -34,10 +34,28 @@ CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)
 
 CONV_TOLERANCE = 0.02     # convergence tolerance on the QoI (2%)
-# explicit vertical-layer counts to test (few -> many); None = auto ladder from the
-# count add3d.py infers (roughly half / baseline / double / triple the intervals)
-LAYER_COUNTS = None       # e.g. (3, 5, 9, 13)
-TOTAL_TIME_FACTOR = 4.0   # simulated time per run = this many reach flow-through times
+# explicit vertical-layer counts to test (few -> many)
+LAYER_COUNTS = (4, 7, 10, 14)
+TOTAL_TIME_FACTOR = 4.0   # (ignored when TARGET_TIME is set)
+# KB15 3D runs use the continuation hotstart (fast spin-up from the equilibrium 2D
+# field; the Spalart-Allmaras source-term fix in simulation/user_fortran/ is compiled
+# in automatically) with a firm depth floor - the full cold-start / reach-flow-through
+# study would be infeasible at ~0.3 steps/s.
+HOTSTART = "continuation"
+# Hold the SIMULATED PHYSICAL TIME constant across layer counts (not the step count):
+# a finer grid has a smaller CFL dt, so it needs proportionally more steps to reach the
+# same time. A fixed step cap instead froze finer levels at a much earlier transient
+# (L4 saw 104 s but L14 only 25 s), which masqueraded as vertical non-convergence.
+# Each level runs round(TARGET_TIME / dt_level) steps.
+TARGET_TIME = 2500.0      # s of simulated time every level must reach. Validated on L4:
+                          # with the prescribed inflow (47.3 m3/s) forced, the outflow
+                          # relaxes from the over-full continuation state (~65) down to
+                          # 47.3, reaching <0.5% mass imbalance by ~1400 s and fully
+                          # settled (<0.2%) by ~2100 s. This drain-down is a free-surface
+                          # relaxation set by the horizontal mesh, so T* is ~independent
+                          # of the layer count -> 2500 s converges every level (with margin).
+N_TIME_STEPS = None       # (superseded by TARGET_TIME)
+MIN_DEPTH = 0.10          # m; firmer floor for continuation stability on dry floodplain
 
 
 def main() -> None:
@@ -57,6 +75,8 @@ def main() -> None:
         report = run_vertical_convergence(
             cfg, counts=LAYER_COUNTS, tolerance=CONV_TOLERANCE, base_dir=vc_dir,
             n_processors=cfg.telemac.n_processors, total_time_factor=TOTAL_TIME_FACTOR,
+            hotstart=HOTSTART, n_time_steps=N_TIME_STEPS, target_time=TARGET_TIME,
+            min_depth=MIN_DEPTH,
         )
 
     print(report.format())
