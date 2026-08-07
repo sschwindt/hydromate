@@ -1,0 +1,176 @@
+# =============================================================================
+# hydromate case configuration - ISar river (Bavaria), 2025
+# =============================================================================
+# All relative paths resolve against THIS file's directory. The co-development
+# dataset lives under user-sources/ (kept out of version control).
+# Build with:
+#   hydromate cases/isar-2025/case-config.yml --check    # validate first
+#   hydromate cases/isar-2025/case-config.yml            # build the case
+#
+# Sections: project / telemac / geodata / boundaries / initialization / mesh /
+#           friction / hydrodynamics / morphodynamics / ground_truth / calibration
+# -----------------------------------------------------------------------------
+
+project:
+  name: isar-mar-2025                    # case name; used in titles and file headers
+  crs_epsg: 25832              # [REQUIRED] project CRS, metric. 25832 = ETRS89/UTM32N
+  sim_dir: hydromate-case
+  preprocessing_dir: hydromate-case/preprocessing
+  model_dir: hydromate-case/simulation
+  postprocessing_dir: hydromate-case/postprocessing
+  calibration_dir: hydromate-case/calibration-validation
+
+telemac:
+  # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported).
+  pysource: /home/schwindt/opt/telemac-v911/telemac-mascaret/configs/pysource.mint22.sh
+  solver: telemac2d            # telemac2d | telemac3d
+  n_processors: 8              # = physical cores (OpenMPI slots; 16 CPUs are hyperthreads)
+
+geodata:
+  # Pure geodata files (boundary CONDITIONS are in `boundaries`, ground truth in
+  # `ground_truth`). Paths resolve relative to THIS file; data under user-sources/.
+  # ---- required -----------------------------------------------------------
+  dem_initial: user-sources/geodata/merged-DEM-bathy-corr.tif  # [REQUIRED] baseline terrain (GeoTIFF)
+  boundary: user-sources/geodata/roi.gpkg         # [REQUIRED] ROI / max wetted extent polygon
+  # ---- optional -----------------------------------------------------------
+  # dem_target: user-sources/geodata/DEM-2025-20cm.tif   # 2nd DEM, enables morphodynamic target
+  # mesh zones + channel centerline drive the anisotropic, flow-aligned meshing.
+  mesh_zones: user-sources/geodata/mesh-zones.gpkg
+  channel_centerline: user-sources/geodata/channel-centerline.gpkg
+  # roughness zones (integer 'Zone ID') + a CSV mapping id -> ks drive the friction
+  # zonation (zone 1 = channel ks ~0.2 m, zone 2 = floodplain ks ~0.5 m).
+  roughness_zones: user-sources/geodata/roughness-zones.gpkg
+  roughness_table: user-sources/geodata/roughness-table.csv
+  # dem_of_difference: path/to/dod.tif         # precomputed bed-change raster (else from DEMs)
+
+boundaries:
+  # liquid boundaries: a LINE layer whose 'Type (inflow/outflow)' field tags each
+  # line; the lines MUST coincide with the OUTER BOUNDS of the mesh zones. Inflow
+  # nodes get 4 5 5, outflow nodes 5 4 4 (prescribed elevation) or 4 4 4 (free),
+  # every other outer node a solid wall 2 2 2.
+  liquid_boundaries: user-sources/geodata/liquid-boundaries.gpkg  # [REQUIRED for a build]
+  # inflow: user-sources/hydraulics/inflow.csv   # OPTIONAL discharge series (for a later unsteady case)
+  # THIS case's steady boundary conditions, read straight from here for steady2d.cas:
+  prescribed_flowrate: 2.4    # inflow Q [m3/s] for steady2d.cas
+  # outflow (downstream) boundary type: stage_discharge (WSE from the rating curve
+  # at the simulated Q) | elevation (fixed prescribed_elevation) | free (Neumann).
+  outflow_condition: stage_discharge
+  # prescribed_elevation: 0.0  # m a.s.l.; only for outflow_condition: elevation
+  # outlet rating curve (Q,WSE): one Q-h pair at the steady discharge suffices.
+  stage_discharge: user-sources/geodata/rating-curve.csv
+
+initialization:
+  # dry start (default): the domain starts dry except a thin plug at the inflow line
+  # (a fully dry bed makes DEBIMP abort at the prescribed-Q inflow). Tune if needed:
+  # dry_start_depth: 0.5    # inflow-plug seed depth [m]
+  # dry_start_extent: 7.5   # plug buffer around the inflow line [m] (default ~5 cells)
+  # Pre-wetted hotstart for the HydroBayesCal calibration fleet: every calibration
+  # run starts from a wet channel instead of marching the wetting front from the
+  # inflow (the dry-start march took ~17 h of wall time on this 680k-element mesh;
+  # comment this out to return to the dry start).
+  # SEED DEPTH MUST BE NEAR THE STEADY NORMAL DEPTH. At Q=2.4 m3/s the outflow
+  # rating (rating-curve.csv, 9.5 m-wide outflow) gives a normal depth of ~0.27 m,
+  # so seed just above it. A deep seed (e.g. 1.0 m, right for a ~1 m-deep reach like
+  # KB15) dumps several times too much water into this shallow, low-flow reach; the
+  # excess then drains far too slowly and the boundary fluxes never balance - the run
+  # cannot reach steady state.
+  prewet_depth: 0.30        # ~normal depth at Q=2.4 m3/s; wets the channel zone (needs geodata.mesh_zones)
+
+mesh:
+  # Anisotropic, flow-aligned strategy (used when geodata.mesh_zones +
+  # geodata.channel_centerline are set). Each mesh-zone polygon is sized by its own
+  # 'Max Edge Length (m)' field; the *_size values below are FALLBACKS.
+  channel_size: 0.3            # fallback channel edge length (m)
+  floodplain_size: 0.75         # fallback floodplain edge length (m); default outside all zones
+  refinement_size: 0.3         # fallback 'refinement' zone edge length (m)
+  # zone_size_field: "Max Edge Length (m)"  # per-polygon edge length field (default shown)
+  growth_ratio: 1.2            # max edge-size growth per element (channel -> floodplain)
+  channel_anisotropy: 4.0      # along-flow / cross-flow edge ratio in the channel
+  max_aspect_ratio: 4.0        # hard cap on cell aspect ratio (AnisoMax + post-mesh edge flips)
+
+friction:
+  # .tbl priority: explicit `zones` (MATID) -> roughness zones (geodata.roughness_zones
+  # + roughness_table: one `<Zone ID> NIKU <ks> NULL` row each) -> single default.
+  roughness_law: 5             # law for roughness-zone rows (5 = NIKU, ks in m)
+  default_law: 4               # 4 = Manning (0 NOFR, 1 HAAL, 2 CHEZ, 3 STRI, 5 NIKU, 7 COWH)
+  default_coefficient: 0.03
+  # lateral (wall) boundary friction; also the roughness used to synthesise the
+  # outflow stage-discharge curve when missing.
+  boundary_law: 3              # 3 = Strickler
+  boundary_coefficient: 30     # Strickler Kst
+
+hydrodynamics:
+  regime: steady               # steady | unsteady (the initial run is always steady)
+  # With variable_timestep on, time_step is only the conservative CFL START step; the
+  # run marches to steady state for `duration` seconds while TELEMAC holds the Courant.
+  time_step: 0.25              # conservative CFL start step [s]
+  # With the seed at ~normal depth (initialization.prewet_depth ~0.30 m) the flow
+  # starts near equilibrium and only needs to settle, so 1500 s of simulated time is
+  # ample; a deep over-wet seed instead needs many thousands of seconds just to drain
+  # (and still may not balance). The dry-start wetting march needs ~5000 s.
+  duration: 1500.0             # simulated time [s] for the steady march to convergence
+  n_time_steps: 15000          # only bounds a FIXED-step run (variable_timestep: false)
+  graphic_printout_period: 500
+  listing_printout_period: 500
+  finite_volumes: false        # true -> HLLC finite-volume kernel (const viscosity only)
+  # Turbulence: "auto" picks k-epsilon (3) / Spalart-Allmaras (6) / Smagorinski (4)
+  # from the mesh resolution vs the flow depth and the velocity guess.
+  turbulence_model: auto       # auto | 1 const | 3 k-epsilon | 4 Smagorinski | 6 Spalart-Allmaras
+  initial_velocity_guess: 1.0  # assumed mean flow [m/s]; sizes eddy viscosity + model choice
+  # Courant 0.6 for the pre-wetted calibration fleet (no advancing dry front, the
+  # locally-implicit distributive scheme takes it; ~2x larger dt than the 0.30
+  # default that guards the dry start).
+  desired_courant: 0.60        # target Courant for the CFL-adaptive march (default 0.30)
+
+# morphodynamics:              # optional GAIA extension (v1 focuses on 2D hydraulics)
+#   enabled: true
+#   gaia_results_base: rgaia
+#   sediment_classes:
+#     - { diameter: 0.0008, density: 2650, shields: 0.047 }
+
+dem_of_difference:
+  # Optional DoD (geodata.dem_target - geodata.dem_initial) with a minimum level of
+  # detection; off here (dem_initial and dem_target are the same 2025 survey). Point
+  # dem_target at a different-epoch DEM to enable. See cases/case-template for options.
+  enabled: false
+  # uncertainty_initial: 0.05
+  # uncertainty_target: 0.03
+  # confidence_level: 0.95
+  # min_lod: 0.10
+  mask_below_lod: true
+
+ground_truth:
+  # Calibration ground truth: a tidy multi-tab table (measurements) OR raw sources
+  # hydromate compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
+  # `measurements` gives an explicit output path.
+  # measurements: path/to/ground-truth.xlsx    # (a) user-authored tidy table
+  sources:                                      # (b) raw sources -> compiled tidy table
+    # FlowTracker2 Sept-2025 campaign (KB15 sheet = sheet 0 of the revised
+    # FT_TKE_Summary.xlsx: one row per vertical at ~0.6 x depth, numeric IDs
+    # 1501..1530), joined by ID to the DGPS positions GeoPackage (EPSG:25832,
+    # z = bed elevation from the DGPS survey).
+    - { category: hydraulics, kind: flowtracker, join_key: ID,
+        values: user-sources/ground-truth/hydraulics/FT_TKE_Summary.xlsx,
+        positions: user-sources/geodata/flowtracker2/dgps-flowtracker-kb15-sept25.gpkg }
+
+calibration:
+  # calibration target set by run_Bayes_cal.py: SCALAR VELOCITY (FlowTracker at
+  # 0.6 x depth ~ depth-averaged velocity); WATER DEPTH is extracted alongside.
+  calibration_quantities: ["SCALAR VELOCITY"]                # measured columns used for calibration
+  extraction_quantities: ["WATER DEPTH", "SCALAR VELOCITY"]  # quantities pulled from results
+  measurement_error: 0.10      # fraction of the measured value
+  # initial design of experiments: factorial (equidistant grid over the parameter
+  # ranges, bayesvalidrox/chaospy rule "grid") -> 8 full-complexity telemac2d runs,
+  # then Bayesian Active Learning adds up to (max_runs - init_runs) more.
+  parameter_sampling_method: grid
+  init_runs: 8                 # initial (factorial) design samples
+  max_runs: 15                 # total runs (initial + active-learning iterations)
+  gp_library: gpy
+  # Calibrate the CHANNEL roughness only (zone1 = roughness zone 1 in friction.tbl).
+  # Bounds from the bed GSD (d50 ~ 0.05 m, d90 ~ 0.15 m): ks in [d50, 3*d90]
+  # = [0.05, 0.45] m (van Rijn: ks = 1..3 x d90). The floodplain (zone2) stays at
+  # its roughness-table value (0.5 m).
+  parameters:
+    - { name: zone1, min: 0.05, max: 0.45, comment: "channel ks [m] (Nikuradse), d50..3*d90" }
+    # - { name: zone2, min: 0.10, max: 1.00, comment: "floodplain ks [m] (Nikuradse)" }
+    # - { name: "gaiaCLASSES SHIELDS PARAMETERS 1", min: 0.030, max: 0.060 }

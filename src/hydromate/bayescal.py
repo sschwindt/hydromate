@@ -14,13 +14,22 @@ Two calibration modes:
 * **multi-flow** - several steady discharges, each with its own field campaign
   (:mod:`hydromate.campaigns`) and its own steering file derived from the built
   base case; run with the additive ``bal_telemac_multiflow.py`` +
-  ``MultiflowTelemacModel`` in the hydrobayescal checkout. One shared roughness
-  is calibrated against all campaigns jointly.
+  ``MultiflowTelemacModel``. One shared roughness is calibrated against all
+  campaigns jointly.
 
-HydroBayesCal lives in its own checkout/environment (bayesvalidrox, gpytorch,
-...), so it is launched in a subshell that first sources TELEMAC and then uses
-the HydroBayesCal conda env. Point at your install with ``HYDROBAYESCAL_DIR`` /
-``HYDROBAYESCAL_ENV`` (or the returned helpers' arguments).
+**HydroBayesCal is a pip dependency** (``pip install 'hydromate[calibration]'``),
+not an external checkout: the drivers ship with the package from 1.4.2 on
+(``hydroBayesCal.copy_driver``), so there is no directory to point at and no
+second conda environment to name. It is an *optional* extra because its surrogate
+stack - bayesvalidrox, gpytorch, scikit-learn - is heavy and irrelevant to
+building or running a TELEMAC case, so :func:`require_hbc` imports it lazily and
+explains the install if it is missing.
+
+A staged driver is still run as a **subprocess**, but in this interpreter's own
+environment: the driver is a script with an ``argparse`` ``main()``, and it must
+run with TELEMAC sourced (every surrogate iteration launches the solver), which
+mutates the environment in ways not to inflict on the caller's process. Pass
+``checkout=`` to develop against an unreleased driver from a source tree.
 
 Lessons baked in (see the module functions):
 
@@ -36,10 +45,10 @@ Lessons baked in (see the module functions):
 
 from __future__ import annotations
 
-import os
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,15 +64,40 @@ from hydromate.rating import synthesize_outflow_rating
 # --------------------------------------------------------------------------- #
 # install location
 # --------------------------------------------------------------------------- #
-def hbc_dir() -> Path:
-    """HydroBayesCal checkout (``HYDROBAYESCAL_DIR`` env, sensible default)."""
-    return Path(os.environ.get("HYDROBAYESCAL_DIR",
-                               str(Path.home() / "github" / "hydrobayescal")))
+def require_hbc():
+    """Import HydroBayesCal, or explain how to install it.
+
+    It is an **optional dependency** (``pip install hydromate[calibration]``): the
+    surrogate stack it pulls in - bayesvalidrox, gpytorch, scikit-learn - is heavy and
+    irrelevant to building or running a TELEMAC case, which is what most of hydromate
+    does. So it is imported where it is used rather than at module import.
+    """
+    try:
+        import hydroBayesCal
+    except ImportError as exc:                       # pragma: no cover - install aid
+        raise SystemExit(
+            "HydroBayesCal is not installed. It is an optional dependency:\n"
+            "    pip install 'hydromate[calibration]'\n"
+            "or, for a local checkout you are also developing:\n"
+            "    pip install -e /path/to/hydrobayescal\n"
+            f"(import failed: {exc})"
+        ) from exc
+    if not hasattr(hydroBayesCal, "copy_driver"):
+        raise SystemExit(
+            "The installed HydroBayesCal is too old: it does not ship the calibration "
+            "drivers with the package (hydroBayesCal.copy_driver is missing). "
+            "Upgrade with:  pip install -U 'hydrobayescal>=1.4.2'"
+        )
+    return hydroBayesCal
 
 
-def hbc_env() -> str:
-    """Conda/mamba env HydroBayesCal runs in (``HYDROBAYESCAL_ENV`` env)."""
-    return os.environ.get("HYDROBAYESCAL_ENV", "wrr-proj")
+def _hbc_version() -> str:
+    """Installed HydroBayesCal version, for the staging log."""
+    from importlib.metadata import PackageNotFoundError, version
+    try:
+        return version("hydrobayescal")
+    except PackageNotFoundError:                     # pragma: no cover
+        return "unknown"
 
 
 # --------------------------------------------------------------------------- #
@@ -98,34 +132,54 @@ def stage_driver(out_dir: Path, template_name: str, *, checkout: Path | None = N
     """Copy a HydroBayesCal driver into ``out_dir`` with the extraction window
     patched ``mean_last`` -> ``last``.
 
-    The template lives in the checkout root or its ``templates/``. ``also`` names
-    further driver files copied verbatim next to it (e.g. the multiflow driver
-    imports the single-flow one). Returns the staged primary driver path.
+    The driver comes from the **installed** HydroBayesCal package
+    (``hydroBayesCal.copy_driver``, which also brings any sibling a driver imports),
+    so there is no checkout path to configure. *checkout* overrides that with a
+    source tree, for developing against an unreleased driver.
+
+    The extraction window is patched because the stock drivers average the last
+    *window* of SELAFIN frames (``mean_last``); on a run that marches to steady state
+    from a dry or pre-wetted start, that averages the residual transient into the
+    calibration values. ``last`` takes the converged frame. *also* names further
+    drivers to place beside it (kept for callers that name the companion explicitly;
+    ``copy_driver`` already brings known siblings).
     """
-    checkout = checkout or hbc_dir()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    def _find(name):
-        return next((p for p in (checkout / name, checkout / "templates" / name)
-                     if p.is_file()), None)
+    if checkout is not None:
+        checkout = Path(checkout)
 
-    template = _find(template_name)
-    if template is None:
-        raise SystemExit(
-            f"HydroBayesCal driver {template_name!r} not found in {checkout} "
-            "(or its templates/). Set HYDROBAYESCAL_DIR to the checkout.")
-    text = template.read_text()
+        def _find(name):
+            candidates = (checkout / name,
+                          checkout / "templates" / name,
+                          checkout / "src" / "hydroBayesCal" / "drivers" / name)
+            return next((p for p in candidates if p.is_file()), None)
+
+        primary = _find(template_name)
+        if primary is None:
+            raise SystemExit(
+                f"HydroBayesCal driver {template_name!r} not found in {checkout}")
+        for name in also:
+            src = _find(name)
+            if src is None:
+                raise SystemExit(f"companion driver {name!r} not found in {checkout}")
+            shutil.copy2(src, out_dir / name)
+        source = "checkout"
+    else:
+        hbc = require_hbc()
+        hbc.copy_driver(template_name, out_dir)
+        for name in also:
+            hbc.copy_driver(name, out_dir)
+        primary = out_dir / template_name
+        source = f"hydroBayesCal {_hbc_version()}"
+
+    text = Path(primary).read_text()
     n = text.count('output_extraction_time="mean_last"')
     (out_dir / template_name).write_text(
         text.replace('output_extraction_time="mean_last"',
                      'output_extraction_time="last"'))
-    for name in also:
-        src = _find(name)
-        if src is None:
-            raise SystemExit(f"companion driver {name!r} not found in {checkout}")
-        shutil.copy2(src, out_dir / name)
-    print(f"staged {template_name}"
+    print(f"staged {template_name} from {source}"
           + (f" (+{', '.join(also)})" if also else "")
           + f" -> {out_dir}" + (f" (extraction mean_last -> last, {n} sites)" if n else ""))
     return out_dir / template_name
@@ -140,12 +194,28 @@ def other_calibration_running(model_dir: Path) -> bool:
 
 def launch(cfg: Config, driver: Path, config_path: Path, *, env: str | None = None,
            note: str = "HydroBayesCal calibration") -> int:
-    """Run a staged driver in a login subshell that sources TELEMAC then uses the
-    HydroBayesCal env. Returns the driver's exit code."""
-    env = env or hbc_env()
+    """Run a staged driver, in **this** interpreter's environment.
+
+    HydroBayesCal is a dependency of hydromate, so it is importable here - there is
+    no second conda environment to name and no interpreter to guess. The driver is
+    still run as a subprocess rather than imported, for two reasons that matter over
+    a calibration lasting hours: it is a script with module-level state and an
+    ``argparse`` ``main()``, and it has to run **with TELEMAC sourced**, since every
+    surrogate iteration launches the solver. Sourcing mutates the environment, which
+    is exactly the sort of thing not to do to the caller's own process.
+
+    ``sys.executable`` is used explicitly so the subshell cannot pick up a different
+    ``python`` from the sourced TELEMAC environment.
+
+    *env* is accepted and ignored; it named the separate conda environment this used
+    to need. Returns the driver's exit code.
+    """
+    if env:
+        print(f"note: env={env!r} ignored - HydroBayesCal now runs in hydromate's own "
+              "environment (it is a dependency), so no separate env is needed")
     inner = (f"source {shlex.quote(str(cfg.telemac.pysource))}; "
              f"cd {shlex.quote(str(driver.parent))}; "
-             f"mamba run -n {shlex.quote(env)} python -u {shlex.quote(driver.name)} "
+             f"{shlex.quote(sys.executable)} -u {shlex.quote(driver.name)} "
              f"--config {shlex.quote(str(config_path))}")
     print(f"\nlaunching {note}:\n  {inner}\n")
     return subprocess.run(["bash", "-lc", "set -e; " + inner]).returncode
@@ -222,8 +292,8 @@ def run_single_flow_calibration(
     driver = stage_driver(cfg.calibration_dir, "bal_telemac.py", checkout=checkout)
     if prepare_only:
         print("\n--prepare-only: not launched. Run it with:")
-        print(f"  cd {driver.parent} && mamba run -n {env or hbc_env()} "
-              f"python {driver.name} --config {config_path}")
+        print(f"  cd {driver.parent} && {sys.executable} {driver.name} "
+              f"--config {config_path}")
         return 0
     return launch(cfg, driver, config_path, env=env, note="HydroBayesCal calibration")
 
@@ -530,8 +600,8 @@ def run_multiflow_calibration(
     if launch_mode == "prepare":
         print("\nprepared (not launched). Launch with launch_mode='run' "
               "(or 'resume' to reuse completed initial designs).")
-        print(f"  cd {driver.parent} && mamba run -n {env or hbc_env()} "
-              f"python {driver.name} --config {config_path}")
+        print(f"  cd {driver.parent} && {sys.executable} {driver.name} "
+              f"--config {config_path}")
         return 0
 
     if other_calibration_running(cfg.model_dir) and not force:

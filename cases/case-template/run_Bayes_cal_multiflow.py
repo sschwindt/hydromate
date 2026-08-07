@@ -22,7 +22,7 @@ velocities for a high flow whose points sit in shallow margins.
 
 Modes: --smoke | --run | --resume (default: prepare without launching).
 Requires the built case (preprocessing.py) and the hydrobayescal checkout
-(HYDROBAYESCAL_DIR / HYDROBAYESCAL_ENV).
+(installed package; --hbc-checkout overrides with a source tree).
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from hydromate import FlowSpec, hbc_dir, hbc_env, run_multiflow_calibration  # noqa: F401
+from hydromate import FlowSpec, run_multiflow_calibration
 from hydromate.config import load_config
 
 HERE = Path(__file__).resolve().parent
@@ -59,8 +59,11 @@ def main() -> int:
     mode.add_argument("--resume", action="store_true",
                       help="reuse completed per-flow initial designs (only_bal_mode)")
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--hbc-dir", type=Path, default=hbc_dir())
-    parser.add_argument("--hbc-env", default=hbc_env())
+    # HydroBayesCal is a pip dependency and runs in this interpreter; a checkout is
+    # only needed to develop against an unreleased driver.
+    parser.add_argument("--hbc-checkout", type=Path, default=None,
+                        help="use drivers from a HydroBayesCal source checkout "
+                             "instead of the installed package")
     args = parser.parse_args()
 
     if not FLOWS:
@@ -69,7 +72,7 @@ def main() -> int:
                    else "resume" if args.resume else "prepare")
     cfg = load_config(CONFIG)
     return run_multiflow_calibration(cfg, FLOWS, launch_mode=launch_mode,
-                                     checkout=args.hbc_dir, env=args.hbc_env,
+                                     checkout=args.hbc_checkout,
                                      force=args.force)
 
 

@@ -25,8 +25,8 @@ Campaigns (see user-sources/ground-truth/hydraulics/discharge-info.md):
 
 Modes: ``--smoke`` (isolated plumbing test), ``--run`` (full: initial design +
 BAL), ``--resume`` (reuse completed per-flow initial designs, only_bal_mode);
-default writes everything without launching. HydroBayesCal install via
-HYDROBAYESCAL_DIR / HYDROBAYESCAL_ENV.
+default writes everything without launching. HydroBayesCal is a pip
+dependency (pip install 'hydromate[calibration]').
 
 Run: mamba run -n hydromate-env python cases/inn-KB15-2025-hydro/run_Bayes_cal_multiflow.py [--smoke|--run|--resume]
 """
@@ -36,7 +36,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from hydromate import FlowSpec, hbc_dir, hbc_env, run_multiflow_calibration
+from hydromate import FlowSpec, run_multiflow_calibration
 from hydromate.config import load_config
 
 HERE = Path(__file__).resolve().parent
@@ -80,15 +80,18 @@ def main() -> int:
                       help="reuse completed per-flow initial designs (only_bal_mode)")
     parser.add_argument("--force", action="store_true",
                         help="launch even if another calibration appears active")
-    parser.add_argument("--hbc-dir", type=Path, default=hbc_dir())
-    parser.add_argument("--hbc-env", default=hbc_env())
+    # HydroBayesCal is a pip dependency and runs in this interpreter; a checkout is
+    # only needed to develop against an unreleased driver.
+    parser.add_argument("--hbc-checkout", type=Path, default=None,
+                        help="use drivers from a HydroBayesCal source checkout "
+                             "instead of the installed package")
     args = parser.parse_args()
 
     launch_mode = ("smoke" if args.smoke else "run" if args.run
                    else "resume" if args.resume else "prepare")
     cfg = load_config(CONFIG)
     return run_multiflow_calibration(cfg, FLOWS, launch_mode=launch_mode,
-                                     checkout=args.hbc_dir, env=args.hbc_env,
+                                     checkout=args.hbc_checkout,
                                      force=args.force)
 
 

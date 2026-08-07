@@ -30,6 +30,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
 gui = ["streamlit>=1.30"]
+# Surrogate-assisted Bayesian calibration (hydromate.bayescal / hydromate.calibration).
+# An EXTRA rather than a core dependency: it pulls in bayesvalidrox, gpytorch and
+# scikit-learn, none of which is needed to build or run a TELEMAC case, which is what
+# most of hydromate does.
+# >=1.4.2 is required, not merely preferred: that is the release that ships the
+# calibration drivers *with the package* (hydroBayesCal.copy_driver). Before it, the
+# drivers lived only in a source checkout, so hydromate had to be told where that
+# checkout was via an environment variable - which broke whenever it moved or was
+# absent on a machine.
+calibration = ["hydrobayescal>=1.4.2"]
 
 [project.scripts]
 hydromate = "hydromate.cli:main"
