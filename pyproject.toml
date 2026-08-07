@@ -21,6 +21,10 @@ dependencies = [
     "rasterio",
     "gmsh>=4.13",
     "openpyxl>=3.1",
+    # flux-convergence + cross-section plots and the P1 triangle interpolation
+    # (hydromate.flux_convergence, hydromate.sections); previously pulled in
+    # transitively by pythomac, which the flux analysis no longer uses.
+    "matplotlib",
 ]
 
 [project.optional-dependencies]

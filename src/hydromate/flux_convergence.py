@@ -21,37 +21,60 @@ depth and velocity *fields* have stopped evolving as well. (Pointwise depth /
 velocity grid-convergence at the measurement probes is a different question,
 handled by the mesh-convergence study.)
 
-The default tolerance is 1e-4 (a relative flux imbalance of 0.01% -- the fields have
-effectively stopped evolving by then, so it is a sound hotstart seed). The notes also
-list a tighter 1e-6 for strict validation, but reaching it costs a very long
-simulated time (the imbalance asymptotes slowly), so it is not the default; pass
-``tolerance=1e-6`` to ``analyze_flux_convergence`` if you want that grade. The heavy
-lifting (parsing the ``.sortie`` listing,
-the convergence maths, the plots) is done by the user's **pythomac** package; this
-module is the thin hydromate-side adapter that aggregates the per-boundary fluxes,
-converts the printout index to a ``NUMBER OF TIME STEPS`` recommendation, and logs
-the outcome.
+**The tolerance depends on what the result is for**, and the imbalance being a
+*relative* measure is what makes that judgement possible: the discharge, depth and
+velocity read off a steady run inherit it directly. ``1e-3`` (0.1%) is therefore the
+default -- a tenth of a percent moves Q, h or U by far less than the uncertainty of
+the field data they are compared against, and by far less than the 5% the
+mesh-convergence study accepts as grid-independent. The stricter ``1e-4`` is reserved
+for a **hotstart seed**, where a residual transient is not averaged out but inherited
+by every one of the dozens of perturbed calibration runs restarted from it; ``1e-6``
+is a validation grade whose slow asymptote is rarely worth the simulated time.
+Set it per case with ``hydrodynamics.flux_tolerance``, or pass ``tolerance=`` to
+:func:`analyze_flux_convergence`.
+
+This module is **self-contained**: the listing is parsed by :mod:`hydromate.sortie`
+and the convergence maths and plots are below. It previously delegated to the
+``pythomac`` package, whose analysis this reproduces (and whose four output files it
+still writes, with the same names, so existing workflows and documentation are
+unaffected). pythomac is GPL-3 and derives its listing parser from TELEMAC's own
+GPL-3 ``postel`` code, which cannot be vendored into BSD-3-licensed hydromate; and
+having the maths here removes a set of adapters that existed only to work around the
+package boundary -- the printout spacing had to be back-calculated because a
+CFL-adaptive run has no fixed time step, the rate plot had to be replaced whenever
+the rate was still undefined, and ``convergence-rate.csv`` had to be written
+separately because only the ``.png`` was produced.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from hydromate.config import Config
+from hydromate.sortie import Sortie, latest_sortie, processor_sorties, read_sortie
 
 log = logging.getLogger("hydromate")
 
-# the user's local pythomac checkout (overridable); falls back to a pip install
-_DEFAULT_PYTHOMAC = "/home/schwindt/github/pythomac"
-
-# hotstart tolerance for the relative flux imbalance (see module docstring); 1e-4
-# (0.01% imbalance) is a well-converged steady state without the slow 1e-6 tail
+# Tolerance grades for the relative flux imbalance (see the module docstring).
+#
+# Which one applies depends on WHAT the result is used for, because the imbalance is
+# a *relative* measure and the quantities read off a steady run inherit it directly:
+#
+#   1e-3  HYDRAULIC_TOLERANCE - the default. Adequate whenever the result is read as
+#         discharge, water depth or velocity: a 0.1% flux imbalance moves those by
+#         far less than the measurement uncertainty of any field campaign (a
+#         FlowTracker vertical is good to a few percent), and well below the
+#         discretisation error the mesh-convergence study accepts (5%).
+#   1e-4  HOTSTART_TOLERANCE - the strict grade for a hotstart *seed*. A calibration
+#         fleet restarts from this state a few dozen times, so any residual
+#         transient is inherited by every perturbed run rather than averaged out.
+#   1e-6  validation grade; reaching it costs a very long simulated time (the
+#         imbalance asymptotes slowly) and is rarely worth it.
+HYDRAULIC_TOLERANCE = 1.0e-3
 HOTSTART_TOLERANCE = 1.0e-4
 
 # absolute steady-state criterion for the hotstart end time: the run counts as steady
@@ -84,56 +107,58 @@ class FluxConvergence:
     hotstart_cas: Path | None = None       # generated hotstart steering file
 
 
-def _import_pythomac(pythomac_dir: str | Path | None):
-    """Import pythomac, preferring a pip install, then the local checkout.
+# --------------------------------------------------------------------------- #
+# convergence maths
+# --------------------------------------------------------------------------- #
 
-    pythomac's parser is pure Python (re/numpy/pandas/matplotlib, no TELEMAC API),
-    so it runs fine inside ``hydromate-env``. The local dev checkout is honoured via
-    *pythomac_dir* or the ``PYTHOMAC_DIR`` env var, mirroring how ``telemac.pysource``
-    is a machine-specific path.
+
+def relative_imbalance(gross_in, gross_out) -> np.ndarray:
+    """Relative flux imbalance ``eps_t = ||Q_in| - |Q_out|| / |Q_in|`` per printout.
+
+    Telemac reports boundary fluxes signed (inflow positive, outflow negative), so
+    the *magnitudes* are differenced: balance means ``|Q_in| == |Q_out|``, hence
+    ``eps_t -> 0`` at steady state. Using magnitudes also keeps the metric robust to
+    a boundary that momentarily reverses.
     """
-    try:
-        import pythomac  # noqa: F401
-        from pythomac import (calculate_convergence, extract_fluxes,
-                              get_convergence_time)
-        return extract_fluxes, calculate_convergence, get_convergence_time
-    except ModuleNotFoundError:
-        pass
-
-    candidate = Path(pythomac_dir or os.environ.get("PYTHOMAC_DIR", _DEFAULT_PYTHOMAC))
-    if not (candidate / "pythomac").is_dir():
-        raise ModuleNotFoundError(
-            "pythomac is not importable. Install it (`pip install pythomac`) or set "
-            f"PYTHOMAC_DIR to a local checkout (looked in {candidate})."
-        )
-    sys.path.insert(0, str(candidate))
-    from pythomac import (calculate_convergence, extract_fluxes,  # type: ignore
-                          get_convergence_time)
-    return extract_fluxes, calculate_convergence, get_convergence_time
+    q_in = np.abs(np.asarray(gross_in, dtype=float))
+    q_out = np.abs(np.asarray(gross_out, dtype=float))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.abs(q_in - q_out) / q_in
 
 
-def _gross_in_out(fluxes_df):
-    """Aggregate the signed per-boundary flux columns into gross inflow / outflow.
+def convergence_rate(imbalance) -> np.ndarray:
+    """Convergence rate ``iota_t = log_{eps_t}(eps_{t+1})``, aligned with ``eps[1:]``.
 
-    Telemac reports one signed cumulated flowrate per liquid boundary (inflow
-    positive, outflow negative). Summing the positive parts gives the gross inflow
-    and the negative parts the gross outflow at each printout, which generalises the
-    two-boundary imbalance of the notes to any number of liquid boundaries (the Inn
-    case has three: two inflow, one outflow). Leading rows with no inflow yet (the
-    dry start, where the imbalance is undefined) are dropped.
+    A rate of 1 means the imbalance is shrinking at a constant order; above 1 it is
+    accelerating. It is **undefined wherever the imbalance is flat or not yet
+    decaying** (``log`` of a base near 1, or of a non-positive value), which is the
+    normal state during the filling/transient phase - those entries come back as NaN
+    rather than raising, and the plots below simply show gaps there.
     """
-    flux_cols = [c for c in fluxes_df.columns if "flux" in str(c).lower()]
-    if not flux_cols:
-        raise ValueError(
-            "no flux columns in the extracted sortie -- did the run use "
-            "'PRINTING CUMULATED FLOWRATES : YES' and the -s flag?"
-        )
-    signed = fluxes_df[flux_cols].to_numpy(dtype=float)
-    gross_in = np.where(signed > 0.0, signed, 0.0).sum(axis=1)
-    gross_out = np.where(signed < 0.0, -signed, 0.0).sum(axis=1)
-    keep = gross_in > 0.0
-    times = fluxes_df.index.to_numpy(dtype=float)
-    return times[keep], gross_in[keep], gross_out[keep]
+    eps = np.asarray(imbalance, dtype=float)
+    if eps.size < 2:
+        return np.zeros(0)
+    base, value = eps[:-1], eps[1:]
+    out = np.full(base.shape, np.nan)
+    ok = (base > 0) & (value > 0) & (np.abs(base - 1.0) > 1e-12)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out[ok] = np.log(value[ok]) / np.log(base[ok])
+    return out
+
+
+def convergence_index(imbalance, tolerance: float = HOTSTART_TOLERANCE) -> int | None:
+    """First index beyond which *imbalance* stays **permanently** below *tolerance*.
+
+    "Permanently" matters: a transient dip below the tolerance during the filling
+    phase is not convergence. Returns ``None`` when the tolerance is never reached,
+    or is reached but later lost again.
+    """
+    eps = np.asarray(imbalance, dtype=float)
+    below = eps < tolerance
+    if not below.any() or not below[-1]:
+        return None
+    above = np.flatnonzero(~below)
+    return int(above[-1] + 1) if above.size else 0
 
 
 def find_steady_window(
@@ -186,6 +211,92 @@ def _mean_balance_time(times, gross_in, gross_out, *, abs_tolerance, window) -> 
     return None
 
 
+# --------------------------------------------------------------------------- #
+# plots
+# --------------------------------------------------------------------------- #
+
+
+def _new_axes(figsize=(7.2, 4.3)):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    return plt, *plt.subplots(figsize=figsize)
+
+
+def plot_boundary_fluxes(sortie: Sortie, path: Path) -> Path:
+    """``flux-convergence.png``: the signed flux at every liquid boundary over time,
+    with the gross inflow/outflow totals the convergence metric is built from."""
+    plt, fig, ax = _new_axes()
+    for i in range(sortie.n_boundaries):
+        ax.plot(sortie.time, sortie.fluxes[:, i], lw=1.0, alpha=0.85,
+                label=f"boundary {i + 1}")
+    ax.plot(sortie.time, sortie.gross_in, "--", lw=1.6, color="#1F4E78",
+            label="gross inflow")
+    ax.plot(sortie.time, -sortie.gross_out, "--", lw=1.6, color="#A6300F",
+            label="gross outflow")
+    ax.axhline(0.0, color="0.6", lw=0.8)
+    ax.set_xlabel("Simulated time (s)")
+    ax.set_ylabel("Flux (m$^3$/s)")
+    ax.set_title("Boundary fluxes")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8, ncol=2)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return path
+
+
+def plot_convergence(times, imbalance, rate, path: Path, *,
+                     tolerance: float = HOTSTART_TOLERANCE) -> Path:
+    """``convergence-rate.png``: the relative flux imbalance (log scale, with the
+    tolerance marked) and, where it is defined, the convergence rate beneath it.
+
+    Drawing the imbalance unconditionally is the point: during the filling phase the
+    rate is undefined everywhere, and a rate-only figure would then be empty exactly
+    when one most wants to see how far from balance the run still is.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, (top, bottom) = plt.subplots(2, 1, figsize=(7.2, 6.0), sharex=True)
+    eps = np.asarray(imbalance, dtype=float)
+    top.plot(times, eps, "-o", ms=2.5, color="#1F4E78")
+    top.axhline(tolerance, color="#A6300F", ls="--", lw=1.0,
+                label=f"tolerance {tolerance:.0e}")
+    if np.any(eps > 0):
+        top.set_yscale("log")
+    top.set_ylabel(r"Relative imbalance $\Delta_{Q,t}$")
+    top.set_title("Boundary-flux convergence")
+    top.grid(True, which="both", alpha=0.3)
+    top.legend(fontsize=8)
+
+    rate = np.asarray(rate, dtype=float)
+    finite = np.isfinite(rate)
+    if finite.any():
+        bottom.plot(np.asarray(times, dtype=float)[1:][finite], rate[finite],
+                    "-o", ms=2.5, color="#2E6E4E")
+        bottom.axhline(1.0, color="0.5", ls="--", lw=1.0)
+    else:
+        bottom.text(0.5, 0.5, "convergence rate not yet defined\n"
+                              "(imbalance still flat - filling/transient phase)",
+                    ha="center", va="center", transform=bottom.transAxes,
+                    fontsize=9, color="0.35")
+    bottom.set_xlabel("Simulated time (s)")
+    bottom.set_ylabel(r"Convergence rate $\iota_t$")
+    bottom.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+    plt.close(fig)
+    return path
+
+
+# --------------------------------------------------------------------------- #
+# the analysis
+# --------------------------------------------------------------------------- #
+
+
 def _remove_processor_sorties(model_dir: Path, cas_name: str) -> int:
     """Delete the per-processor listing copies of a parallel run.
 
@@ -193,38 +304,17 @@ def _remove_processor_sorties(model_dir: Path, cas_name: str) -> int:
     to the merged main listing; only the main ``.sortie`` carries the flux printouts
     analysed here, so the per-rank copies are just clutter."""
     removed = 0
-    for p in sorted(Path(model_dir).glob(f"{cas_name}_*_p*.sortie")):
+    for p in processor_sorties(model_dir, cas_name):
         p.unlink()
         removed += 1
     return removed
 
 
-def _plot_relative_imbalance(iota_df, path) -> None:
-    """Fallback convergence plot: the relative flux imbalance over time, robust to
-    the undefined convergence rate (NaN) of a not-yet-converging run."""
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    imbalance = iota_df["Relative imbalance"].to_numpy(dtype=float).real
-    times = iota_df.index.to_numpy(dtype=float)
-    fig, ax = plt.subplots(figsize=(7.0, 4.2))
-    ax.plot(times, imbalance, "-o", ms=3, color="#1F4E78")
-    ax.set_yscale("log")
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel(r"Relative flux imbalance $\Delta_{Q,t}$")
-    ax.set_title("Boundary-flux convergence (relative imbalance)")
-    ax.grid(True, which="both", alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    plt.close(fig)
-
-
 def analyze_flux_convergence(
     cfg: Config,
     *,
-    tolerance: float = HOTSTART_TOLERANCE,
-    abs_tolerance: float = STEADY_ABS_TOLERANCE,
+    tolerance: float | None = None,
+    abs_tolerance: float | None = None,
     steady_window: int = STEADY_WINDOW,
     write_hotstart: bool = True,
     pythomac_dir: str | Path | None = None,
@@ -232,12 +322,12 @@ def analyze_flux_convergence(
     """Analyse boundary-flux convergence of the steady run in ``cfg.model_dir``.
 
     Reads the latest ``<cas>_<timestamp>.sortie`` listing (so the run must have used
-    the ``-s`` flag and ``PRINTING CUMULATED FLOWRATES : YES``) and writes the same
-    four files as pythomac's worked example into ``model_dir`` -
-    ``extracted-fluxes.csv`` + ``flux-convergence.png`` (the per-boundary fluxes) and
-    ``convergence-rate.csv`` + ``convergence-rate.png`` (the relative imbalance and
-    convergence rate). Returns the converged ``NUMBER OF TIME STEPS`` (the time at
-    which the relative flux imbalance drops permanently below *tolerance*).
+    the ``-s`` flag and ``PRINTING CUMULATED FLOWRATES : YES``) and writes four files
+    into ``model_dir`` - ``extracted-fluxes.csv`` + ``flux-convergence.png`` (the
+    per-boundary fluxes) and ``convergence-rate.csv`` + ``convergence-rate.png`` (the
+    relative imbalance and convergence rate). Returns the converged ``NUMBER OF TIME
+    STEPS`` (the time at which the relative flux imbalance drops permanently below
+    *tolerance*).
 
     On top of the relative-imbalance criterion, the *absolute* steady window is
     detected (``find_steady_window``: ``||Q_in|-|Q_out|| < abs_tolerance`` m3/s over
@@ -246,94 +336,107 @@ def analyze_flux_convergence(
     ``DURATION`` is written next to the steady case (``steering.write_hotstart_cas``).
     The per-processor ``*_p0000N.sortie`` copies of a parallel run are deleted after
     a successful extraction (only the merged main listing is analysed and kept).
-    """
-    extract_fluxes, calculate_convergence, get_convergence_time = _import_pythomac(
-        pythomac_dir)
 
-    model_dir = str(cfg.model_dir)
+    *pythomac_dir* is accepted and ignored; the analysis no longer shells out to that
+    package (see the module docstring).
+    """
+    if pythomac_dir is not None:
+        log.debug("pythomac_dir=%s ignored: the flux analysis is now built in",
+                  pythomac_dir)
+
+    if tolerance is None:
+        tolerance = float(getattr(cfg.hydrodynamics, "flux_tolerance",
+                                  HYDRAULIC_TOLERANCE))
+    if abs_tolerance is None:
+        # keep the absolute criterion consistent with the relative one: the same
+        # fraction of the discharge actually being routed. A fixed 1e-3 m3/s means
+        # something quite different on a 2 m3/s side channel than on a 200 m3/s
+        # river, and the hotstart would be gated by the case size rather than by
+        # how steady the run is.
+        discharge = getattr(cfg.boundaries, "prescribed_flowrate", None) \
+            if hasattr(cfg, "boundaries") else None
+        abs_tolerance = (float(tolerance) * float(discharge)
+                         if discharge else STEADY_ABS_TOLERANCE)
+
+    model_dir = Path(cfg.model_dir)
     period = int(cfg.hydrodynamics.listing_printout_period)
     dt = float(cfg.hydrodynamics.time_step)
 
-    log.info("flux-convergence analysis (hotstart tolerance %.0e) on %s",
-             tolerance, cfg.cas_file)
-    fluxes_df = extract_fluxes(model_directory=model_dir, cas_name=cfg.cas_file,
-                               plotting=True)
-    if isinstance(fluxes_df, int):  # pythomac returns -1 on failure
-        raise RuntimeError(
-            "pythomac.extract_fluxes failed to read the sortie listing; check that "
-            "the run used '-s' and printed cumulated flowrates.")
-
-    removed = _remove_processor_sorties(Path(model_dir), cfg.cas_file)
-    if removed:
-        log.info("  removed %d per-processor .sortie file(s); kept the main listing",
-                 removed)
-
-    kept_times, gross_in, gross_out = _gross_in_out(fluxes_df)
-    if gross_in.size < 3:
-        raise RuntimeError(
-            f"only {gross_in.size} flux printout(s) available -- the run is too "
-            "short to assess convergence (need several listing printouts).")
-
-    # mean simulated time between listing printouts. The run uses a VARIABLE time
-    # step, so `period * time_step` is wrong (time_step is only the initial/max); the
-    # actual spacing is back-calculated from the sortie's time index, as pythomac's
-    # own example does, so the convergence x-axis is in real seconds.
-    times = fluxes_df.index.to_numpy(dtype=float)
-    cas_timestep = (float(times[-1]) / max(len(times) - 1, 1)
-                    if times.size > 1 else period * dt)
+    log.info("flux-convergence analysis (relative tolerance %.0e, absolute %.1e m3/s) "
+             "on %s", tolerance, abs_tolerance, cfg.cas_file)
+    listing = latest_sortie(model_dir, cfg.cas_file)
+    if listing is None:
+        raise FileNotFoundError(
+            f"no '{cfg.cas_file}_<timestamp>.sortie' listing in {model_dir}: run the "
+            "solver with the -s flag so it writes one.")
+    sortie = read_sortie(listing)
+    log.info("  %s: study %r, %d liquid boundaries, %d printouts over %.0f s "
+             "(%.1f s apart), solver time %.0f s", listing.name, sortie.study,
+             sortie.n_boundaries, sortie.time.size, float(sortie.time[-1]),
+             sortie.printout_interval, sortie.exec_seconds)
 
     fluxes_csv = cfg.model_path("extracted-fluxes.csv")
     flux_plot = cfg.model_path("flux-convergence.png")
     rate_csv = cfg.model_path("convergence-rate.csv")
     rate_plot = cfg.model_path("convergence-rate.png")
 
-    # convergence rate iota = log_{Delta_t}(Delta_{t+1}); the relative imbalance is
-    # the part we judge convergence on. Compute the table without plotting first (so
-    # we always get it), then try pythomac's plot. While the run is still filling /
-    # in the transient phase the imbalance is flat (~1) so iota is undefined (0/0) and
-    # pythomac's plot crashes on the all-NaN rate; fall back to a direct imbalance plot.
-    iota_df = calculate_convergence(gross_in, gross_out, cas_timestep=cas_timestep,
-                                    plot_dir=None)
-    iota_df.to_csv(rate_csv)
-    try:
-        calculate_convergence(gross_in, gross_out, cas_timestep=cas_timestep,
-                              plot_dir=model_dir)
-    except Exception as exc:  # noqa: BLE001 - pythomac plot is fragile on flat data
-        log.info("  convergence rate not yet defined (%s) - the run is still in the "
-                 "filling/transient phase; plotting the relative imbalance directly.",
-                 type(exc).__name__)
-        _plot_relative_imbalance(iota_df, rate_plot)
+    frame = sortie.to_frame()
+    frame.to_csv(fluxes_csv)
+    plot_boundary_fluxes(sortie, flux_plot)
 
-    imbalance = iota_df["Relative imbalance"].to_numpy(dtype=float).real
+    removed = _remove_processor_sorties(model_dir, cfg.cas_file)
+    if removed:
+        log.info("  removed %d per-processor .sortie file(s); kept the main listing",
+                 removed)
+
+    # printouts before any inflow has established (a dry start) have an undefined
+    # imbalance - drop them rather than dividing by zero
+    keep = sortie.gross_in > 0.0
+    times = sortie.time[keep]
+    iterations = sortie.iteration[keep]
+    gross_in, gross_out = sortie.gross_in[keep], sortie.gross_out[keep]
+    if gross_in.size < 3:
+        raise RuntimeError(
+            f"only {gross_in.size} usable flux printout(s) -- the run is too short to "
+            "assess convergence (need several listing printouts with inflow).")
+
+    imbalance = relative_imbalance(gross_in, gross_out)
+    rate = convergence_rate(imbalance)
     final_imbalance = float(imbalance[-1])
 
-    idx = get_convergence_time(imbalance, convergence_precision=tolerance)
-    converged = not (idx is None or (isinstance(idx, float) and np.isnan(idx)))
+    import pandas as pd
+    rates = pd.DataFrame(
+        {"Relative imbalance": imbalance,
+         "Convergence rate": np.concatenate([[np.nan], rate])},
+        index=pd.Index(times, name="time (s)"))
+    rates.to_csv(rate_csv)
+    plot_convergence(times, imbalance, rate, rate_plot, tolerance=tolerance)
 
+    idx = convergence_index(imbalance, tolerance)
+    converged = idx is not None
     if converged:
-        # idx counts listing-printout intervals. The converged *time* is idx ×
-        # cas_timestep (the real mean spacing back-calculated above); reporting steps
-        # too is only a nominal estimate (the actual dt is CFL-variable).
-        conv_secs = float(idx) * cas_timestep
-        conv_steps = int(idx) * period
+        # the converged time and iteration count are read straight off the listing at
+        # that printout - not estimated from a nominal spacing, which a CFL-adaptive
+        # run does not have
+        conv_secs = float(times[idx])
+        conv_steps = int(iterations[idx])
         log.info("  fluxes converged to <%.0e at printout %d -> %.0f s simulated "
-                 "(~%d listing iterations); final imbalance %.2e", tolerance, int(idx),
-                 conv_secs, conv_steps, final_imbalance)
-        log.info("  the steady-state auto-stop ends the run here; as a manual cap use "
-                 "DURATION : %.0f (or NUMBER OF TIME STEPS for a fixed-step run).",
-                 conv_secs)
+                 "(solver iteration %d); final imbalance %.2e",
+                 tolerance, idx, conv_secs, conv_steps, final_imbalance)
+        log.info("  as a manual cap use DURATION : %.0f (or NUMBER OF TIME STEPS : %d "
+                 "for a fixed-step run).", conv_secs, conv_steps)
     else:
         conv_steps = conv_secs = None
         log.warning("  fluxes did NOT reach the %.0e imbalance tolerance within the "
-                    "run (final imbalance %.2e). Increase NUMBER OF TIME STEPS or "
-                    "relax the tolerance.", tolerance, final_imbalance)
+                    "run (final imbalance %.2e). Increase DURATION or relax the "
+                    "tolerance.", tolerance, final_imbalance)
 
     # absolute steady window -> hotstart end time + generated hotstart2d.cas
-    steady_secs = find_steady_window(kept_times, gross_in, gross_out,
+    steady_secs = find_steady_window(times, gross_in, gross_out,
                                      abs_tolerance=abs_tolerance, window=steady_window)
     steady_strict = steady_secs is not None
     if not steady_strict:
-        steady_secs = _mean_balance_time(kept_times, gross_in, gross_out,
+        steady_secs = _mean_balance_time(times, gross_in, gross_out,
                                          abs_tolerance=abs_tolerance,
                                          window=steady_window)
         if steady_secs is not None:

@@ -132,6 +132,11 @@ class Geodata:
     region_points: Path | None = None    # seed points carrying MATID + max area
     region_table: Path | None = None     # region-pts-table.txt (MATID legend)
     dem_of_difference: Path | None = None  # precomputed DoD (else derived from DEMs)
+    # line layer of internal cross-sections ("baffles"): the discharge across each is
+    # integrated from the result file after a run (hydromate.sections), so a braided
+    # reach can be split into its threads. Any CRS - reprojected on read.
+    control_sections: Path | None = None
+    control_section_name_field: str | None = None  # attribute holding each line's name
 
     def validate(self) -> None:
         required = {"dem_initial": self.dem_initial, "boundary": self.boundary}
@@ -140,7 +145,7 @@ class Geodata:
             raise FileNotFoundError(f"Missing required geodata: {missing}")
         for name in ("dem_target", "breaklines", "mesh_zones", "channel_centerline",
                      "roughness_zones", "roughness_table", "region_points",
-                     "region_table", "dem_of_difference"):
+                     "region_table", "dem_of_difference", "control_sections"):
             p = getattr(self, name)
             if p is not None and not Path(p).exists():
                 raise FileNotFoundError(f"geodata.{name} set but not found: {p}")
@@ -165,8 +170,26 @@ class Boundaries:
     #   "stage_discharge" -> prescribed water level (cli 5 4 4) read from stage_discharge at Q
     #   "free"            -> Neumann / free outflow (cli 4 4 4), nothing prescribed
     outflow_condition: str = "elevation"
+    # how a MISSING stage_discharge rating is synthesised for outflow_condition
+    # "stage_discharge":
+    #   "trapezoid" -> normal depth in a trapezoid as wide as the outflow line
+    #   "section"   -> conveyance of the ACTUAL DEM cross-section along that line,
+    #                  with the ks of the roughness zone each sample falls in.
+    # The trapezoid puts the full width at the full depth, so on a natural V-shaped
+    # section it over-estimates the flow area and returns a stage that is too low;
+    # the outflow boundary then holds the level below the reach's own normal depth
+    # and the flow accelerates through the outlet (a supercritical drawdown) to pass
+    # the discharge through the too-small section.
+    rating_method: str = "trapezoid"
     prescribed_flowrate: float | None = None   # upstream Q (m3/s) for the steady run
     prescribed_elevation: float | None = None  # downstream WSE (m) for outflow_condition=elevation
+    # internal ('int-*') losing/gaining lines become TELEMAC SOURCE REGIONS: each
+    # line is buffered to a strip this wide (m) so the exchange discharge spreads
+    # over many cells (Q/area as a gentle depth rate) instead of hammering the few
+    # nodes under the line - a sink concentrated on single nodes dries them, spikes
+    # velocities and collapses the CFL-adaptive time step (TELEMAC has no depth
+    # guard on negative sources).
+    internal_source_region_width: float = 3.0
 
     def validate(self) -> None:
         if self.liquid_boundaries is None or not Path(self.liquid_boundaries).exists():
@@ -182,6 +205,9 @@ class Boundaries:
                 "boundaries.outflow_condition must be 'stage_discharge', 'elevation', "
                 f"or 'free', got {self.outflow_condition!r}"
             )
+        if self.rating_method not in ("trapezoid", "section"):
+            raise ValueError("boundaries.rating_method must be 'trapezoid' or "
+                             f"'section', got {self.rating_method!r}")
 
 
 @dataclass
@@ -201,6 +227,369 @@ class Initialization:
     # from it - wets the whole low-flow channel up front (the mesh-convergence study
     # uses it to skip advancing the wetting front per mesh). Needs geodata.mesh_zones.
     prewet_depth: float | None = None
+    # HOW the pre-wet water surface is built (pre-wetting is enabled by prewet_depth):
+    #   "normal-depth" (default) - cut a cross-section every prewet_bin_spacing along
+    #       the channel centerline and seed the surface at the NORMAL-FLOW stage of
+    #       that section at the case discharge (rating.stage_for_discharge), scaled by
+    #       prewet_fill. The seeded surface then tracks the surface the run converges
+    #       to, so no water is laid down above it.
+    #   "constant" - the older seed: a longitudinally smoothed low percentile of the
+    #       bed plus prewet_depth. On a braided reach that percentile sits well above
+    #       the thalweg, so the seeded surface lands a median 0.28 m ABOVE the
+    #       converged one (measured on isar-2025), flooding bar tops and bank shelves.
+    #       The excess drains only where it can flow; on flat ground over coarse gravel
+    #       it stops as a 1-5 cm immobile film - 4694 m2 (35 % of the wetted area) that
+    #       had stopped shrinking by t=5000 s. Used automatically without a centerline.
+    prewet_mode: str = "normal-depth"
+    # Fraction of the normal depth above the thalweg to seed (normal-depth mode).
+    # DELIBERATELY BELOW 1: under-seeding is recoverable (the flow refills a pool in
+    # seconds), over-seeding is not (a perched film never leaves - a 2D model has no
+    # infiltration or evaporation). Calibrated against the converged isar-2025 result:
+    # 1.00 seeds a median +0.13 m too high, 0.70 lands at -0.03 m (p90 +0.21 m) and
+    # seeds 8294 m2 against the 7101 m2 that actually carries flow.
+    prewet_fill: float = 0.70
+    # Never seed a film thinner than this (m): a feathered seed margin is exactly what
+    # becomes stagnant film, and it carries no flow worth hotstarting.
+    prewet_min_depth: float = 0.05
+    prewet_bin_spacing: float = 20.0          # spacing of the seed cross-sections [m]
+    prewet_transect_half_width: float = 60.0  # half-width of each seed cross-section [m]
+    # Measure the pre-wet depth from each node's SPILL elevation instead of its bed,
+    # so no water is seeded below the rim of a closed depression. A 2D model has no
+    # infiltration and no evaporation, so water seeded into a bowl the flow would
+    # never fill can never leave: it survives as a stagnant, wrongly wetted alcove
+    # or side channel for the whole run, and a longer run cannot repair it. On
+    # freely draining ground the spill elevation equals the bed, so the open channel
+    # is seeded exactly as before. See steering.spill_elevations.
+    drainable_prewet: bool = True
+    # bed-elevation allowance (m) when deciding that a node drains freely: a node is
+    # seeded when its spill elevation is within this of its own bed. Absorbs DEM and
+    # mesh-interpolation noise; the water that can still be trapped per node is at
+    # most this depth.
+    drainable_tolerance: float = 0.02
+
+    def validate(self) -> None:
+        if self.prewet_mode not in ("normal-depth", "constant"):
+            raise ValueError("initialization.prewet_mode must be 'normal-depth' or "
+                             f"'constant', got {self.prewet_mode!r}")
+        if not 0.0 < self.prewet_fill <= 1.0:
+            raise ValueError("initialization.prewet_fill must be in (0, 1], got "
+                             f"{self.prewet_fill!r}")
+        if self.prewet_min_depth < 0.0:
+            raise ValueError("initialization.prewet_min_depth must be >= 0, got "
+                             f"{self.prewet_min_depth!r}")
+        if self.prewet_bin_spacing <= 0.0 or self.prewet_transect_half_width <= 0.0:
+            raise ValueError(
+                "initialization.prewet_bin_spacing and prewet_transect_half_width "
+                "must be positive"
+            )
+
+
+@dataclass
+class GainLose:
+    """A **gain-lose reach**: flow that leaves the surface through a porous body and
+    returns to it downstream.
+
+    A 2D depth-averaged model has no subsurface, so the underflow is represented as
+    an internal withdrawal where water infiltrates plus an injection where it
+    resurfaces. Set ``enabled: true`` and point ``zone`` at the porous body (a gravel
+    bar, an alluvial patch); everything else has a working default.
+
+    **Where the exchange happens** is ``faces``:
+
+    * ``water-table`` (default): the faces follow the physics. The bar's saturated
+      zone is bounded by the two channel levels it exchanges with, so the water table
+      (:mod:`hydromate.watertable`) is known, and then a node **loses** where it is
+      wet and its free surface stands above the table, and **gains** where the table
+      stands above the bed. Nothing has to be drawn, and the faces move with the
+      stage instead of being frozen at build time - which matters, because it is
+      genuinely fuzzy where percolation begins and ends.
+    * ``lines``: the exchange is pinned to the ``int-*`` lines of
+      ``boundaries.liquid_boundaries``, each buffered to a strip
+      (``boundaries.internal_source_region_width``). Pick this when the exchange
+      location is actually known - a spring line, a measured seepage face.
+
+    **How big it is** is ``conductivity`` or ``discharge``:
+
+    * ``conductivity`` (kf) drives it by default: the exchange follows Green-Ampt's
+      saturated limit at the local head, so it responds to water level and kf is a
+      physically meaningful **calibration parameter** (HydroBayesCal knows it as
+      ``gainlose_kf``).
+    * ``discharge`` overrides that with a measured total [m3/s], normalised over the
+      losing face - available with either ``faces`` setting.
+
+    ``mode`` selects the implementation and defaults to ``fortran`` when enabled:
+    a generated ``USER_RAIN`` routine that withdraws **depth-limited** (tapering to
+    zero as a cell approaches ``min_depth``, so a sink can never dry a cell) and
+    reinjects exactly what it took. ``region`` uses TELEMAC SOURCE REGIONS instead -
+    simpler, no compiler needed, but a fixed-rate sink diverges as the local depth
+    approaches zero (see cases/isar-2025/test-approaches.md, rungs T2/T3).
+
+    The zone layer may carry a porous-depth attribute (``depth_field``) and a name
+    (``name_field``).
+    """
+
+    enabled: bool = False
+    zone: Path | None = None       # the porous body: polygon layer (gpkg/shp)
+    # WHERE the exchange takes place: derived from the water table, or pinned to the
+    # int-* lines. See the class docstring - "water-table" needs only `zone`.
+    faces: str = "water-table"     # water-table | lines
+    # Measured total exchange [m3/s]. Overrides `conductivity` when set; normalised
+    # over the losing face. Left None, the exchange is kf-driven and responds to
+    # stage. With faces: lines and no value here, the int-* lines' own flow column is
+    # used (the original spelling).
+    discharge: float | None = None
+    # How far the losing/gaining faces may reach OUTSIDE the zone polygon [m]. The
+    # polygon usually outlines the bar itself, while the water it loses is in the
+    # channel beside it, so the faces need to reach the adjacent wetted edge. None
+    # -> one channel cell.
+    zone_buffer: float | None = None
+    # HOW the exchange is applied. Left "off", `enabled: true` selects "fortran" -
+    # the depth-limited, mass-exact USER_RAIN routine, which is what a gain-lose
+    # reach should use. Set it explicitly only to pick "region" (TELEMAC SOURCE
+    # REGIONS: no compiler needed, but a fixed-rate sink diverges as the local depth
+    # goes to zero - see test-approaches.md T2/T3). The default stays "off" so a case
+    # that carries int-* lines but no gain_lose block behaves exactly as before.
+    mode: str = "off"              # off | region | fortran
+    # WHERE the surface water is withdrawn from. This is a PHYSICAL choice, not a
+    # numerical one - see cases/isar-2025/test-approaches.md.
+    #   "line"  - a strip of boundaries.internal_source_region_width around the
+    #             losing LINE. Correct when the water percolates BENEATH a patch
+    #             that is dry on top: the surface loses water where it infiltrates
+    #             (the upstream edge of the patch, i.e. the line), then the flow
+    #             travels underground and resurfaces at the gaining line. The strip
+    #             must be wide enough that its WET area can supply the discharge -
+    #             on the Isar reach 12 m gives ~178 m2 -> 0.36 mm/s for
+    #             0.065 m3/s, while 3 m gives only 42 m2 -> 1.54 mm/s (over
+    #             max_rate).
+    #   "patch" - the whole percolation polygon. Only meaningful when the patch is
+    #             SUBMERGED, so there is surface water across it to withdraw. If
+    #             the patch is dry on top (the Isar case), this takes water that is
+    #             not there: the run stays stable but the exchange decays to almost
+    #             nothing and no water reaches the gaining line.
+    losing_region: str = "line"
+    depth_field: str = "porous depth (m)"   # attribute naming the porous depth
+    name_field: str = "Patch name"          # attribute naming each patch
+    min_depth: float = 0.05    # [m] never extract below this water depth (fortran)
+    taper_depth: float = 0.05  # [m] linear taper band above min_depth (fortran)
+    # SATURATED HYDRAULIC CONDUCTIVITY k_f [m/s] of the porous body - the parameter
+    # that sets how much water the reach exchanges. The withdrawal follows
+    # Green-Ampt's saturated limit,
+    #     f = k_f * (h + Lz + hf) / Lz   [m/s] per node,
+    # with Lz the porous depth and hf the wetting-front suction, so the exchange
+    # RESPONDS to water level instead of being fixed. Set `discharge` instead to
+    # prescribe a measured total and ignore k_f.
+    #
+    # WHERE TO LOOK VALUES UP - riverbed conductivity is not a textbook constant; it
+    # spans orders of magnitude with grain size and colmation, and varies within one
+    # site. The standard pooled compilation is
+    #     Calver, A. (2001), "Riverbed Permeabilities: Information from Pooled Data",
+    #     Ground Water 39(4), 546-553.  doi:10.1111/j.1745-6584.2001.tb02343.x
+    #     https://ngwa.onlinelibrary.wiley.com/doi/10.1111/j.1745-6584.2001.tb02343.x
+    # which assembles published riverbed values over 1e-9 .. 1e-2 m/s, concentrated
+    # in 1e-7 .. 1e-3 m/s. As a starting bracket for a gravel bed:
+    #     clean open-framework gravel   1e-2 .. 1e-1
+    #     moderately colmated gravel    1e-4 .. 1e-3     <- typical alluvial bar
+    #     strongly colmated / silted    1e-7 .. 1e-5
+    # Because the plausible range is this wide, k_f is exposed to HydroBayesCal as
+    # the calibration parameter `gainlose_kf` (see targets.PARAMETER_CATALOG): pick a
+    # bracket from the reference and let the calibration find the value.
+    #
+    # NB TELEMAC's own Green-Ampt (RAINFALL-RUNOFF MODEL 3) cannot be used for this:
+    # it abstracts infiltration from RAINFALL only (no rain -> no infiltration) and
+    # is a pure sink with no way to return the water. Only its formula is reused.
+    conductivity: float | None = None   # k_f [m/s]; ~1e-4..1e-3 for a colmated gravel bed
+    suction: float = 0.2                # hf [m], Green-Ampt wetting-front suction
+    porous_depth: float = 0.5           # Lz [m] fallback when the patch layer has no field
+    # [m/s] absolute ceiling on the local withdrawal rate (fortran). The routine
+    # normalises the target discharge over the currently WET part of the patch, so
+    # a patch that is only half submerged still delivers the full Q; this ceiling
+    # stops that concentration from becoming a point sink if the wet area shrinks
+    # to almost nothing. 1 mm/s is ~20x the rate a fully wet Isar patch needs.
+    max_rate: float = 0.001
+    # Also DRAIN standing surface water off the patch itself (fortran mode). The
+    # patch is a porous gravel bar: water lying on top of it infiltrates rather than
+    # ponding, so any surface water there is an artefact of the 2D model, which has
+    # no subsurface to take it. With losing_region: line the prescribed exchange is
+    # withdrawn from the channel at the losing line and nothing removes water that
+    # stands on the bar - on isar-2025 that left 620 m2 of it perched above the
+    # local water surface. The drain is an ADDITIONAL losing region covering the
+    # patch (outside the strips already used by the prescribed exchange), depth-
+    # limited by the same min_depth / taper_depth guard, and whatever it takes is
+    # added to what the gaining line reinjects - so the routine stays mass-exact and
+    # the prescribed exchange is never double-counted. Redundant (and skipped) when
+    # losing_region is already 'patch'.
+    patch_drain: bool = False
+    # WATER TABLE under the porous patch. "phreatic" represents the bar's saturated
+    # zone as the surface joining the two channel water levels the bar exchanges with
+    # - the losing line upstream and the gaining line downstream - fitted as a plane
+    # (that IS the water table of the through-flow, and its gradient is what drives
+    # the exchange). It does two things:
+    #   * the pre-wet seeds any ground below it, so closed depressions on the bar
+    #     start full. They can never fill otherwise: a depression sitting ABOVE the
+    #     channel cannot be reached by surface flow, and the drainable-seed filter
+    #     deliberately refuses to seed it.
+    #   * the patch drain tapers to zero at the table instead of at min_depth, so it
+    #     clears standing water off the bar top but cannot empty a pool that cuts
+    #     below the water table.
+    # On isar-2025 the plane (817.318 m at the losing line -> 816.807 m at the
+    # gaining line, gradient 7.18 permille, residual 0.054 m) wets 116 m2 / 10.4 m3
+    # inside the patch - filling the 0.33 m deep pool to its rim - while leaving 95 %
+    # of the patch dry with 0.37 m of freeboard. It is clipped to the patch polygon:
+    # the same plane would sit above 22 598 m2 of bed elsewhere in the domain.
+    water_table: str = "off"                    # off | phreatic (needs mode: fortran)
+    # Explicit water level [m a.s.l.] per internal line, e.g.
+    #   {losing: 817.318, gaining: 816.807}
+    # Left unset, the levels are read off the seeded normal-depth surface at build
+    # time, which on this case lands within +-0.07 m of the converged levels - and
+    # with opposite signs at the two ends, so mid-patch (where the pool is) the two
+    # agree to ~2 mm. Set it when the converged levels are known.
+    water_table_levels: dict | None = None
+    # [m/s] ceiling on the patch drain, in BOTH exchange modes. Defaults to max_rate,
+    # which is loose enough not to bind. It matters because the Green-Ampt rate
+    # applies over the whole WET patch, and the patch toe is genuinely wetted by the
+    # channel: uncapped, the drain keeps drawing from that toe rather than only
+    # clearing the water standing on the bar, and the total exchange reinjected at
+    # the gaining line grows well past the calibrated one. Set it when the drain is
+    # meant only to remove standing water (on isar-2025 the drain settled around
+    # 0.05 m3/s against a ~0.10 m3/s calibrated exchange).
+    patch_drain_max_rate: float | None = None
+
+    @property
+    def active(self) -> bool:
+        """True when a gain-lose exchange is to be built.
+
+        ``enabled`` is the new switch; the deprecated ``percolation:`` block said the
+        same thing with ``mode`` other than ``off``, so both are honoured.
+        """
+        return bool(self.enabled) or self.mode != "off"
+
+    @property
+    def implementation(self) -> str:
+        """``fortran`` | ``region`` - how the exchange is applied.
+
+        ``fortran`` is the default for a newly enabled reach; ``mode`` only has to be
+        set to choose ``region`` (or by an old config that spelled it out).
+        """
+        return "fortran" if self.mode == "off" else self.mode
+
+    def validate(self) -> None:
+        if self.mode not in ("off", "region", "fortran"):
+            raise ValueError(
+                f"gain_lose.mode must be 'off', 'region' or 'fortran', got {self.mode!r}"
+            )
+        if self.faces not in ("water-table", "lines"):
+            raise ValueError("gain_lose.faces must be 'water-table' or 'lines', got "
+                             f"{self.faces!r}")
+        if self.losing_region not in ("patch", "line"):
+            raise ValueError(
+                "gain_lose.losing_region must be 'patch' or 'line', got "
+                f"{self.losing_region!r}"
+            )
+        if not self.active:
+            return
+        if self.zone is None or not Path(self.zone).exists():
+            raise FileNotFoundError(
+                "gain_lose.enabled requires gain_lose.zone (the porous body, a "
+                f"polygon layer); not found: {self.zone}"
+            )
+        if self.discharge is not None and self.discharge < 0:
+            raise ValueError("gain_lose.discharge is the TOTAL exchange and must be "
+                             f"positive (got {self.discharge})")
+        if self.patch_drain and self.implementation != "fortran":
+            raise ValueError(
+                "gain_lose.patch_drain needs gain_lose.mode: fortran - the drain "
+                "is a depth-limited withdrawal only the generated USER_RAIN routine "
+                f"can apply (implementation is {self.implementation!r})"
+            )
+        if self.water_table not in ("off", "phreatic"):
+            raise ValueError("gain_lose.water_table must be 'off' or 'phreatic', "
+                             f"got {self.water_table!r}")
+        if self.water_table != "off" and self.implementation != "fortran":
+            raise ValueError(
+                "gain_lose.water_table: phreatic needs gain_lose.mode: fortran - "
+                "the table is the drain's taper floor inside the generated USER_RAIN "
+                f"routine (implementation is {self.implementation!r})"
+            )
+        # last, because it is the least structural: with faces: lines the int-* lines'
+        # own flow column can still supply the magnitude, so this only binds when the
+        # faces come from the water table and there is nothing else to size them with
+        if (self.faces == "water-table" and self.discharge is None
+                and self.conductivity is None):
+            raise ValueError(
+                "gain_lose needs a magnitude: set `conductivity` (kf, the physical "
+                "and calibratable route - see the reference in the config comment) "
+                "or `discharge` (a measured total). With faces: lines the int-* "
+                "lines' own flow column can supply it instead."
+            )
+        if self.water_table_levels is not None:
+            unknown = set(self.water_table_levels) - {"losing", "gaining"}
+            if unknown:
+                raise ValueError(
+                    "gain_lose.water_table_levels keys must be 'losing' and/or "
+                    f"'gaining', got {sorted(unknown)}"
+                )
+
+
+#: Deprecated alias - the block was called ``Percolation`` while the feature lived in
+#: the isar-2025 case. Kept so existing imports and case scripts keep working.
+Percolation = GainLose
+
+
+@dataclass
+class Drying:
+    """Removal of water too thin to be surface flow (a generated USER_RAIN term).
+
+    On a coarse bed, water thinner than the grain roughness is not flowing over the
+    bed - it is standing *within* it, and physically it drains into the substrate. A
+    2D model has no substrate, so that water stays put and paints a wetted area far
+    larger than the reach actually has: on isar-2025 the sub-centimetre band covered
+    1503 m2 (13 % of the wetted area) while holding 4.4 m3 (0.16 % of the volume), at
+    a mean speed of 0.000 m/s.
+
+    TELEMAC offers no keyword for this. ``H CLIPPING`` + ``MINIMUM VALUE OF DEPTH``
+    do the opposite - the dico states the truncation "is equivalent to adding mass" -
+    and are marked "not fully implemented". So the withdrawal is generated into the
+    same ``USER_RAIN`` routine the percolation exchange uses.
+
+    The extracted water is **reinjected at the gaining line** together with the
+    percolation water, which keeps the domain mass-exact. That matters for more than
+    tidiness: a net domain sink S makes the steady-state boundary budget read
+    ``|Q_in| - |Q_out| = S``, so a permanent sink would put a floor under the
+    relative flux imbalance (0.0044 m3/s against 2.4 m3/s is 1.8e-3, above the 1e-3
+    hydraulic tolerance) and no hotstart case would ever be written.
+    """
+
+    film_infiltration: bool = False
+    # A node is treated as film when it is BOTH shallower than film_depth and slower
+    # than film_velocity. The velocity gate is what keeps the term off the active
+    # wet/dry margin, where the flow genuinely delivers water.
+    film_depth: float = 0.01       # [m] below this depth the water may be film
+    film_velocity: float = 0.005   # [m/s] ... and below this speed it is film
+    # [m/s] withdrawal rate applied to film nodes, capped by the same
+    # half-the-available-water-per-step limiter as the percolation sink, so it can
+    # never dry a cell. 1e-5 m/s clears a 5 mm film in ~500 s.
+    film_rate: float = 1.0e-5
+
+    def validate(self, percolation=None) -> None:
+        if not self.film_infiltration:
+            return
+        if self.film_depth <= 0 or self.film_velocity <= 0 or self.film_rate <= 0:
+            raise ValueError(
+                "drying.film_depth, film_velocity and film_rate must all be positive "
+                "when drying.film_infiltration is on"
+            )
+        if percolation is not None and not (
+                percolation.active and percolation.implementation == "fortran"):
+            raise ValueError(
+                "drying.film_infiltration currently needs a gain-lose reach in "
+                "fortran mode. "
+                "The term is generated into the same USER_RAIN routine, and the water "
+                "it withdraws is reinjected at the percolation gaining line so the "
+                "domain stays mass-exact - without a gaining line there is nowhere "
+                "for it to go, and a net sink would put a floor under the boundary "
+                f"flux imbalance (gain_lose is {percolation.implementation!r}, "
+                f"active={percolation.active})"
+            )
 
 
 @dataclass
@@ -401,6 +790,26 @@ class Hydrodynamics:
     # default 1.0). Lower values (e.g. 0.1) under-damp and let the surface oscillate
     # into divergence on the high-aspect channel mesh.
     free_surface_gradient_compat: float = 0.9
+    # CONTROL OF LIMITS + LIMIT VALUES: clip H/U/V/T so a local spike cannot cascade
+    # to NaN (a divergence guard). Config-driven so switching it off for a diagnosis
+    # is reproducible instead of a hand-edit to the generated .cas (lost on rebuild).
+    control_of_limits: bool = True
+    # Relative boundary-flux imbalance accepted as "converged" by the steady-run
+    # analysis (hydromate.flux_convergence). 1e-3 is the right grade when the result
+    # is read as discharge / water depth / velocity - it is far inside field
+    # measurement uncertainty and inside the mesh-convergence tolerance. Tighten to
+    # 1e-4 when the result seeds a HydroBayesCal hotstart fleet, where a residual
+    # transient would be inherited by every perturbed run.
+    flux_tolerance: float = 1.0e-3
+    # Depth [m] at or below which a node is NOT counted as wetted by the
+    # wetted-extent report (hydromate.wetting). This is a REPORTING convention, not a
+    # model change: on a bed with Nikuradse ks 0.05-0.5 m, water 5 mm deep sits inside
+    # the grain roughness and is not surface flow at all. On isar-2025 the sub-cm band
+    # covered 1503 m2 - 13 % of the wetted AREA - while holding 4.4 m3, i.e. 0.16 % of
+    # the volume: negligible in any budget, dominant in any picture. Use the same
+    # threshold when filtering the result in ParaView so the picture and the report
+    # agree. To actually remove that water from the model, see the `drying` block.
+    wet_depth: float = 0.01
     # FE advection robustness for the distributive velocity scheme (14):
     #   implicitation 0.80 -> more implicit (stable) depth/velocity update (TELEMAC
     #     default 0.55, which is too explicit for the wetting front here);
@@ -633,6 +1042,10 @@ class Config:
     calibration: Calibration
     # DoD computation (optional; disabled by default so existing cases are unaffected)
     dem_of_difference: DemOfDifference = field(default_factory=DemOfDifference)
+    # gain-lose reach: flow through a porous body (optional; off by default)
+    gain_lose: GainLose = field(default_factory=GainLose)
+    # removal of water too thin to be surface flow (optional; off by default)
+    drying: Drying = field(default_factory=Drying)
 
     # canonical output filenames inside model_dir -----------------------------
     geometry_slf: str = "geometry.slf"
@@ -651,6 +1064,9 @@ class Config:
     results3d_unsteady_slf: str = "r3d-unsteady.slf"       # unsteady telemac3d 3D RESULT FILE
     results2d_from_3d_unsteady_slf: str = "r3d-2d-unsteady.slf"  # unsteady 3D 2D RESULT FILE
     ic_slf: str = "initial-conditions.slf"   # hotstart file when prewet_depth is set
+    # internal source/sink polygons (SOURCE REGIONS DATA FILE) for a losing-gaining reach
+    source_regions_file: str = "source-regions.txt"
+    user_fortran_dir: str = "user_fortran"   # FORTRAN FILE folder (percolation.mode: fortran)
     friction_tbl: str = "friction.tbl"
     zones_file: str = "zones.bfr"
     gaia_cas: str = "gaia.cas"
@@ -713,6 +1129,9 @@ class Config:
                 "morphodynamics.enabled but no geodata.dem_target / dem_of_difference "
                 "provided for topographic-change calibration data."
             )
+        self.percolation.validate()
+        self.initialization.validate()
+        self.drying.validate(self.percolation)
         self.dem_of_difference.validate()
         if self.dem_of_difference.enabled and self.geodata.dem_target is None \
                 and self.geodata.dem_of_difference is None:
@@ -721,10 +1140,62 @@ class Config:
                 "against geodata.dem_initial) nor a precomputed geodata.dem_of_difference."
             )
 
+    @property
+    def percolation(self) -> GainLose:
+        """Deprecated alias for :attr:`gain_lose`.
+
+        ``percolation`` was the name while the feature lived in the isar-2025 case;
+        it is now core hydromate and is spelled ``gain_lose``. Kept so existing case
+        scripts and configs keep working.
+        """
+        return self.gain_lose
+
     def ensure_dirs(self) -> None:
         for d in (self.preprocessing_dir, self.model_dir,
                   self.postprocessing_dir, self.calibration_dir):
             Path(d).mkdir(parents=True, exist_ok=True)
+
+
+def _load_gain_lose(raw: dict, cfg_dir: Path) -> GainLose:
+    """Build the :class:`GainLose` block from ``gain_lose:`` or the deprecated
+    ``percolation:``.
+
+    The feature was called *percolation* while it lived in the isar-2025 case; it is
+    now core and spelled ``gain_lose``. The old block still loads, mapped onto the
+    new fields:
+
+    * ``mode: off`` meant "no exchange", which is now ``enabled: false``; any other
+      mode means enabled;
+    * ``losing_region: line`` pinned the exchange to the ``int-*`` lines, which is
+      now ``faces: lines`` (``patch`` mapped to the zone, i.e. ``water-table``);
+    * everything else keeps its name.
+
+    A config carrying both blocks is a mistake worth surfacing rather than resolving
+    silently.
+    """
+    new = dict(raw.get("gain_lose") or {})
+    old = dict(raw.get("percolation") or {})
+    if new and old:
+        raise ValueError(
+            "config has both `gain_lose:` and the deprecated `percolation:` block - "
+            "keep only `gain_lose:` (see the GainLose docstring for the mapping)"
+        )
+    if old:
+        log.warning("`percolation:` is deprecated - rename the block to `gain_lose:` "
+                    "(mode -> enabled, losing_region -> faces); loading it as before")
+        new = old
+        if "mode" in new:
+            new.setdefault("enabled", str(new["mode"]).lower() != "off")
+        else:
+            new.setdefault("enabled", True)
+        if "losing_region" in new:
+            new.setdefault(
+                "faces", "lines" if new["losing_region"] == "line" else "water-table")
+        else:
+            new.setdefault("faces", "lines")   # the old default was the int-* lines
+    if "zone" in new and new["zone"] is not None:
+        new["zone"] = _resolve(cfg_dir, new["zone"])
+    return GainLose(**_only_known(GainLose, new))
 
 
 def load_config(path: str | os.PathLike) -> Config:
@@ -754,8 +1225,10 @@ def load_config(path: str | os.PathLike) -> Config:
 
     # geodata (resolve every path against the config dir)
     gdict = dict(raw.get("geodata") or {})
+    _geodata_scalars = {"control_section_name_field"}   # plain strings, not paths
     for key in list(gdict):
-        gdict[key] = _resolve(cfg_dir, gdict[key])
+        if key not in _geodata_scalars:
+            gdict[key] = _resolve(cfg_dir, gdict[key])
     geodata = Geodata(**_only_known(Geodata, gdict))
 
     # boundaries: liquid-boundary lines / inflow / rating are paths; the rest scalars
@@ -798,6 +1271,8 @@ def load_config(path: str | os.PathLike) -> Config:
     morph = Morphodynamics(**_only_known(Morphodynamics, raw.get("morphodynamics", {}) or {}))
     dod = DemOfDifference(
         **_only_known(DemOfDifference, raw.get("dem_of_difference", {}) or {}))
+    gain_lose = _load_gain_lose(raw, cfg_dir)
+    drying = Drying(**_only_known(Drying, raw.get("drying", {}) or {}))
     calib = Calibration.from_dict(raw.get("calibration", {}) or {})
 
     cfg = Config(
@@ -819,6 +1294,8 @@ def load_config(path: str | os.PathLike) -> Config:
         ground_truth=ground_truth,
         calibration=calib,
         dem_of_difference=dod,
+        gain_lose=gain_lose,
+        drying=drying,
     )
     # apply optional output-filename overrides
     for key, value in (raw.get("outputs", {}) or {}).items():

@@ -1,12 +1,12 @@
 """Flux / mass-balance (hotstart) convergence analysis.
 
-The novel hydromate-side logic is (a) aggregating Telemac's signed per-boundary
-fluxes into gross inflow/outflow, and (b) turning pythomac's converged printout
-index into a ``NUMBER OF TIME STEPS`` recommendation. Those are exercised here with
-a synthetic converging flux table fed in place of the ``.sortie`` parser, while the
-convergence maths come from the real pythomac functions (the package the feature
-delegates to). pythomac is the user's local checkout; the tests skip if it is not
-importable.
+Everything under test is hydromate's own: the ``.sortie`` listing parser
+(:mod:`hydromate.sortie`), the convergence maths (relative flux imbalance,
+convergence rate, the converged printout), the absolute steady-window detection and
+the derived hotstart steering file. The analysis used to delegate to the ``pythomac``
+package; it no longer does (see the :mod:`hydromate.flux_convergence` docstring), so
+these tests drive it end to end from a **synthetic listing written in TELEMAC's real
+output format** rather than by stubbing out the parser.
 
 Run via:
     mamba run -n hydromate-env pytest tests/test_flux_convergence.py
@@ -14,32 +14,21 @@ Run via:
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
-import pandas as pd
 import pytest
 
-from hydromate import flux_convergence
-from hydromate.flux_convergence import (_gross_in_out, _mean_balance_time,
-                                        analyze_flux_convergence,
-                                        find_steady_window)
-
-
-def _pythomac():
-    """Import pythomac's real convergence helpers, or skip the test."""
-    try:
-        from pythomac import calculate_convergence, get_convergence_time  # noqa: F401
-    except ModuleNotFoundError:
-        candidate = Path(os.environ.get("PYTHOMAC_DIR", "/home/schwindt/github/pythomac"))
-        if not (candidate / "pythomac").is_dir():
-            pytest.skip("pythomac not importable")
-        sys.path.insert(0, str(candidate))
-    from pythomac import calculate_convergence, get_convergence_time
-    return calculate_convergence, get_convergence_time
+from hydromate.flux_convergence import (
+    _mean_balance_time,
+    analyze_flux_convergence,
+    convergence_index,
+    convergence_rate,
+    find_steady_window,
+    relative_imbalance,
+)
+from hydromate.sortie import latest_sortie, read_sortie
 
 
 def _stub_cfg(model_dir, *, period=50, dt=1.0, n_steps=10000, cas="steady2d.cas"):
@@ -70,36 +59,122 @@ INITIAL TIME SET TO ZERO : YES
 """
 
 
-def _fake_extract(imbalance, model_dir):
-    """Return a stand-in for pythomac.extract_fluxes yielding a signed two-boundary
-    flux table whose relative imbalance follows *imbalance* (inflow +, outflow -)."""
-    q_in = np.full(imbalance.size, 47.0)
-    q_out = -q_in * (1.0 - imbalance)            # outflow reported negative
+def _write_sortie(model_dir, fluxes, *, times=None, volumes=None,
+                  cas="steady2d.cas", stamp="2026-01-01-00h00min00s",
+                  study="stub steady", per_processor=0):
+    """Write a listing in TELEMAC's real ``.sortie`` format.
 
-    def fake(model_directory="", cas_name="", plotting=True):
-        idx = np.arange(imbalance.size, dtype=float)
-        df = pd.DataFrame({"Fluxes Boundary 1": q_in,
-                           "Fluxes Boundary 2": q_out}, index=idx)
-        # mimic the real extract_fluxes side effects: the fluxes CSV + plot
-        df.to_csv(Path(model_directory) / "extracted-fluxes.csv")
-        if plotting:
-            (Path(model_directory) / "flux-convergence.png").write_bytes(b"")
-        return df
-    return fake
+    *fluxes* is (n_printouts, n_boundaries), signed as TELEMAC prints them (inflow
+    positive, outflow negative). Optionally also writes *per_processor* rank copies,
+    which the analysis is expected to delete.
+    """
+    fluxes = np.atleast_2d(np.asarray(fluxes, dtype=float))
+    n, n_bnd = fluxes.shape
+    times = np.arange(1, n + 1, dtype=float) if times is None else np.asarray(times, float)
+    volumes = np.full(n, 1234.5) if volumes is None else np.asarray(volumes, float)
+
+    lines = [" EXITING LECDON. NAME OF THE STUDY:", f"    {study}", ""]
+    for i in range(n):
+        lines.append(f" ITERATION {(i + 1) * 50:8d}    TIME: {times[i]:9.4f} S")
+        lines.append("                       BALANCE OF WATER VOLUME    ")
+        lines.append(f"     VOLUME IN THE DOMAIN : {volumes[i]:14.6f}     M3")
+        for b in range(n_bnd):
+            lines.append(f"     FLUX BOUNDARY {b + 1:4d}: {fluxes[i, b]:15.7f}     "
+                         "M3/S  ( >0 : ENTERING  <0 : EXITING )")
+        lines.append(f"     RELATIVE ERROR IN VOLUME AT T = {times[i]:12.2f}     S :"
+                     f"   -0.1008281E-14")
+        lines.append("     MAXIMUM COURANT NUMBER:    0.1739105    ")
+    lines += ["", " 3 MINUTES", ""]
+
+    main = Path(model_dir) / f"{cas}_{stamp}.sortie"
+    main.write_text("\n".join(lines) + "\n")
+    for rank in range(1, per_processor + 1):
+        (Path(model_dir) / f"{cas}_{stamp}_p{rank:05d}.sortie").write_text("partial\n")
+    return main
 
 
-def test_gross_in_out_aggregates_by_sign_and_drops_dry_rows():
-    # three boundaries: two inflow (+), one outflow (-); first row is the dry start
-    df = pd.DataFrame({
-        "Fluxes Boundary 1": [0.0, 30.0, 31.0],
-        "Fluxes Boundary 2": [0.0, 17.0, 16.0],
-        "Fluxes Boundary 3": [0.0, -45.0, -47.0],
-        "Volumes (m3/s)": [0.0, 1.0, 2.0],         # ignored (no "flux" in name)
-    })
-    times, gin, gout = _gross_in_out(df)
-    assert gin.tolist() == [47.0, 47.0]            # 30+17, 31+16; dry row dropped
-    assert gout.tolist() == [45.0, 47.0]
-    assert times.tolist() == [1.0, 2.0]            # index rows of the kept printouts
+def _two_boundary(imbalance, q=47.0):
+    """Signed (inflow, outflow) columns whose relative imbalance follows *imbalance*."""
+    imbalance = np.asarray(imbalance, dtype=float)
+    return np.column_stack([np.full(imbalance.size, q), -q * (1.0 - imbalance)])
+
+
+# --------------------------------------------------------------------------- #
+# the listing parser
+# --------------------------------------------------------------------------- #
+
+
+def test_sortie_parses_blocks_and_aggregates_by_sign(tmp_path):
+    """Three boundaries, two inflow and one outflow: the gross totals sum by sign,
+    and every array stays aligned with the time read from inside each block."""
+    fluxes = np.array([[30.0, 17.0, -45.0],
+                       [31.0, 16.0, -47.0],
+                       [30.5, 16.5, -47.0]])
+    path = _write_sortie(tmp_path, fluxes, times=[10.0, 20.0, 30.0],
+                         volumes=[100.0, 110.0, 111.0])
+    s = read_sortie(path)
+
+    assert s.study == "stub steady"
+    assert s.n_boundaries == 3
+    assert s.time.tolist() == [10.0, 20.0, 30.0]
+    assert s.volume.tolist() == [100.0, 110.0, 111.0]
+    assert s.gross_in == pytest.approx([47.0, 47.0, 47.0])
+    assert s.gross_out == pytest.approx([45.0, 47.0, 47.0])
+    assert s.iteration.tolist() == [50, 100, 150]
+    assert s.printout_interval == pytest.approx(10.0)
+    assert s.exec_seconds == 180.0                       # "3 MINUTES"
+    # no fabricated leading sample: one row per printed block
+    assert s.fluxes.shape == (3, 3)
+
+
+def test_sortie_skips_a_block_truncated_mid_write(tmp_path):
+    """A run killed part-way through a balance block must not yield a half row."""
+    path = _write_sortie(tmp_path, _two_boundary(np.array([0.5, 0.1])))
+    with open(path, "a") as fh:                          # start a block, never finish
+        fh.write("                       BALANCE OF WATER VOLUME    \n")
+        fh.write("     VOLUME IN THE DOMAIN :    9999.000     M3\n")
+        fh.write("     FLUX BOUNDARY    1:    47.0000000     M3/S\n")
+    s = read_sortie(path)
+    assert s.time.size == 2                              # the partial block is dropped
+    assert 9999.0 not in s.volume.tolist()
+
+
+def test_sortie_rejects_a_listing_without_flux_printouts(tmp_path):
+    p = tmp_path / "steady2d.cas_2026-01-01-00h00min00s.sortie"
+    p.write_text(" ITERATION      500    TIME:  28.5672 S\n")
+    with pytest.raises(ValueError, match="PRINTING CUMULATED FLOWRATES"):
+        read_sortie(p)
+
+
+def test_latest_sortie_ignores_per_processor_copies(tmp_path):
+    _write_sortie(tmp_path, _two_boundary(np.array([0.1])),
+                  stamp="2026-01-01-00h00min00s", per_processor=3)
+    newest = _write_sortie(tmp_path, _two_boundary(np.array([0.1])),
+                           stamp="2026-01-02-00h00min00s", per_processor=3)
+    found = latest_sortie(tmp_path, "steady2d.cas")
+    assert found == newest and "_p0" not in found.name
+
+
+# --------------------------------------------------------------------------- #
+# convergence maths
+# --------------------------------------------------------------------------- #
+
+
+def test_relative_imbalance_and_convergence_index():
+    eps = np.array([1.0, 1e-2, 1e-5, 1e-7, 1e-8])
+    fluxes = _two_boundary(eps)
+    assert relative_imbalance(fluxes[:, 0], -fluxes[:, 1]) == pytest.approx(eps)
+    assert convergence_index(eps, 1e-6) == 3              # 1e-5 is still above 1e-6
+    assert convergence_index(eps, 1e-9) is None           # never reached
+    # a transient dip that is later lost is not convergence
+    assert convergence_index(np.array([1.0, 1e-9, 1e-2]), 1e-6) is None
+
+
+def test_convergence_rate_is_nan_while_the_imbalance_is_flat():
+    flat = convergence_rate(np.full(10, 1.0))
+    assert flat.size == 9 and np.all(np.isnan(flat))      # log base 1 -> undefined
+    decaying = convergence_rate(10.0 ** (-np.arange(5.0)))
+    assert np.isfinite(decaying[1:]).all()
 
 
 def test_find_steady_window_requires_consecutive_printouts():
@@ -126,34 +201,34 @@ def test_mean_balance_time_averages_out_steady_noise():
     assert secs == 0.0                              # balanced in the mean from the start
 
 
-def test_converges_and_recommends_time_steps(tmp_path, monkeypatch):
-    calc, getconv = _pythomac()
-    # imbalance decays past 1e-6 and stays there from a known printout onward
+# --------------------------------------------------------------------------- #
+# end to end
+# --------------------------------------------------------------------------- #
+
+
+def test_converges_and_recommends_time_steps(tmp_path):
     eps = 10.0 ** (-(np.arange(60) / 6.0))         # 1e0 .. 1e-9.8
-    monkeypatch.setattr(flux_convergence, "_import_pythomac",
-                        lambda *_: (_fake_extract(eps, tmp_path), calc, getconv))
-
-    period = 50
-    cfg = _stub_cfg(tmp_path, period=period, dt=1.0)
+    times = np.arange(1, 61, dtype=float) * 20.0
+    _write_sortie(tmp_path, _two_boundary(eps), times=times, per_processor=4)
     (tmp_path / "steady2d.cas").write_text(_STEADY_CAS)
-    fc = analyze_flux_convergence(cfg, tolerance=1e-6)
 
-    # independently reproduce pythomac's converged index from the same series
-    iota = calc(np.full(eps.size, 47.0), 47.0 * (1.0 - eps), cas_timestep=period)
-    idx = getconv(iota["Relative imbalance"].to_numpy(), convergence_precision=1e-6)
+    fc = analyze_flux_convergence(_stub_cfg(tmp_path), tolerance=1e-6)
 
+    idx = convergence_index(eps, 1e-6)
     assert fc.converged is True
-    assert fc.converged_time_steps == int(idx) * period
-    # converged time = idx * cas_timestep; the fake's index is 0,1,2,... so the
-    # back-calculated cas_timestep is 1.0 s
-    assert fc.converged_seconds == float(int(idx))
+    # the converged time/iteration are read off the listing at that printout, not
+    # estimated from a nominal spacing (a CFL-adaptive run has none)
+    assert fc.converged_seconds == pytest.approx(times[idx])
+    assert fc.converged_time_steps == (idx + 1) * 50
     assert fc.final_imbalance < 1e-6
-    # the same four files pythomac's example produces are written into model_dir
     for p in (fc.fluxes_csv, fc.flux_plot, fc.rate_csv, fc.rate_plot):
         assert p is not None and p.exists(), f"missing convergence output: {p}"
     assert {p.name for p in (fc.fluxes_csv, fc.flux_plot, fc.rate_csv, fc.rate_plot)} == {
         "extracted-fluxes.csv", "flux-convergence.png",
         "convergence-rate.csv", "convergence-rate.png"}
+    # the per-processor listing copies are cleaned up, the main one kept
+    assert not list(tmp_path.glob("*_p0*.sortie"))
+    assert latest_sortie(tmp_path, "steady2d.cas") is not None
 
     # the absolute steady window is found strictly and the hotstart case is derived
     assert fc.steady_seconds is not None and fc.steady_strict is True
@@ -166,28 +241,149 @@ def test_converges_and_recommends_time_steps(tmp_path, monkeypatch):
     assert "PRESCRIBED ELEVATIONS : 329.2400;0." in hot          # H kept alive
 
 
-def test_not_converged_when_tolerance_never_met(tmp_path, monkeypatch):
-    calc, getconv = _pythomac()
-    eps = np.full(40, 1e-3)                          # plateau above any tight tol
-    monkeypatch.setattr(flux_convergence, "_import_pythomac",
-                        lambda *_: (_fake_extract(eps, tmp_path), calc, getconv))
-
+def test_not_converged_when_tolerance_never_met(tmp_path):
+    _write_sortie(tmp_path, _two_boundary(np.full(40, 1e-3)))
     fc = analyze_flux_convergence(_stub_cfg(tmp_path), tolerance=1e-6)
     assert fc.converged is False
     assert fc.converged_time_steps is None
     assert fc.converged_seconds is None
 
 
-def test_filling_phase_falls_back_but_writes_all_four_files(tmp_path, monkeypatch):
+def test_filling_phase_still_writes_all_four_files(tmp_path):
     """A still-filling run has a flat imbalance (~1, outflow not yet established), so
-    pythomac's logn-based rate is all-NaN and its plot crashes; hydromate falls back
-    to a direct imbalance plot and still writes the four convergence files."""
-    calc, getconv = _pythomac()
-    eps = np.full(20, 1.0)                       # outflow ~0 while the reach fills
-    monkeypatch.setattr(flux_convergence, "_import_pythomac",
-                        lambda *_: (_fake_extract(eps, tmp_path), calc, getconv))
-
+    the log-based convergence rate is undefined everywhere. The analysis must still
+    produce all four files - the imbalance panel is exactly what one needs to see."""
+    _write_sortie(tmp_path, _two_boundary(np.full(20, 1.0)))
     fc = analyze_flux_convergence(_stub_cfg(tmp_path), tolerance=1e-4)
     assert fc.converged is False
     for p in (fc.fluxes_csv, fc.flux_plot, fc.rate_csv, fc.rate_plot):
         assert p is not None and p.exists(), f"missing convergence output: {p}"
+
+
+def test_dry_start_rows_without_inflow_are_dropped(tmp_path):
+    """Before the inflow establishes, the relative imbalance is 0/0; those printouts
+    must be dropped rather than poisoning the series with NaN."""
+    eps = 10.0 ** (-(np.arange(30) / 4.0))
+    fluxes = _two_boundary(eps)
+    fluxes[:3] = 0.0                                     # dry start: nothing flowing
+    _write_sortie(tmp_path, fluxes)
+    fc = analyze_flux_convergence(_stub_cfg(tmp_path), tolerance=1e-4,
+                                  write_hotstart=False)
+    assert fc.converged is True
+    assert np.isfinite(fc.final_imbalance)
+
+
+# --------------------------------------------------------------------------- #
+# GAIA / tracer mass balances (adopted from pythomac, re-derived from the
+# TELEMAC v9.1.1 FORMAT statements in gaia/mass_balance.f and telemac3d/bil3d.f)
+# --------------------------------------------------------------------------- #
+
+_GAIA_BLOCK = """\
+                    GAIA MASS-BALANCE OF SEDIMENTS PER CLASS:
+     SEDIMENT CLASS NUMBER                     =        1
+     INITIAL MASS                              =   0.1000000E+05  ( KG )
+     TOTAL MASS                                =   {total}  ( KG )
+     LOST MASS                                 =   {lost}  ( KG )
+     CUMULATED LOST MASS                       =   {cumlost}  ( KG )
+     EROSION FLUX                              =   0.2500000E+01  ( KG/S )
+     DEPOSITION FLUX                           =   0.1500000E+01  ( KG/S )
+     BEDLOAD FLUX BOUNDARY    1                =   0.7000000E+00  ( KG/S  >0 = ENTERING )
+     RELATIVE ERROR TO INITIAL ACT LAYER MASS  =   {relerr}
+                    GAIA MASS-BALANCE OF SEDIMENTS OVER ALL CLASSES:
+     TOTAL MASS                                =   {total}  ( KG )
+     LOST MASS                                 =   {lost}  ( KG )
+"""
+
+
+def test_sediment_mass_profile_reads_gaia_blocks(tmp_path):
+    from hydromate.sortie import sediment_mass_profile
+
+    p = tmp_path / "gaia.sortie"
+    p.write_text("".join(
+        _GAIA_BLOCK.format(total=f"0.{9000 + i}000E+04", lost=f"0.{i}000000E+01",
+                           cumlost=f"0.{i}500000E+01", relerr=f"0.{i}000000E-06")
+        for i in range(1, 4)))
+    mass = sediment_mass_profile(p)
+
+    assert set(mass) == {0, 1}                       # class 1 + the all-classes block
+    cls1 = mass[1]
+    assert cls1["total_mass"].size == 3
+    # 'CUMULATED LOST MASS' must not be swallowed by the shorter 'LOST MASS' label
+    assert cls1["lost_mass"] == pytest.approx([1.0, 2.0, 3.0])
+    assert cls1["cumulated_lost_mass"] == pytest.approx([1.5, 2.5, 3.5])
+    assert cls1["erosion_flux"] == pytest.approx([2.5] * 3)
+    assert cls1["deposition_flux"] == pytest.approx([1.5] * 3)
+    assert cls1["relative_error_active_layer"] == pytest.approx([1e-7, 2e-7, 3e-7])
+    # per-boundary bedload flux is keyed by boundary number
+    assert cls1["bedload_flux_boundary_1"] == pytest.approx([0.7] * 3)
+    assert mass[0]["total_mass"].size == 3
+
+
+def test_sediment_mass_profile_empty_without_gaia(tmp_path):
+    path = _write_sortie(tmp_path, _two_boundary(np.array([0.1, 0.05])))
+    from hydromate.sortie import sediment_mass_profile
+    assert sediment_mass_profile(path) == {}
+
+
+def test_tracer_mass_profile_skips_the_water_block(tmp_path):
+    from hydromate.sortie import tracer_mass_profile
+
+    p = tmp_path / "tracer.sortie"
+    p.write_text(
+        "  WATER :\n"
+        "QUANTITY AT THE PRESENT TIME STEP             :   0.9999000E+09\n"
+        "  TRACER  1: SUSPENDED SED  , UNIT :  KG/M3\n"
+        "QUANTITY AT THE PRESENT TIME STEP             :   0.1200000E+03\n"
+        "ERROR ON THE QUANTITY DURING THIS TIME STEP   :   0.1000000E-08\n"
+        "  TRACER  2: TEMPERATURE    , UNIT :  DEG C\n"
+        "QUANTITY AT THE PRESENT TIME STEP             :   0.3400000E+02\n"
+    )
+    tracers = tracer_mass_profile(p)
+    assert set(tracers) == {1, 2}
+    assert tracers[1]["total"] == pytest.approx([120.0])
+    assert tracers[1]["error"] == pytest.approx([1e-9])
+    assert tracers[2]["total"] == pytest.approx([34.0])
+    # the WATER balance uses the same wording and must not become a tracer
+    assert all(9.999e8 not in t["total"] for t in tracers.values())
+
+
+def test_find_lines_extracts_user_fortran_printouts(tmp_path):
+    from hydromate.sortie import find_lines
+
+    p = tmp_path / "run.sortie"
+    p.write_text(
+        " ITERATION      500    TIME:  28.5672 S\n"
+        " USER_RAIN PERCOLATION: CALL 500 DELIVERED 0.065 M3/S WET AREA 167.5 M2\n"
+        " USER_RAIN PERCOLATION: CALL 1000 DELIVERED 0.064 M3/S WET AREA 165.4 M2\n"
+    )
+    hits = find_lines(p, r"USER_RAIN PERCOLATION")
+    assert len(hits) == 2 and hits[0].startswith("USER_RAIN")
+    hits, numbers = find_lines(p, r"USER_RAIN", with_line_numbers=True)
+    assert numbers == [2, 3]
+
+
+def test_tolerance_grade_comes_from_the_config_and_scales_the_absolute_criterion(tmp_path):
+    """The relative tolerance defaults to hydrodynamics.flux_tolerance, and the
+    absolute steady criterion is derived from it times the discharge - so the
+    hotstart gate means the same thing on a 2 m3/s side channel and a 200 m3/s river
+    instead of being decided by the size of the case."""
+    from hydromate import flux_convergence as fcmod
+
+    eps = np.concatenate([np.full(10, 1e-2), np.full(30, 5e-4)])   # settles at 5e-4
+    _write_sortie(tmp_path, _two_boundary(eps, q=2.0))
+    (tmp_path / "steady2d.cas").write_text(_STEADY_CAS)
+
+    cfg = _stub_cfg(tmp_path)
+    cfg.hydrodynamics.flux_tolerance = fcmod.HYDRAULIC_TOLERANCE       # 1e-3
+    cfg.boundaries = SimpleNamespace(prescribed_flowrate=2.0)
+
+    loose = analyze_flux_convergence(cfg)
+    assert loose.converged is True                       # 5e-4 clears the 1e-3 grade
+    assert loose.tolerance == pytest.approx(1e-3)
+    # abs criterion = 1e-3 * 2.0 m3/s; the imbalance is 5e-4*2.0 = 1e-3 m3/s, inside it
+    assert loose.steady_abs_tolerance == pytest.approx(2e-3)
+    assert loose.steady_seconds is not None and loose.hotstart_cas is not None
+
+    strict = analyze_flux_convergence(cfg, tolerance=fcmod.HOTSTART_TOLERANCE)
+    assert strict.converged is False                     # 5e-4 misses the 1e-4 grade
+    assert strict.steady_abs_tolerance == pytest.approx(2e-4)

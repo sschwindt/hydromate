@@ -79,11 +79,18 @@ def synthesize_rating_if_missing(cfg: Config, discharge: float,
     if cfg.boundaries.outflow_condition != "stage_discharge":
         return None
     sd = cfg.boundaries.stage_discharge
+    method = getattr(cfg.boundaries, "rating_method", "trapezoid")
     if sd is not None and Path(sd).exists():
         return Path(sd)
-    path = synthesize_outflow_rating(cfg, discharge, side_slope=side_slope)
+    out = Path(sd) if sd is not None else cfg.preprocessing_path("rating-curve.csv")
+    if method == "section":
+        from hydromate.rating import synthesize_outflow_rating_from_section
+        path = synthesize_outflow_rating_from_section(cfg, discharge, out=out)
+    else:
+        path = synthesize_outflow_rating(cfg, discharge, side_slope=side_slope, out=out)
     cfg.boundaries.stage_discharge = path
-    log.info("generated outflow rating curve at Q=%g m3/s -> %s", discharge, path)
+    log.info("generated outflow rating curve (%s) at Q=%g m3/s -> %s",
+             method, discharge, path)
     return path
 
 
@@ -117,7 +124,7 @@ def format_flux_convergence(fc) -> list[str]:
     hotstart time-step recommendation, and the produced csv/png paths).
 
     Kept here so every case's ``initial_run.py`` prints the convergence summary the
-    same way; the analysis itself is the pythomac binding in
+    same way; the analysis itself lives in
     :mod:`hydromate.flux_convergence`.
     """
     lines: list[str] = []

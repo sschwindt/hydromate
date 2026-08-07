@@ -413,7 +413,7 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
         f"2D RESULT FILE : {results2d_name or cfg.results2d_from_3d_slf}",
         "MASS-BALANCE : YES",
         # per-boundary flux printouts in the listing - what the boundary-flux
-        # convergence analysis (hydromate.flux_convergence / pythomac) reads
+        # convergence analysis (hydromate.flux_convergence) reads
         "PRINTING CUMULATED FLOWRATES : YES",
         "/",
         *hotstart_lines,

@@ -89,7 +89,7 @@ class TelemacRuntime:
         *sortie* (default True) adds ``-s --nozip`` so TELEMAC writes a plain-text
         ``<cas>_<timestamp>.sortie`` listing next to the case. That listing carries
         the per-boundary cumulated flowrates and volume balance that the flux-
-        convergence analysis (pythomac) reads; ``--nozip`` keeps it unzipped in
+        convergence analysis (hydromate.sortie) reads; ``--nozip`` keeps it unzipped in
         parallel runs so the parser can find it.
 
         *on_line* is forwarded to :meth:`run`: pass a callback (e.g.

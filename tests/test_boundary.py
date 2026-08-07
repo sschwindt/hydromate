@@ -11,7 +11,9 @@ outflow), then checks:
   elevation`` switches it to ``5 4 4``;
 * an inflow/outflow node-SPACING (resolution) mismatch, or an under-resolved
   boundary, logs a STABILITY RISK warning (unequal raw counts alone do not);
-* internal losing/gaining lines are distributed across the mesh nodes under them.
+* internal losing/gaining lines become buffered source-region polygons (signed
+  discharge, vertex cap, enclosed-node check), and ``percolation.mode: region``
+  swaps the losing strip for the percolation patch polygon.
 
 Requires the ``hydromate-env`` environment (geopandas). No TELEMAC needed.
 
@@ -171,17 +173,11 @@ def test_node_balance_warning(tmp_path, caplog):
     print("NODE-BALANCE WARNING TEST PASSED")
 
 
-def test_internal_sources_distributed(tmp_path):
-    """Internal losing/gaining lines are distributed across the mesh nodes under
-    them (conserving each line's total), and collapse to one midpoint source when
-    no mesh is given."""
-    from types import SimpleNamespace
-
+def _internal_lines_cfg(tmp_path, extra_yaml: str = ""):
+    """A config whose liquid-boundary layer carries two internal 'int-*' lines."""
     import geopandas as gpd
-    import pytest
     from shapely.geometry import LineString
 
-    from hydromate import boundary
     from hydromate.config import load_config
 
     geo = tmp_path / "geo"
@@ -198,30 +194,93 @@ def test_internal_sources_distributed(tmp_path):
         "telemac:\n  pysource: x\n"
         "geodata:\n  dem_initial: geo/dem.tif\n  boundary: geo/boundary.shp\n"
         "boundaries:\n  liquid_boundaries: geo/liquid-boundaries.gpkg\n"
+        + extra_yaml
     )
-    cfg = load_config(cfg_yaml)
+    return load_config(cfg_yaml)
 
-    # a mesh with nodes every 0.5 m along both internal lines
+
+def _internal_lines_mesh():
+    """Mesh nodes every 0.5 m along both internal lines (plus off-line rows)."""
+    from types import SimpleNamespace
+
     lose_x = np.arange(0.0, 30.01, 0.5)
     gain_x = np.arange(0.0, 45.01, 0.5)
     mx = np.concatenate([X0 + lose_x, X0 + gain_x])
     my = np.concatenate([np.full(lose_x.size, Y0), np.full(gain_x.size, Y0 + 50.0)])
-    mesh = SimpleNamespace(x=mx, y=my)
+    return SimpleNamespace(x=mx, y=my)
 
-    srcs = boundary.load_internal_sources(cfg, mesh)
-    assert len(srcs) > 10, "expected the exchange distributed over many nodes"
-    lose_q = sum(s.discharge for s in srcs if "lose" in s.name)
-    gain_q = sum(s.discharge for s in srcs if "gain" in s.name)
-    assert lose_q == pytest.approx(-0.065)   # withdrawal, conserved
-    assert gain_q == pytest.approx(+0.065)   # injection, conserved
-    node_xy = set(zip(mesh.x.tolist(), mesh.y.tolist()))
-    assert all((s.x, s.y) in node_xy for s in srcs), "every source sits on a mesh node"
 
-    # no mesh -> legacy single midpoint source per line, net exchange zero
-    pts = boundary.load_internal_sources(cfg)
-    assert len(pts) == 2
-    assert sum(s.discharge for s in pts) == pytest.approx(0.0)
-    print("INTERNAL-SOURCE DISTRIBUTION TEST PASSED")
+def test_internal_source_regions(tmp_path):
+    """Internal losing/gaining lines become buffered source-region polygons with
+    signed discharges, a bounded vertex count, and verified enclosed mesh nodes."""
+    import pytest
+
+    from hydromate import boundary
+
+    cfg = _internal_lines_cfg(tmp_path)
+    mesh = _internal_lines_mesh()
+
+    regions = boundary.load_internal_source_regions(cfg, mesh)
+    assert len(regions) == 2
+    by_name = {("lose" if "lose" in r.name else "gain"): r for r in regions}
+    assert by_name["lose"].discharge == pytest.approx(-0.065)   # withdrawal
+    assert by_name["gain"].discharge == pytest.approx(+0.065)   # injection
+    width = cfg.boundaries.internal_source_region_width
+    assert by_name["lose"].area == pytest.approx(30.0 * width, rel=0.05)
+    assert by_name["gain"].area == pytest.approx(45.0 * width, rel=0.05)
+    for r in regions:
+        assert r.n_nodes > 10, "expected the strip to enclose the on-line nodes"
+        n_vertices = len(r.polygon.exterior.coords) - 1
+        assert n_vertices <= boundary.MAX_REGION_VERTICES
+
+    # no mesh -> regions still built, node counts simply not verified
+    bare = boundary.load_internal_source_regions(cfg)
+    assert len(bare) == 2 and all(r.n_nodes == 0 for r in bare)
+
+    # a mesh with no node inside a region must raise (TELEMAC aborts on it)
+    from types import SimpleNamespace
+    far = SimpleNamespace(x=np.array([X0 + 500.0]), y=np.array([Y0 + 500.0]))
+    with pytest.raises(ValueError, match="contains no mesh node"):
+        boundary.load_internal_source_regions(cfg, far)
+    print("INTERNAL-SOURCE REGION TEST PASSED")
+
+
+def test_percolation_region_mode(tmp_path):
+    """percolation.mode: region spreads the LOSING exchange over the patch polygon
+    that intersects the losing line; the gaining line keeps its strip."""
+    import geopandas as gpd
+    import pytest
+    from shapely.geometry import Polygon
+
+    from hydromate import boundary
+
+    geo = tmp_path / "geo"
+    geo.mkdir(parents=True, exist_ok=True)
+    # a 40 x 20 m patch overlapping the losing line (y = Y0)
+    patch = Polygon([(X0 - 5, Y0 - 5), (X0 + 35, Y0 - 5),
+                     (X0 + 35, Y0 + 15), (X0 - 5, Y0 + 15)])
+    gpd.GeoDataFrame(
+        {"Patch name": ["main-side"], "porous depth (m)": [0.5]},
+        geometry=[patch], crs="EPSG:25832",
+    ).to_file(geo / "percolation-zone.gpkg", driver="GPKG")
+
+    # losing_region: patch must be explicit - the default is 'line', because on a
+    # patch that is dry on top (water percolating BENEATH it) there is no surface
+    # water to withdraw. 'patch' is only meaningful for a SUBMERGED porous zone.
+    cfg = _internal_lines_cfg(
+        tmp_path,
+        "percolation:\n  zone: geo/percolation-zone.gpkg\n  mode: region\n"
+        "  losing_region: patch\n")
+    regions = boundary.load_internal_source_regions(cfg, _internal_lines_mesh())
+    lose = next(r for r in regions if "lose" in r.name)
+    gain = next(r for r in regions if "gain" in r.name)
+    assert "main-side" in lose.name
+    assert lose.area == pytest.approx(patch.area, rel=0.01), \
+        "losing region should be the whole percolation patch"
+    width = cfg.boundaries.internal_source_region_width
+    assert gain.area == pytest.approx(45.0 * width, rel=0.05), \
+        "gaining line keeps its buffered strip"
+    print("PERCOLATION REGION MODE TEST PASSED")
 
 
 if __name__ == "__main__":

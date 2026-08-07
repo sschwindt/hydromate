@@ -215,12 +215,91 @@ def write_friction_tbl(cfg: Config) -> Path:
     return path
 
 
-def _centerline_arclength(cfg: Config, mesh):
-    """Per-node arc length: the along-reach distance of the nearest channel-
-    centerline vertex, used to order channel nodes from upstream to downstream."""
-    import geopandas as gpd
+def _liquid_node_mask(cfg: Config, mesh, kind: str, tol: float | None = None):
+    """Boundary nodes at the ``inflow`` / ``outflow`` liquid line(s) of the case."""
     import numpy as np
-    from scipy.spatial import cKDTree
+    from shapely.geometry import Point
+    from shapely.ops import unary_union
+
+    from hydromate import boundary as bnd
+
+    on_boundary = np.asarray(mesh.ipobo) > 0
+    lines = bnd._load_liquid_lines(cfg).get(kind)
+    if lines is None:
+        return on_boundary          # untagged: allow the whole outer boundary
+    geom = unary_union(lines)
+    if tol is None:
+        tol = 2.0 * float(getattr(cfg.mesh, "floodplain_size", 1.0) or 1.0)
+    idx = np.flatnonzero(on_boundary)
+    # dtype matters: an empty list comprehension yields a float array, which cannot
+    # index (this fires on a mesh whose ipobo is not set, e.g. one built in a test)
+    close = np.array([geom.distance(Point(mesh.x[i], mesh.y[i])) <= tol for i in idx],
+                     dtype=bool)
+    out = np.zeros(len(mesh.x), dtype=bool)
+    out[idx[close]] = True
+    return out if out.any() else on_boundary
+
+
+def spill_elevations(mesh, seed_mask):
+    """Per-node **spill elevation** relative to the seed nodes: the lowest water
+    level at which the node is hydraulically connected to them.
+
+    This is Barnes et al.'s *priority flood* run on the mesh graph: starting from
+    the seed nodes, the elevation of every node is raised to the highest bed it
+    must cross on the cheapest path to a seed, i.e.
+
+    .. math:: S_i = \\min_{\\text{paths } i \\to \\text{seed}} \\; \\max_{j \\in \\text{path}} z_j
+
+    So ``S_i == z_i`` on ground that drains freely to a seed node, and ``S_i > z_i``
+    behind a rim, where ``S_i`` is the elevation of the lowest saddle that must be
+    overtopped. Seeded from the *outflow* it answers "can water here get out?";
+    seeded from the *inflow*, "could the flow ever have got here?" - the pair defines
+    the through-flowing corridor used by :func:`write_initial_conditions`.
+    """
+    import heapq
+
+    import numpy as np
+    from scipy.sparse import coo_matrix
+
+    z = np.asarray(mesh.bottom, dtype=float)
+    n = z.size
+    t = np.asarray(mesh.triangles)
+    e0 = np.concatenate([t[:, 0], t[:, 1], t[:, 2]])
+    e1 = np.concatenate([t[:, 1], t[:, 2], t[:, 0]])
+    rows = np.concatenate([e0, e1])
+    cols = np.concatenate([e1, e0])
+    adj = coo_matrix((np.ones(rows.size, dtype=np.int8), (rows, cols)),
+                     shape=(n, n)).tocsr()
+    indptr, indices = adj.indptr, adj.indices
+
+    spill = np.full(n, np.inf)
+    done = np.zeros(n, dtype=bool)
+    heap = []
+    for i in np.flatnonzero(seed_mask):
+        spill[i] = z[i]
+        heap.append((z[i], int(i)))
+    heapq.heapify(heap)
+    while heap:
+        s, i = heapq.heappop(heap)
+        if done[i]:
+            continue
+        done[i] = True
+        for k in range(indptr[i], indptr[i + 1]):
+            j = int(indices[k])
+            if done[j]:
+                continue
+            cand = s if z[j] < s else z[j]
+            if cand < spill[j]:
+                spill[j] = cand
+                heapq.heappush(heap, (cand, j))
+    # nodes disconnected from any outlet can never drain at all
+    spill[~np.isfinite(spill)] = np.inf
+    return spill
+
+
+def _channel_centerline(cfg: Config):
+    """The channel centerline as a single LineString in the project CRS."""
+    import geopandas as gpd
     from shapely.ops import linemerge, unary_union
 
     gdf = gpd.read_file(cfg.geodata.channel_centerline)
@@ -230,11 +309,172 @@ def _centerline_arclength(cfg: Config, mesh):
     line = linemerge(merged) if merged.geom_type == "MultiLineString" else merged
     if line.geom_type == "MultiLineString":          # disjoint parts: take longest
         line = max(line.geoms, key=lambda g: g.length)
+    return line
+
+
+def _centerline_arclength(cfg: Config, mesh):
+    """Per-node arc length: the along-reach distance of the nearest channel-
+    centerline vertex, used to order channel nodes from upstream to downstream."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+
+    line = _channel_centerline(cfg)
     n = max(2, int(line.length / 2.0))
     sline = np.linspace(0.0, line.length, n)
     cpts = np.array([[line.interpolate(d).x, line.interpolate(d).y] for d in sline])
     _, idx = cKDTree(cpts).query(np.column_stack([mesh.x, mesh.y]))
     return sline[idx]
+
+
+def _node_roughness(cfg: Config, mesh):
+    """Per-node Nikuradse ``ks`` [m], from the roughness zones when available.
+
+    ``mesh.roughness`` carries the ``geodata.roughness_table`` value of the zone each
+    node falls in (set by :func:`hydromate.mesh.interpolate_roughness`). Without
+    roughness zones the lateral-boundary roughness is converted to an equivalent ks,
+    the same fallback :func:`hydromate.rating.synthesize_outflow_rating_from_section`
+    uses.
+    """
+    import numpy as np
+
+    from hydromate.rating import _resolve_n
+
+    if getattr(mesh, "roughness", None) is not None:
+        ks = np.asarray(mesh.roughness, dtype=float)
+        usable = np.isfinite(ks) & (ks > 0)
+        if usable.any():   # fill any gap with the median of the usable values
+            return np.where(usable, ks, float(np.median(ks[usable])))
+    law, coef = cfg.friction.boundary_law, cfg.friction.boundary_coefficient
+    n = _resolve_n(coef if law == 4 else None, coef if law == 3 else None)
+    return np.full(mesh.x.shape, (n / 0.0474) ** 6)
+
+
+#: bounds on the per-transect bed slope used for the normal-depth seed [-]
+PREWET_SLOPE_LIMITS = (0.002, 0.03)
+
+
+def _prewet_discharge(cfg: Config) -> float | None:
+    """Discharge the normal-depth pre-wet is sized for, or None if unavailable.
+
+    ``workflow.resolve_discharge`` raises when a case has neither a prescribed
+    flowrate nor an inflow series; the seed then falls back to constant mode rather
+    than failing the build, since a hotstart state only has to be a starting point.
+    """
+    from hydromate.workflow import resolve_discharge
+
+    try:
+        return float(resolve_discharge(cfg))
+    except Exception as exc:
+        log.debug("no discharge for the normal-depth pre-wet (%s); "
+                  "falling back to the constant-depth seed", exc)
+        return None
+
+
+def _normal_depth_prewet_depth(cfg: Config, mesh, mask, discharge):
+    """Pre-wet water depth from the **normal-flow stage of the real cross-sections**.
+
+    Every ``initialization.prewet_bin_spacing`` metres along the channel centerline a
+    perpendicular transect of ``prewet_transect_half_width`` half-width is cut,
+    sampled at 0.5 m, clipped to the ``*channel*`` mesh zones and given the bed and
+    Nikuradse ``ks`` of the nearest mesh node. The transect's **normal stage** at the
+    case *discharge* follows from :func:`hydromate.rating.stage_for_discharge` (the
+    same Keulegan conveyance inversion that builds the outflow rating), with the local
+    bed slope taken from the gradient of the transect thalwegs - not one slope for the
+    whole reach, which is wrong where the local gradient varies by a factor of four.
+
+    The seeded surface is then
+
+    .. math:: wl(s) = z_{thalweg}(s) + f \\cdot (z_{normal}(s) - z_{thalweg}(s))
+
+    with the fill factor ``initialization.prewet_fill`` (< 1 by design), and the depth
+    is ``max(wl - bed, 0)`` on the channel nodes.
+
+    Why a *conveyance* stage rather than the older "low bed percentile + a fixed
+    depth": on a braided reach that percentile sits well above the thalweg, so the
+    seeded surface lands above the surface the run converges to and floods bar tops
+    and bank shelves. That water then has nowhere to go - a 2D model has neither
+    infiltration nor evaporation - and it survives as immobile film for the whole run.
+    Referencing the stage that actually carries the discharge removes the cause.
+    """
+    import numpy as np
+    import shapely
+    from scipy.spatial import cKDTree
+
+    from hydromate import mesh as mesh_mod
+    from hydromate.rating import stage_for_discharge
+
+    init = cfg.initialization
+    line = _channel_centerline(cfg)
+    channel = mesh_mod._channel_union(cfg)
+    spacing = float(init.prewet_bin_spacing)
+    half = float(init.prewet_transect_half_width)
+    sample = 0.5
+
+    bottom = np.asarray(mesh.bottom, dtype=float)
+    ks_node = _node_roughness(cfg, mesh)
+    tree = cKDTree(np.column_stack([mesh.x, mesh.y]))
+    offsets = np.arange(-half, half + sample, sample)
+
+    centers = np.arange(spacing / 2.0, max(line.length, spacing), spacing)
+    sections: list[tuple | None] = []
+    thalweg = np.full(centers.size, np.nan)
+    for j, c in enumerate(centers):
+        p = line.interpolate(c)
+        a = line.interpolate(max(0.0, c - 2.0))
+        b = line.interpolate(min(line.length, c + 2.0))
+        tx, ty = b.x - a.x, b.y - a.y
+        norm = float(np.hypot(tx, ty)) or 1.0
+        nx, ny = -ty / norm, tx / norm            # left normal to the centerline
+        px, py = p.x + nx * offsets, p.y + ny * offsets
+        inside = np.asarray(shapely.contains(channel, shapely.points(px, py)))
+        if inside.sum() < 10:                     # transect barely meets the channel
+            sections.append(None)
+            continue
+        _, idx = tree.query(np.column_stack([px[inside], py[inside]]))
+        sections.append((offsets[inside], bottom[idx], ks_node[idx]))
+        thalweg[j] = float(bottom[idx].min())
+
+    good = np.isfinite(thalweg)
+    if good.sum() < 2:
+        raise ValueError(
+            "the channel centerline yields no usable cross-section for the "
+            "normal-depth pre-wet (check geodata.channel_centerline against "
+            "geodata.mesh_zones)"
+        )
+    thalweg = np.interp(centers, centers[good], thalweg[good])
+    # smooth the thalweg profile before differentiating it: a raw per-transect
+    # minimum is pitted, and its gradient would be noise
+    k = 2
+    thalweg = np.convolve(np.pad(thalweg, k, mode="edge"),
+                          np.ones(2 * k + 1) / (2 * k + 1), mode="valid")
+    slope = np.clip(np.abs(np.gradient(thalweg, centers)), *PREWET_SLOPE_LIMITS)
+
+    stage = np.full(centers.size, np.nan)
+    for j, sec in enumerate(sections):
+        if sec is None:
+            continue
+        station, bed, ks = sec
+        stage[j] = stage_for_discharge(discharge, station=station, bed=bed, ks=ks,
+                                       slope=float(slope[j]))
+    ok = np.isfinite(stage)
+    if not ok.any():
+        raise ValueError("no cross-section along the centerline could be rated for "
+                         f"Q={discharge:g} m3/s")
+    stage = np.interp(centers, centers[ok], stage[ok])
+    stage = np.maximum(stage, thalweg)
+
+    fill = float(init.prewet_fill)
+    wl_bin = thalweg + fill * (stage - thalweg)
+    s_node = _centerline_arclength(cfg, mesh)
+    wl = np.interp(s_node, centers, wl_bin)
+    depth = np.where(mask, np.maximum(wl - bottom, 0.0), 0.0)
+    log.info("  normal-depth pre-wet: %d cross-sections, normal depth over thalweg "
+             "%.2f m mean (Q=%.3f m3/s, slope %.4f..%.4f), seeded at fill %.2f "
+             "-> %.2f m mean over thalweg",
+             int(ok.sum()), float(np.mean(stage - thalweg)), discharge,
+             float(slope.min()), float(slope.max()), fill,
+             float(np.mean(wl_bin - thalweg)))
+    return depth
 
 
 def _longitudinal_prewet_depth(s_node, bottom, mask, depth_val, bed_percentile=25.0):
@@ -282,34 +522,203 @@ def write_initial_conditions(cfg: Config, mesh) -> Path:
     COMPUTATION FILE (see :func:`write_cas`) so the run continues from a pre-wetted
     channel instead of advancing the wetting front from a dry bed.
 
-    With a channel centerline the seeded water surface is a *longitudinally smoothed*
-    surface following the reach gradient (:func:`_longitudinal_prewet_depth`) - a
-    constant depth instead makes the surface as jagged as the bed and leaves a depth
-    "dam" at every channel/floodplain edge, which diverges at t=0 on steep terrain.
-    Without a centerline it falls back to the simple constant-depth seed.
+    The seeded water surface comes from ``initialization.prewet_mode``:
+
+    * ``normal-depth`` (default): the normal-flow stage of the real cross-sections at
+      the case discharge, scaled by ``prewet_fill``
+      (:func:`_normal_depth_prewet_depth`). The seeded surface then tracks the surface
+      the run converges to, so no water is laid down above it.
+    * ``constant``: the older longitudinally smoothed "low bed percentile +
+      ``prewet_depth``" surface (:func:`_longitudinal_prewet_depth`). Also the
+      automatic fallback when there is no centerline or no discharge to size the
+      normal depth with - a plain constant depth would make the seeded surface as
+      jagged as the bed and leave a depth "dam" at every channel/floodplain edge,
+      which diverges at t=0 on steep terrain.
+
+    Whatever the mode, nodes that would receive less than
+    ``initialization.prewet_min_depth`` are left dry: a feathered seed margin carries
+    no flow worth hotstarting and is exactly what turns into stagnant film.
+
+    **Drainable seeding** (``initialization.drainable_prewet``, on by default): the
+    depth is measured from the node's *spill* elevation (:func:`spill_elevations`)
+    rather than from the bed, so no water is ever seeded below the rim of a closed
+    depression. Seeding a bowl the flow would never fill leaves a pond that cannot
+    drain - TELEMAC-2D has no infiltration or evaporation - and it survives to the
+    end of the run as a stagnant, wrongly wetted alcove or side channel. Referencing
+    the spill elevation removes exactly that water and nothing else: on ground that
+    drains freely the spill elevation *is* the bed, so the open channel is seeded
+    unchanged.
     """
     import numpy as np
 
     from hydromate import mesh as mesh_mod
     from hydromate import selafin
 
-    depth_val = float(cfg.initialization.prewet_depth)
+    init = cfg.initialization
+    depth_val = float(init.prewet_depth)
     mask = mesh_mod.channel_node_mask(cfg, mesh)
-    if cfg.geodata.channel_centerline is not None:
+    discharge = _prewet_discharge(cfg)
+    depth = how = None
+    if init.prewet_mode == "normal-depth" and cfg.geodata.channel_centerline is not None \
+            and discharge is not None:
+        try:
+            depth = _normal_depth_prewet_depth(cfg, mesh, mask, discharge)
+            how = (f"normal-depth surface at Q={discharge:g} m3/s, "
+                   f"fill {init.prewet_fill:g}")
+        except Exception as exc:  # noqa: BLE001 - a seed is only a starting state
+            # A reach too short to section, or a centerline that misses the channel
+            # zones, must not fail the build: fall back to the older seed and say so.
+            log.warning("  normal-depth pre-wet unavailable (%s: %s); falling back to "
+                        "the constant-depth seed", type(exc).__name__, exc)
+    if depth is None and cfg.geodata.channel_centerline is not None:
         s_node = _centerline_arclength(cfg, mesh)
         depth = _longitudinal_prewet_depth(s_node, mesh.bottom, mask, depth_val)
         how = "smoothed longitudinal surface"
-    else:
+    elif depth is None:
         depth = np.where(mask, depth_val, 0.0)
         how = "constant depth (no centerline)"
+    # WATER TABLE under the porous patch. Computed from the seeded surface just built
+    # (the plane needs the channel level at each internal line) and re-applied AFTER
+    # both filters below: a groundwater-fed pool is not trapped seed water, and the
+    # filters exist precisely to remove water that has no source. This one has one.
+    # Without it such a pool stays dry for the whole run - it sits on a bar ABOVE the
+    # channel, so no surface flow can ever reach it.
+    supported = np.zeros(depth.shape, dtype=float)
+    if cfg.percolation.water_table == "phreatic":
+        from hydromate import watertable
+
+        plane = watertable.fit_phreatic_plane(cfg, mesh, surface=mesh.bottom + depth)
+        if plane is not None:
+            patch = watertable.patch_node_mask(cfg, mesh)
+            supported = watertable.water_table_depth(plane, mesh, patch)
+            area = _nodal_areas(mesh)
+            log.info("  %s", watertable.describe(plane, mesh, patch, area))
+            how += ", water table"
+
+    floor = float(init.prewet_min_depth)
+    if floor > 0.0:
+        thin = (depth > 0.0) & (depth < floor)
+        if thin.any():
+            log.info("  dropped %d seeded nodes thinner than the %.2f m floor "
+                     "(a feathered seed margin becomes stagnant film)",
+                     int(thin.sum()), floor)
+            depth = np.where(thin, 0.0, depth)
+        how += f", >= {floor:g} m"
+    if cfg.initialization.drainable_prewet:
+        bottom = np.asarray(mesh.bottom, dtype=float)
+        tol = float(cfg.initialization.drainable_tolerance)
+        # Seed only ground that drains FREELY to the outflow, i.e. whose spill
+        # elevation is its own bed (within *tol*, a DEM-noise allowance). Anywhere
+        # behind a rim is left dry.
+        #
+        # Merely being *connected* at the seeded level is not enough: such a column
+        # drains only down to the rim and the remainder then stays put for the whole
+        # run, because a 2D model has neither infiltration nor evaporation. On this
+        # case that residue is ~314 m3 - which is precisely the ~322 m3 of water
+        # found standing still at under 2 cm/s in the previous result. Under-seeding
+        # a genuine channel pool costs nothing by comparison: the flow refills it
+        # within seconds of the start.
+        spill = spill_elevations(mesh, _liquid_node_mask(cfg, mesh, "outflow"))
+        free = spill <= bottom + tol
+        drainable = np.where(free, depth, 0.0)
+        seeded = depth > 0.01
+        dropped = int((seeded & ~free).sum())
+        residue = float(np.maximum(spill - bottom, 0.0)[free & (drainable > 0.01)].sum())
+        log.info("  drainable seeding (tol %.3f m): dropped %d of %d seeded nodes "
+                 "(%.1f%% of the seeded depth-sum) that sit behind a rim and could "
+                 "never drain; residual trapped depth-sum %.2f m",
+                 tol, dropped, int(seeded.sum()),
+                 100.0 * (1.0 - drainable.sum() / max(depth.sum(), 1e-9)), residue)
+        depth = drainable
+        how += ", drainable"
+
+    # re-impose the water table: whatever the filters removed, ground below the bar's
+    # phreatic surface is genuinely wet and stays seeded to it
+    if supported.any():
+        raised = supported > depth
+        if raised.any():
+            log.info("  water table: restored %d node(s) the seed filters had emptied "
+                     "(%.1f m3) - a groundwater-fed pool has a source, so the "
+                     "drainable and min-depth filters must not apply to it",
+                     int(raised.sum()),
+                     float(((supported - depth)[raised] * _nodal_areas(mesh)[raised]).sum()))
+        depth = np.maximum(depth, supported)
+
+    # MANDATORY, and applied after every filter: TELEMAC's DEBIMP distributes the
+    # prescribed discharge over the inflow section by scaling a velocity profile with
+    # Q/Q1, Q1 proportional to the integral of H along that section. A dry inflow
+    # gives Q1 = 0 and the run aborts at t=0 with "DEBIMP: PROBLEM ON BOUNDARY
+    # NUMBER n". The seed filters above have no reason to keep that section wet - the
+    # normal-depth seed reaches its shallowest exactly at the upstream end, and both
+    # the min-depth floor and the drainable test can then empty it - so the inflow
+    # plug is re-imposed here, the same one write_dry_start_conditions lays down.
+    plug = _inflow_plug_mask(cfg, mesh)
+    if plug is not None:
+        seed = float(init.dry_start_depth)
+        short = plug & (depth < seed)
+        if short.any():
+            log.info("  inflow plug: raised %d node(s) within %.1f m of the inflow to "
+                     "%.2f m (DEBIMP aborts on a dry inflow cross-section)",
+                     int(short.sum()), _inflow_plug_extent(cfg), seed)
+            depth = np.where(short, seed, depth)
+            how += ", inflow plug"
+
     path = cfg.model_path(cfg.ic_slf)
     selafin.write_initial_state(
         path, x=mesh.x, y=mesh.y, ikle=mesh.triangles + 1, ipobo=mesh.ipobo,
         depth=depth, title=f"{cfg.name} initial conditions",
     )
-    log.info("  pre-wet %d/%d channel nodes (%s; ~%.2f m over thalweg, max %.2f m) -> %s",
-             int(mask.sum()), mask.size, how, depth_val, float(depth.max()), path.name)
+    area = _nodal_areas(mesh)
+    seeded = depth > 0.0
+    log.info("  pre-wet %d/%d channel nodes (%s): %.0f m2 wetted, %.0f m3 seeded, "
+             "mean depth %.2f m, max %.2f m -> %s",
+             int(seeded.sum()), mask.size, how, float(area[seeded].sum()),
+             float((depth * area).sum()),
+             float(depth[seeded].mean()) if seeded.any() else 0.0,
+             float(depth.max()), path.name)
     return path
+
+
+def _nodal_areas(mesh):
+    """Per-node share of the mesh area [m2] (a third of each incident triangle)."""
+    import numpy as np
+
+    xy = np.column_stack([mesh.x, mesh.y])
+    tri = xy[mesh.triangles]
+    twice = ((tri[:, 1, 0] - tri[:, 0, 0]) * (tri[:, 2, 1] - tri[:, 0, 1])
+             - (tri[:, 2, 0] - tri[:, 0, 0]) * (tri[:, 1, 1] - tri[:, 0, 1]))
+    elem = np.abs(twice) / 2.0
+    area = np.zeros(mesh.x.size, dtype=float)
+    np.add.at(area, mesh.triangles.ravel(), np.repeat(elem / 3.0, 3))
+    return area
+
+
+def _inflow_plug_extent(cfg: Config) -> float:
+    """How far from the inflow line(s) the water plug reaches [m]."""
+    init = cfg.initialization
+    if init.dry_start_extent is not None:
+        return float(init.dry_start_extent)
+    return (max(cfg.mesh.channel_size, cfg.mesh.floodplain_size)
+            * cfg.mesh.size_scale * 5.0)
+
+
+def _inflow_plug_mask(cfg: Config, mesh):
+    """Boolean (NPOIN,) flag of the nodes forming the inflow water plug, or None
+    when the case has no inflow line."""
+    import numpy as np
+    from shapely import contains_xy
+
+    from hydromate import boundary
+
+    try:
+        inflow = boundary._load_liquid_lines(cfg).get("inflow")
+    except Exception as exc:  # noqa: BLE001 - a seed must not fail on a bad layer
+        log.debug("no inflow plug (%s: %s)", type(exc).__name__, exc)
+        return None
+    if inflow is None:
+        return None
+    extent = _inflow_plug_extent(cfg)
+    return np.asarray(contains_xy(inflow.buffer(extent), mesh.x, mesh.y), dtype=bool)
 
 
 def write_dry_start_conditions(cfg: Config, mesh) -> Path | None:
@@ -326,20 +735,15 @@ def write_dry_start_conditions(cfg: Config, mesh) -> Path | None:
     (the caller then uses the analytical dry initial condition).
     """
     import numpy as np
-    from shapely import contains_xy
 
-    from hydromate import boundary, selafin
+    from hydromate import selafin
 
-    inflow = boundary._load_liquid_lines(cfg).get("inflow")
-    if inflow is None:
+    plug = _inflow_plug_mask(cfg, mesh)
+    if plug is None:
         return None
-    init = cfg.initialization
-    extent = (float(init.dry_start_extent) if init.dry_start_extent is not None
-              else max(cfg.mesh.channel_size, cfg.mesh.floodplain_size)
-              * cfg.mesh.size_scale * 5.0)
-    seed = float(init.dry_start_depth)
-    plug = np.asarray(contains_xy(inflow.buffer(extent), mesh.x, mesh.y), dtype=bool)
+    seed = float(cfg.initialization.dry_start_depth)
     depth = np.where(plug, seed, 0.0)
+    extent = _inflow_plug_extent(cfg)
     path = cfg.model_path(cfg.ic_slf)
     selafin.write_initial_state(
         path, x=mesh.x, y=mesh.y, ikle=mesh.triangles + 1, ipobo=mesh.ipobo,
@@ -433,6 +837,36 @@ def write_liquid_boundaries(cfg: Config, liquids: list[LiquidBoundary],
     return path
 
 
+def _region_coords(region) -> list[tuple[float, float]]:
+    """Exterior vertices of a source region, without the closing duplicate."""
+    return [(float(x), float(y)) for x, y in list(region.polygon.exterior.coords)[:-1]]
+
+
+def write_source_regions(cfg: Config, regions: list) -> Path:
+    """Write the TELEMAC ``SOURCE REGIONS DATA FILE`` (``source-regions.txt``).
+
+    Format (``read_source_data.f``): ``#`` comment lines; per region a header line
+    ``X(i)   Y(i)`` followed by one ``x y`` vertex pair per line; a comment/blank
+    line separates regions. The region order defines TELEMAC's region numbering
+    and must match the order of ``WATER DISCHARGE OF SOURCES`` in the ``.cas``
+    (both come from the same *regions* list here). TELEMAC assigns every mesh node
+    inside a polygon to its region and spreads the region discharge uniformly over
+    the enclosed area (``telemac2d_init.F`` / ``prosou.f``).
+    """
+    lines = ["# hydromate: internal source/sink regions (losing-gaining reach)"]
+    for i, region in enumerate(regions, start=1):
+        lines += [
+            (f"# region {i}: {region.name} ({region.discharge:+g} m3/s, "
+             f"{region.area:.0f} m2)"),
+            f"X({i})   Y({i})",
+        ]
+        lines += [f"{x:.3f} {y:.3f}" for x, y in _region_coords(region)]
+        lines.append("#")
+    path = cfg.model_path(cfg.source_regions_file)
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
 def write_cas(cfg: Config, liquids: list[LiquidBoundary],
               inflow_q: float, outflow_wse: float | None = None,
               gaia_cas: str | None = None,
@@ -444,7 +878,7 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
               n_distributive_corrections: int | None = None,
               sections_input: str | None = None, sections_output: str | None = None,
               hotstart_note: str | None = None,
-              sources: "list | None" = None) -> Path:
+              source_regions: "list | None" = None) -> Path:
     """Write a TELEMAC-2D steering (.cas) file.
 
     The default (``unsteady=False``, ``out_name=None``) writes the **steady** initial
@@ -470,6 +904,11 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
     SCHEMES`` (the developers' >=2 recommendation for quasi-steady runs).
     *sections_input* / *sections_output* wire the CONTROL SECTIONS keywords so the run
     reports the flux across each open boundary (see :func:`hydromate.unsteady`).
+    *source_regions* (a :class:`hydromate.boundary.InternalSourceRegion` list) adds
+    the internal losing/gaining exchange - as SOURCE REGIONS keywords referencing
+    the file written by :func:`write_source_regions`, or, in ``percolation.mode:
+    fortran``, as the FORTRAN FILE + RAIN keywords for the generated USER_RAIN
+    routine (see :mod:`hydromate.fortran`).
     """
     h = cfg.hydrodynamics
     flow, elev, prof = _prescribed_arrays(cfg, liquids, inflow_q, outflow_wse)
@@ -616,9 +1055,12 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         "/ STABILITY CONTROLS",
         # damps free-surface instabilities over steep bed gradients (default 1.0)
         f"FREE SURFACE GRADIENT COMPATIBILITY : {h.free_surface_gradient_compat}",
-        # clip H/U/V/T so a local spike can't cascade to NaN; a divergence guard
-        "CONTROL OF LIMITS : YES",
-        "LIMIT VALUES : -1000;9000;-1000;1000;-1000;1000;-1000;1000",
+        # clip H/U/V/T so a local spike can't cascade to NaN; a divergence guard.
+        # config-driven (hydrodynamics.control_of_limits) so switching it off for
+        # a diagnosis is reproducible rather than a hand-edit lost on rebuild.
+        *(["CONTROL OF LIMITS : YES",
+           "LIMIT VALUES : -1000;9000;-1000;1000;-1000;1000;-1000;1000"]
+          if h.control_of_limits else ["/ CONTROL OF LIMITS disabled via config"]),
     ]
     # tidal flats: FE needs the explicit wetting/drying treatment; FV handles dry
     # fronts intrinsically (the HLLC Riemann solver), so this block is FE-only.
@@ -644,29 +1086,45 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         f"OPTION FOR LIQUID BOUNDARIES : {';'.join(['1'] * n_liquid)}",
     ]
 
-    if sources:
-        # internal point sources/sinks for a losing-gaining reach: a 2D model has no
-        # subsurface, so surface water that leaves through a losing line and returns
-        # through a gaining line is a withdrawal (-Q) and an injection (+Q) at the
-        # respective line midpoints (TELEMAC snaps each to the nearest mesh node). No
-        # source velocity is prescribed, so each takes the local flow velocity.
-        xs = ";".join(f"{s.x:.3f}" for s in sources)
-        ys = ";".join(f"{s.y:.3f}" for s in sources)
-        qs = ";".join(f"{s.discharge:g}" for s in sources)
-        # each line is distributed over many nodes; summarise the comment per line
-        # (name -> total m3/s over N nodes) rather than listing every point source
-        from collections import OrderedDict
-        totals: "OrderedDict[str, list]" = OrderedDict()
-        for s in sources:
-            entry = totals.setdefault(s.name, [0.0, 0])
-            entry[0] += s.discharge
-            entry[1] += 1
-        tags = ", ".join(f"{name} {q:+g} over {k} node(s)" for name, (q, k) in totals.items())
+    if (cfg.gain_lose.active and cfg.gain_lose.implementation == "fortran"
+            and source_regions):
+        # percolation via a generated USER_RAIN routine (see hydromate.fortran):
+        # depth-limited withdrawal over the patch, mass-exact reinjection at the
+        # gaining line. PLUIE needs RAIN OR EVAPORATION active (base rate 0; the
+        # routine assigns the nodal rates itself), and the compiled routine comes
+        # from the FORTRAN FILE folder. NO SOURCE REGIONS keywords here - the
+        # exchange must not be double-counted.
+        tags = ", ".join(f"{r.name} {r.discharge:+g}" for r in source_regions)
         lines += [
             "/",
-            f"/ INTERNAL SOURCES / SINKS (losing-gaining reach: {tags} m3/s)",
-            f"ABSCISSAE OF SOURCES : {xs}",
-            f"ORDINATES OF SOURCES : {ys}",
+            f"/ INTERNAL SOURCES / SINKS via USER_RAIN percolation ({tags} m3/s)",
+            f"FORTRAN FILE : '{cfg.user_fortran_dir}'",
+            "RAIN OR EVAPORATION : YES",
+            "RAIN OR EVAPORATION IN MM PER DAY : 0.",
+        ]
+    elif source_regions:
+        # internal source/sink REGIONS for a losing-gaining reach: a 2D model has
+        # no subsurface, so surface water that leaves through a losing line and
+        # returns through a gaining line is a withdrawal (-Q) and an injection (+Q),
+        # each spread by TELEMAC over the mesh nodes inside a polygon region
+        # (SOURCE REGIONS DATA FILE; Q/area as a depth rate - far gentler per node
+        # than point sources). No source velocity is prescribed, so the exchange
+        # takes the local flow velocity. NOTE: never emit ABSCISSAE/ORDINATES OF
+        # SOURCES together with the region file - the coordinate route would
+        # shadow it (lecdon precedence). TYPE OF SOURCES must stay 1: with
+        # regions, type 2 (Dirac) adds the full Q at EVERY region node.
+        qs = ";".join(f"{r.discharge:g}" for r in source_regions)
+        tags = ", ".join(f"{r.name} {r.discharge:+g} m3/s over {r.n_nodes} node(s)"
+                         f" / {r.area:.0f} m2" for r in source_regions)
+        max_vertices = max(len(_region_coords(r)) for r in source_regions)
+        lines += [
+            "/",
+            "/ INTERNAL SOURCES / SINKS (losing-gaining reach, spread over regions):",
+            f"/ {tags}",
+            f"SOURCE REGIONS DATA FILE : {cfg.source_regions_file}",
+            f"MAXIMUM NUMBER OF SOURCES : {len(source_regions)}",
+            ("MAXIMUM NUMBER OF POINTS FOR SOURCES REGIONS : "
+             f"{max(max_vertices, len(source_regions), 10)}"),
             f"WATER DISCHARGE OF SOURCES : {qs}",
             "TYPE OF SOURCES : 1",
         ]
@@ -705,7 +1163,12 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
            # ill-conditioned dry-start domain) without relaxing the accuracy above.
            f"MAXIMUM NUMBER OF ITERATIONS FOR K AND EPSILON : {h.max_keps_iterations}"]
           if turb_model == 3 else []),
-        *([f"ACCURACY OF SPALART-ALLMARAS : {h.turbulence_solver_accuracy}"]
+        *([f"ACCURACY OF SPALART-ALLMARAS : {h.turbulence_solver_accuracy}",
+           # the Spalart-Allmaras transport solve shares the k-epsilon iteration
+           # budget keyword; TELEMAC's default 50 is too few on an ill-conditioned
+           # (dry-start / thin-film) domain - the "GRACJG: EXCEEDING MAXIMUM
+           # ITERATIONS 50" storm - so raise it here too.
+           f"MAXIMUM NUMBER OF ITERATIONS FOR K AND EPSILON : {h.max_keps_iterations}"]
           if turb_model == 6 else []),
         *([f"VELOCITY DIFFUSIVITY : {diffusivity:g}"] if diffusivity is not None else []),
     ]

@@ -51,9 +51,10 @@ OUTFLOW_ELEV = (5, 4, 4)   # prescribed downstream water level
 SPACING_BALANCE_TOL = 0.35
 # a liquid boundary with fewer nodes than this is flagged as under-resolved
 MIN_BOUNDARY_NODES = 4
-# an internal (losing/gaining) line is discretised into point sources ~this far
-# apart (m) along the line, each snapped to the nearest mesh node
-INTERNAL_SOURCE_SPACING = 2.0
+# cap on the exterior vertices of an internal source-region polygon: TELEMAC's
+# region reader checks each node against the vertex list (INPOLY), and the .cas
+# must carry MAXIMUM NUMBER OF POINTS FOR SOURCES REGIONS >= this
+MAX_REGION_VERTICES = 16
 
 
 @dataclass
@@ -66,21 +67,29 @@ class LiquidBoundary:
 
 
 @dataclass
-class InternalSource:
-    """An internal (off-contour) point source/sink for a losing-gaining reach.
+class InternalSourceRegion:
+    """An internal source/sink REGION for a losing-gaining reach.
 
     A 2D depth-averaged model has no subsurface, so hyporheic / underflow exchange
     where the surface flow *loses* water in one place and *gains* it back downstream
-    is represented as TELEMAC point sources: a withdrawal (``discharge < 0``) on the
-    losing line and an injection (``discharge > 0``) on the gaining line. The line's
-    total exchange is **distributed** across the mesh nodes lying under it (one
-    ``InternalSource`` per node, discharges summing to the line total), so a 30-45 m
-    line acts as a distributed line source rather than a single point.
+    is represented as TELEMAC **source regions** (``SOURCE REGIONS DATA FILE``): a
+    withdrawal (``discharge < 0``) over the losing polygon and an injection
+    (``discharge > 0``) over the gaining polygon. TELEMAC spreads each region's Q
+    uniformly over the mesh nodes inside the polygon (Q/area as a depth rate,
+    ``prosou.f``), so the exchange acts as a gentle distributed flux instead of
+    hammering the few nodes under the line - a sink concentrated on single nodes
+    dries them, spikes velocities and collapses the CFL-adaptive time step
+    (TELEMAC has **no depth guard on negative sources**).
     """
     name: str
-    x: float
-    y: float
     discharge: float   # signed m3/s: < 0 withdraws (losing), > 0 injects (gaining)
+    polygon: object    # shapely Polygon (region outline, EPSG per config)
+    area: float        # polygon area [m2]
+    n_nodes: int = 0   # mesh nodes inside (0 when counted without a mesh)
+    # thickness [m] of the porous layer the exchange passes through, from the
+    # percolation patch's depth field. Only used by the conductivity (Green-Ampt)
+    # exchange mode; None when no patch applies.
+    porous_depth: float | None = None
 
 
 def dump_liquid_boundaries(liquids: list["LiquidBoundary"], path: str | Path) -> Path:
@@ -179,8 +188,8 @@ def _load_liquid_lines(cfg: Config):
     """Return dict kind -> shapely geometry (union of that kind's contour lines).
 
     Internal source/sink lines (type tag starting 'int', handled by
-    :func:`load_internal_sources`) are skipped so they never pull a contour node
-    into an inflow/outflow classification.
+    :func:`load_internal_source_regions`) are skipped so they never pull a contour
+    node into an inflow/outflow classification.
     """
     import geopandas as gpd
     from shapely.ops import unary_union
@@ -239,40 +248,78 @@ def _boundary_line_details(cfg: Config) -> list[dict] | None:
     return details
 
 
-def _distribute_line_source(geom, mesh: Mesh, total_discharge: float):
-    """Split *total_discharge* across the mesh nodes lying under *geom*.
+def _simplify_region(polygon, max_vertices: int = MAX_REGION_VERTICES):
+    """Reduce *polygon* to at most *max_vertices* exterior vertices.
 
-    The line is sampled every :data:`INTERNAL_SOURCE_SPACING` m and each sample is
-    snapped to the nearest mesh node; each unique node's share is proportional to
-    the number of samples nearest to it (~the length of line it represents), so the
-    shares sum to *total_discharge*. Yields ``(node_index, x, y, discharge)``.
+    TELEMAC reads the region outline as a plain vertex list (INPOLY), so a light
+    outline is enough; iteratively coarser Douglas-Peucker until it fits. Returns
+    (polygon, exterior_coords_without_closing_duplicate).
     """
+    tol = 0.05
+    poly = polygon
+    coords = list(poly.exterior.coords)[:-1]
+    while len(coords) > max_vertices and tol < 1e3:
+        poly = polygon.simplify(tol, preserve_topology=True)
+        coords = list(poly.exterior.coords)[:-1]
+        tol *= 2.0
+    return poly, coords
+
+
+def _count_nodes_inside(polygon, mesh: "Mesh") -> int:
+    """Number of mesh nodes strictly inside *polygon* (bbox-prefiltered)."""
     import numpy as np
-    from scipy.spatial import cKDTree
+    import shapely
 
-    length = float(geom.length)
-    n = max(2, int(np.ceil(length / INTERNAL_SOURCE_SPACING)) + 1)
-    ss = np.linspace(0.0, length, n)
-    pts = np.array([list(geom.interpolate(float(s)).coords)[0] for s in ss])
-    tree = cKDTree(np.column_stack([np.asarray(mesh.x), np.asarray(mesh.y)]))
-    _, idx = tree.query(pts)
-    nodes, counts = np.unique(idx, return_counts=True)
-    weights = counts / counts.sum()
-    for node, w in zip(nodes, weights):
-        yield (int(node), float(mesh.x[node]), float(mesh.y[node]),
-               total_discharge * float(w))
+    x = np.asarray(mesh.x, dtype=float)
+    y = np.asarray(mesh.y, dtype=float)
+    minx, miny, maxx, maxy = polygon.bounds
+    cand = (x >= minx) & (x <= maxx) & (y >= miny) & (y <= maxy)
+    if not cand.any():
+        return 0
+    return int(shapely.contains_xy(polygon, x[cand], y[cand]).sum())
 
 
-def load_internal_sources(cfg: Config,
-                          mesh: "Mesh | None" = None) -> list["InternalSource"]:
-    """Internal losing/gaining lines -> TELEMAC point sources (see
-    :class:`InternalSource`). A line whose type tag starts with 'int' becomes a
-    withdrawal (``lose``) or injection (``gain``) of its flow-column discharge.
-    Empty when the layer has no internal lines.
+def _percolation_patches(cfg: Config) -> list[dict]:
+    """Percolation patch polygons: ``{name, geom, porous_depth}`` (empty if unset)."""
+    import geopandas as gpd
 
-    With a *mesh* the exchange is **distributed** across the nodes under each line
-    (weighted by the length each node represents); without one each line collapses
-    to a single point source at its midpoint (the legacy behaviour).
+    if cfg.percolation.zone is None:
+        return []
+    gdf = gpd.read_file(cfg.percolation.zone)
+    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
+        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
+    name_col = next((c for c in gdf.columns
+                     if c.lower() == cfg.percolation.name_field.lower()), None)
+    depth_col = next((c for c in gdf.columns
+                      if c.lower() == cfg.percolation.depth_field.lower()), None)
+    patches = []
+    for i, row in gdf.iterrows():
+        patches.append({
+            "name": str(row[name_col]) if name_col else f"patch-{i + 1}",
+            "geom": row.geometry,
+            "porous_depth": (float(row[depth_col]) if depth_col is not None
+                             and row[depth_col] is not None else None),
+        })
+    return patches
+
+
+def load_internal_source_regions(cfg: Config,
+                                 mesh: "Mesh | None" = None
+                                 ) -> list["InternalSourceRegion"]:
+    """Internal losing/gaining lines -> TELEMAC source regions (see
+    :class:`InternalSourceRegion`). A line whose type tag starts with 'int'
+    becomes a withdrawal (``lose``) or injection (``gain``) of its flow-column
+    discharge, spread over a polygon region. Empty when the layer has no internal
+    lines.
+
+    The region polygon is the line buffered to a strip of
+    ``boundaries.internal_source_region_width`` - except in ``percolation.mode:
+    region``, where a **losing** line whose line intersects a percolation patch
+    uses the whole patch polygon instead (same -Q over a far larger area, so the
+    per-node depth rate drops by orders of magnitude).
+
+    With a *mesh* the nodes inside each region are counted; a region containing no
+    node raises (TELEMAC aborts on it at run time).
     """
     import geopandas as gpd
 
@@ -284,11 +331,22 @@ def load_internal_sources(cfg: Config,
         return []
     flow_col = _flow_column(gdf)
     name = Path(cfg.boundaries.liquid_boundaries).name
-    # node index -> [summed signed discharge, x, y, line name]; accumulating by node
-    # keeps a node shared by repeated samples (or by two lines) as one source that
-    # sums the exchanges, so the total is conserved exactly
-    by_node: dict[int, list] = {}
-    point_sources: list[InternalSource] = []
+    # In percolation mode the LOSING exchange may spread over the patch polygon
+    # (mode 'region': TELEMAC source region; mode 'fortran': USER_RAIN domain).
+    # With losing_region='line' it instead stays on the buffered line strip - use
+    # that when the modelled water surface does not actually cover the patch, or
+    # the withdrawal concentrates on a shrinking wet remnant (see the isar-2025
+    # test-approaches.md: the patch holds only ~88 m2 of wet area at steady state,
+    # against ~183 m2 for a 12 m strip along the line).
+    # all patches are read whenever percolation is active (the conductivity mode
+    # needs their porous depth even when the region stays on the line); `patches`
+    # is the subset actually used AS the losing region.
+    all_patches = (_percolation_patches(cfg)
+                   if cfg.gain_lose.active else [])
+    patches = (all_patches
+               if cfg.percolation.losing_region == "patch" else [])
+    width = float(cfg.boundaries.internal_source_region_width)
+    regions: list[InternalSourceRegion] = []
     for _, row in gdf.iterrows():
         raw = str(row[type_col])
         if not _is_internal(raw):
@@ -307,23 +365,41 @@ def load_internal_sources(cfg: Config,
             )
         signed = _internal_sign(raw) * magnitude
         geom = row.geometry
-        if mesh is None:
-            try:
-                pt = geom.interpolate(0.5, normalized=True)   # midpoint along the line
-            except Exception:                                 # pragma: no cover
-                pt = geom.centroid
-            point_sources.append(InternalSource(name=raw, x=float(pt.x),
-                                                 y=float(pt.y), discharge=signed))
-            continue
-        for node, x, y, q in _distribute_line_source(geom, mesh, signed):
-            if node in by_node:
-                by_node[node][0] += q
-            else:
-                by_node[node] = [q, x, y, raw]
-    if mesh is None:
-        return point_sources
-    return [InternalSource(name=meta[3], x=meta[1], y=meta[2], discharge=meta[0])
-            for _, meta in sorted(by_node.items())]
+        # default region: the line buffered to a thin strip (flat caps)
+        polygon = geom.buffer(width / 2.0, cap_style=2)
+        region_name = raw
+        porous = None
+        if signed < 0:
+            # the porous layer thickness belongs to the LOSING side; take it from
+            # whichever patch the line touches (needed by the conductivity mode
+            # even when the region itself stays on the line)
+            near = next((p for p in all_patches if p["geom"].intersects(geom)), None)
+            if near is not None:
+                porous = near["porous_depth"]
+            if patches:
+                hit = next((p for p in patches if p["geom"].intersects(geom)), None)
+                if hit is not None:
+                    polygon = hit["geom"]
+                    region_name = f"{raw} ({hit['name']})"
+                    log.info(
+                        "  percolation region mode: losing line %r spread over patch %r"
+                        " (%.0f m2%s)", raw, hit["name"], polygon.area,
+                        "" if hit["porous_depth"] is None
+                        else f", porous depth {hit['porous_depth']:g} m")
+        polygon, _ = _simplify_region(polygon)
+        n_nodes = 0
+        if mesh is not None:
+            n_nodes = _count_nodes_inside(polygon, mesh)
+            if n_nodes == 0:
+                raise ValueError(
+                    f"internal source region {region_name!r} contains no mesh node "
+                    "- TELEMAC aborts on an empty source region. Widen "
+                    "boundaries.internal_source_region_width or check the geometry."
+                )
+        regions.append(InternalSourceRegion(
+            name=region_name, discharge=signed, polygon=polygon,
+            area=float(polygon.area), n_nodes=n_nodes, porous_depth=porous))
+    return regions
 
 
 def _match_tolerance(cfg: Config) -> float:
