@@ -22,12 +22,16 @@ Run: mamba run -n hydromate-env python cases/<your-case>/preprocessing.py
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 from hydromate import pipeline, prepare_steady_inputs, setup_logging
 from hydromate.config import load_config
 
-CONFIG = Path(__file__).resolve().parent / "case-config.yml"
+# optional CLI arg selects the scenario config, e.g.
+#   python preprocessing.py case-config-greenampt.yml
+CONFIG = Path(__file__).resolve().parent / (
+    sys.argv[1] if len(sys.argv) > 1 else "case-config.yml")
 cfg = load_config(CONFIG)
 
 
