@@ -103,10 +103,30 @@ initialization:
   # dry_start_depth: 0.5    # inflow-plug seed depth [m]; raise if DEBIMP reports a
   #                         # supercritical entrance, lower for a thinner plug
   # dry_start_extent: 7.5   # plug buffer around the inflow line [m] (default ~5 cells)
-  # pre-wetting (hotstart) - the ALTERNATIVE to the dry start: wet the whole
-  # channel mesh-zone to this depth [m] up front (needs geodata.mesh_zones). The
-  # mesh-convergence study sets it internally; leave it off for a dry initial run.
+  # pre-wetting (hotstart) - the ALTERNATIVE to the dry start: wet the channel
+  # mesh-zone up front (needs geodata.mesh_zones), so the solver need not march the
+  # wetting front from the inflow. The mesh-convergence study sets it internally;
+  # leave it off for a dry initial run.
   # prewet_depth: 0.5
+  # HOW the seeded water surface is built:
+  #   normal-depth (default) - a real cross-section every prewet_bin_spacing metres
+  #     along the centerline, seeded at the stage that conveys prescribed_flowrate
+  #     through it (the same conveyance inversion as the outflow rating).
+  #   constant - the older "low bed percentile + prewet_depth" surface; also the
+  #     automatic fallback without a centerline or a discharge.
+  # SEED LOW, NOT HIGH. A 2D model has neither infiltration nor evaporation, so any
+  # water seeded ABOVE the surface the run converges to can never leave: it stalls as
+  # stagnant film on bar tops and bank shelves and no amount of extra runtime removes
+  # it. Under-seeding costs nothing - the flow refills a pool in seconds. Hence
+  # prewet_fill < 1 and the prewet_min_depth floor (never lay down a feathered margin,
+  # which is exactly what stalls). Check the result with the wetting report that
+  # initial_run.py writes (wetting-report.csv).
+  # prewet_mode: normal-depth
+  # prewet_fill: 0.70         # fraction of the normal depth above the thalweg
+  # prewet_min_depth: 0.05    # [m] leave a node dry rather than seed less than this
+  # Measure the seed depth from each node's SPILL elevation rather than its bed, so
+  # nothing is seeded below the rim of a closed depression it could never drain from.
+  # drainable_prewet: true
 
 mesh:
   # Anisotropic, flow-aligned strategy (used when geodata.mesh_zones +
@@ -210,6 +230,67 @@ hydrodynamics:
   # converge in fewer steps once the case is known to be stable, or extend `duration`
   # if a run has not converged within the budget.
   # desired_courant: 0.30
+
+# gain_lose:                   # optional: a reach that loses flow into a porous
+#                              # body (a gravel bar, an alluvial patch) and regains
+#                              # it downstream. A 2D model has no subsurface, so the
+#                              # underflow is a withdrawal where water infiltrates
+#                              # plus an injection where it resurfaces - generated
+#                              # into a USER_RAIN routine that is depth-limited (it
+#                              # can never dry a cell) and mass-exact (what it takes
+#                              # is returned in the same step, so no net sink appears
+#                              # in the boundary budget).
+#   enabled: true
+#   zone: user-sources/geodata/porous-body.gpkg   # [REQUIRED] the porous body
+#
+#   # WHERE the exchange happens.
+#   #   water-table (default) - the faces follow the physics and NOTHING is drawn.
+#   #     The body's saturated zone is bounded by the two channel levels it exchanges
+#   #     with, so the water table is known; a node then LOSES where it is wet and
+#   #     its free surface stands above the table, and GAINS where the table stands
+#   #     above the bed. The faces move with the stage. Needs
+#   #     geodata.channel_centerline (the zone is projected onto it to find the two
+#   #     ends). Use this unless the exchange location is genuinely known - it is
+#   #     usually fuzzy exactly where percolation begins and ends.
+#   #   lines - pinned to the int-* lines of boundaries.liquid_boundaries, each
+#   #     buffered to a strip. Pick this for a surveyed seepage face or spring line.
+#   faces: water-table
+#
+#   # HOW BIG it is - one of:
+#   #   conductivity (kf) drives it by default: Green-Ampt's saturated limit at the
+#   #     local head, so the exchange responds to water level. Riverbed kf spans
+#   #     orders of magnitude with grain size and colmation, so CALIBRATE it rather
+#   #     than assume: hydromate exposes it to HydroBayesCal as `f.HMP_KF` (add
+#   #     "POROUS ZONE kf (gain-lose)" to calibration.parameters).
+#   #     Look values up in Calver, A. (2001), "Riverbed Permeabilities: Information
+#   #     from Pooled Data", Ground Water 39(4), 546-553,
+#   #     doi:10.1111/j.1745-6584.2001.tb02343.x
+#   #     https://ngwa.onlinelibrary.wiley.com/doi/10.1111/j.1745-6584.2001.tb02343.x
+#   #     (pooled riverbed values 1e-9..1e-2 m/s, concentrated 1e-7..1e-3). Bracket:
+#   #     clean gravel 1e-2..1e-1, moderately colmated 1e-4..1e-3, silted 1e-7..1e-5.
+#   #   discharge overrides kf with a MEASURED total [m3/s], normalised over the
+#   #     losing face. Works with either `faces` setting.
+#   conductivity: 3.0e-4
+#   # discharge: 0.065
+#
+#   porous_depth: 0.5          # Lz [m]; the zone layer's own field wins
+#   suction: 0.2               # hf [m], Green-Ampt wetting-front suction
+#   # How far the faces may reach OUTSIDE the polygon [m]. A bar polygon outlines the
+#   # bar, while the water it takes in is in the channel beside it, so the losing
+#   # face has to reach the wetted edge. Default: one channel cell.
+#   # zone_buffer: 0.5
+#   min_depth: 0.05            # [m] never withdraw below this depth
+#   taper_depth: 0.05          # [m] linear taper band above min_depth
+#   max_rate: 0.001            # [m/s] ceiling on the local withdrawal rate
+#
+#   # WATER TABLE of the porous body (the phreatic surface joining the two channel
+#   # levels). Needed for faces: water-table, and worth having anyway: the pre-wet
+#   # seeds any ground below it, so closed depressions ON the bar start full - they
+#   # can never fill otherwise, since no surface flow reaches a hollow that sits
+#   # above the channel.
+#   water_table: phreatic
+#   # water_table_levels: {losing: 817.318, gaining: 816.807}  # else derived
+#   patch_drain: true          # also infiltrate water standing ON the bar
 
 # morphodynamics:              # optional GAIA extension (coupled by unsteady_run.py)
 #   enabled: true              # master switch (also settable via unsteady_run.py toggles)
