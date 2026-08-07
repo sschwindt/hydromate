@@ -164,8 +164,12 @@ calibration:
   # (a factorial grid would degenerate to the cube corners at 8-16 samples),
   # then Bayesian Active Learning adds up to (max_runs - init_runs) more.
   parameter_sampling_method: sobol
-  init_runs: 16                # initial (Sobol) design samples
-  max_runs: 25                 # total runs (initial + active-learning iterations)
+  # BAL-extension bookkeeping (July 2026): the 16 Sobol design runs + 9 BAL
+  # runs were promoted to the restart files, so a --resume treats all 25 as
+  # the completed initial design and continues BAL from there (convergence
+  # criterion: RE change < 5% over 5 consecutive iterations).
+  init_runs: 25                # completed evaluations promoted to the restart design
+  max_runs: 45                 # total runs (initial + active-learning iterations)
   gp_library: gpy
   # Calibrate the CHANNEL roughness only (zone1 = roughness zone 1 in friction.tbl).
   # Bounds from the bed GSD (d50 ~ 0.05 m, d90 ~ 0.15 m): ks in [d50, 3*d90]

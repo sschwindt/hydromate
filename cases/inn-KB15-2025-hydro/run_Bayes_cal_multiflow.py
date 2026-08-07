@@ -14,10 +14,14 @@ Campaigns (see user-sources/ground-truth/hydraulics/discharge-info.md):
 * **Nov 2025, Q=48.45 m3/s** - one taped cross-section (22 verticals in ~10 m).
   Its per-point velocity error is floored high (0.05 m/s) so this single, model-
   over-predicted section informs but does not dominate the joint likelihood.
-* **March 2026, Q=168 m3/s - EXCLUDED.** FlowTracker is wadeable, so at 168 m3/s
-  it only samples shallow slow margins (~0.58 m, 0.21 m/s) that a 2D model routes
-  fast (~1.1 m/s) - a ~5x gap roughness cannot close. Left commented below; a
-  high flow should enter via WATER DEPTH / flood-extent, not wadeable velocities.
+* **March 2026, Q=45.8 m3/s - EXCLUDED (comparability, not discharge).** Only 5
+  near-bank margin verticals in partially-wet cells, where the 2D depth-averaged
+  velocity is least reliable. The old "Q=168, model ~5x too fast" reason was a
+  discharge MISLABEL: at the true 45.8 m3/s the field magnitudes match the model to
+  order, but the points still carry the DEM-driven too-shallow / too-fast bias and
+  add no discharge diversity (45.8 ~= 47.3 ~= 48.45). Left commented below. High
+  flow can only enter via WATER DEPTH / flood-extent - wadeable velocity surveys are
+  safety-capped at low flow (river entry at high discharge endangers the operators).
 
 Modes: ``--smoke`` (isolated plumbing test), ``--run`` (full: initial design +
 BAL), ``--resume`` (reuse completed per-flow initial designs, only_bal_mode);
@@ -60,7 +64,7 @@ FLOWS = [
     #          values=GT / "FT_TKE_Summary_Nov25.xlsx",
     #          positions=GEO / "TKE_KB15_Nov25.gpkg", vel_err_floor=0.05),
     # EXCLUDED (wadeable margins not comparable to modelled channel velocity):
-    # FlowSpec(name="q168", discharge=168.0, kind="inline", duration=3000.0,
+    # FlowSpec(name="q45-8", discharge=45.8, kind="inline", duration=3000.0,
     #          values=GT / "FT_TKE_Summary_March26.xlsx"),
 ]
 

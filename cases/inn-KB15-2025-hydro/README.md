@@ -36,7 +36,7 @@ Inputs live in `user-sources/` (gitignored), produced artifacts in
 |---|---|---|---|---|
 | Sept 2025 | 47.3 | 30 verticals, reach-spanning (2 pools) | `adapter` | main velocity + water-level target |
 | Nov 2025 | 48.45 | 22 verticals, one taped cross-section | `transect` | secondary target (down-weighted) |
-| March 2026 | 168 | wadeable margins only | `inline` | **excluded** - at 168 m3/s the FlowTracker samples slow shallow margins (~0.2 m/s) a 2D model routes fast (~1.1 m/s); no reliable water depth either. A high flow should enter via water-level / flood-extent targets. |
+| March 2026 | 45.8 | 5 near-bank margin verticals | `inline` | **excluded (comparability, not discharge)** - the old "Q=168, model ~5x too fast" reason was a discharge mislabel; at the true 45.8 m3/s the field magnitudes match the model to order, but these few margin points sit in partially-wet cells and add no discharge diversity (45.8 ~= 47.3 ~= 48.45). Wadeable velocity surveys are safety-capped at low flow, so high flow must enter via water-level / flood-extent targets. |
 
 Values: `user-sources/ground-truth/hydraulics/FT_TKE_Summary*.xlsx`;
 positions: `user-sources/geodata/flowtracker2/` and `TKE_KB15_Nov25.gpkg`.
@@ -124,15 +124,49 @@ field-book QA.
   each collocation point = one TELEMAC run per flow (~50 min on 16 cores);
   `--resume` reuses the per-flow initial designs
   (`flow-<name>/.../restart_data/`).
-* **History:** the first full calibration (July 2026, velocity-only targets,
-  uncorrected data) pinned the posterior at the prior's upper bound
-  (`ks -> 0.45`). Diagnostics traced this to the DEM bathymetry bias (item 2),
-  not to roughness; an outflow-stage sensitivity run (+0.30 m,
-  `steady2d-q47-3-stagetest.cas`) ruled out the downstream boundary (both
-  rating stages sit below the natural outfall level; steep controls isolate
-  the measurement subreach). With the corrected water-level targets the
-  likelihood has an interior optimum near `ks ~ 0.35` m; velocity alone
-  remains bound-monotone (structural bias, item 2).
+* **History (2D calibrations, `multiflow-*` archives):**
+  1. *ks-only, velocity-only, uncorrected data* (Jul 2026): posterior pinned
+     at the prior upper bound (`ks -> 0.45`). Diagnostics traced this to the
+     DEM bathymetry bias (item 2), not roughness; an outflow-stage sensitivity
+     run (+0.30 m, `steady2d-q47-3-stagetest.cas`) ruled out the downstream
+     boundary (both rating stages sit below the natural outfall level; steep
+     controls isolate the measurement subreach).
+  2. *ks-only, corrected water-level + velocity targets* (archived
+     `multiflow-2026-07-15-ks-only/`): interior posterior **ks = 0.411 m**,
+     90% CI [0.348, 0.446]; RE ~1.27 nats, 906 posterior samples. Water levels
+     fit to ~1 cm; velocity still over-predicted (+0.19 m/s at the Nov-25
+     transect).
+  3. *3-parameter: ks + VELOCITY DIFFUSIVITY + wall roughness* (Sobol 16+9,
+     extended to 45 runs to converge RE): posterior **ks = 0.429 m** (90% CI
+     [0.396, 0.447]), while **diffusivity and wall roughness stay
+     unconstrained** (near-flat marginals = prior). The two added parameters
+     are **non-identifiable** from this data: they cannot absorb the
+     near-bank velocity over-prediction (residual +0.03 m/s Sept, +0.22 m/s
+     Nov at the posterior median), so ks stays high. RE converged to ~2.1
+     nats (noisy at the +/-5% level from rejection-sampling). Plots:
+     `auto-saved-results-HydroBayesCal/plots/posterior-3param-final.png`.
+
+  **Conclusion of the 2D path:** water level is well-calibrated (RMSE 2-3 cm);
+  the single-zone channel resistance settles at an *effective* ks ~ 0.43 m -
+  inflated by a near-bank velocity bias that grain roughness, eddy viscosity
+  and wall friction all fail to remove (measured log-law profiles give grain
+  ks ~ 0.09 m). The residual is a 2D depth-averaged representation limit at
+  the slow wadeable margins, compounded by the wetted-margin bathymetry
+  bias - not a calibration-parameter problem. This motivates the 3D path.
+
+## TELEMAC-3D non-hydrostatic calibration (active)
+
+The 2D depth-averaged model cannot represent the slow near-bed / near-bank
+velocities the FlowTracker sampled. The **20 multi-depth ADV verticals**
+(item 3, three depths each) are genuine vertical-profile ground truth, so a
+**non-hydrostatic TELEMAC-3D** model - which resolves the vertical velocity
+structure and secondary currents - is calibrated against the velocity **at
+each measured depth** rather than a depth-averaged proxy. The 3D case reuses
+the 2D horizontal mesh, hotstarts from `r2d.slf`, and (per hydromate's 3D
+extension) uses a single representative `FRICTION COEFFICIENT FOR THE BOTTOM`
+(3D has no zonal friction file), sigma layers sized to `dz ~ dx/2`, and MURD
+PSI advection for wetting/drying robustness. See `add3d.py` /
+`hydromate/threed.py`.
 
 ## Boundary conditions
 
