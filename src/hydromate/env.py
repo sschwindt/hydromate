@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -101,14 +102,24 @@ class TelemacRuntime:
         parallel = f" --ncsize={ncsize}" if ncsize and ncsize > 1 else ""
         sortie_flags = " -s --nozip" if sortie else ""
         launcher = solver or self.env.solver
-        # The TELEMAC python launcher (telemac2d/3d.py) needs numpy, which the bare
-        # pysource shell may lack; run it under a conda env that has the scientific
-        # stack (numpy/…). The env's python + the pysource-exported PYTHONPATH gives
-        # both numpy and the TELEMAC modules. Override with HYDROMATE_TELEMAC_ENV.
-        solver_env = os.environ.get("HYDROMATE_TELEMAC_ENV", "hydromate-env")
-        prefix = f"mamba run -n {shlex.quote(solver_env)} " if solver_env else ""
-        cmd = (f"{prefix}{launcher}.py {shlex.quote(str(cas_file))}"
-               f"{parallel}{sortie_flags}")
+        # The TELEMAC launcher (telemac2d/3d.py) imports numpy, which the bare
+        # pysource shell does not necessarily provide. Run it with an interpreter
+        # that has it - by default the one hydromate itself runs in, which has numpy
+        # by construction - while the sourced pysource supplies HOMETEL and the
+        # TELEMAC PYTHONPATH. `command -v` resolves the launcher inside that shell,
+        # so nothing about the install layout is assumed here.
+        #
+        # Deliberately NOT a named conda/mamba environment: that hard-codes a machine
+        # assumption into the package (that mamba is installed, that the env is called
+        # X, and that mamba's root prefix resolves), and it fails on a machine whose
+        # MAMBA_ROOT_PREFIX points somewhere else. An interpreter path needs none of
+        # that, and pointing `telemac.solver_python` at another env's python covers
+        # the case where a *different* interpreter is genuinely wanted.
+        python = (getattr(self.env, "solver_python", None)
+                  or os.environ.get("HYDROMATE_TELEMAC_PYTHON")
+                  or sys.executable)
+        cmd = (f'{shlex.quote(str(python))} "$(command -v {launcher}.py)" '
+               f"{shlex.quote(str(cas_file))}{parallel}{sortie_flags}")
         return self.run(cmd, cwd=cwd, check=check, on_line=on_line)
 
     def check_available(self) -> str:

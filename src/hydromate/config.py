@@ -64,6 +64,15 @@ class TelemacEnv:
     solver: str = "telemac2d"  # telemac2d | telemac3d
     n_processors: int = 1
     version: str = "v8p4"
+    # Python used to RUN the TELEMAC launcher (telemac2d.py / telemac3d.py). Those
+    # scripts import numpy, which the bare pysource shell does not necessarily
+    # provide. Left unset, hydromate runs them with **its own interpreter**
+    # (``sys.executable``) - which has numpy by construction, since hydromate needs
+    # it - while the sourced pysource still supplies HOMETEL and the TELEMAC
+    # PYTHONPATH. Set this only to use a *different* interpreter than the one
+    # hydromate runs in; ``HYDROMATE_TELEMAC_PYTHON`` overrides it per machine
+    # without editing the config.
+    solver_python: str | None = None
 
     def validate(self) -> None:
         if not Path(self.pysource).is_file():
