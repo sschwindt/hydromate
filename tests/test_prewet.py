@@ -61,6 +61,237 @@ def test_longitudinal_prewet_smooths_surface():
     assert thalweg[ns // 5: -ns // 5].std() < 0.05 * thalweg.mean()  # smooth
 
 
+def _straight_reach(tmp_path, *, length=300.0, slope=0.005, ks=0.05):
+    """A straight trapezoidal reach: mesh, centerline, channel zone and a config.
+
+    Returns ``(cfg, mesh, cross)`` where *cross* is the cross-channel coordinate of
+    each node column, so a test can pick out the thalweg and the banks.
+    """
+    import geopandas as gpd
+    from shapely.geometry import LineString, Polygon
+
+    from hydromate.config import (
+        Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
+        Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
+    )
+    from hydromate.mesh import Mesh
+
+    ns, nc = 61, 41
+    s = np.linspace(0.0, length, ns)
+    cross = np.linspace(-20.0, 20.0, nc)
+    S, C = np.meshgrid(s, cross, indexing="ij")
+    # bed: constant downstream slope + a V-shaped section 2 m deep at the thalweg
+    bottom = (100.0 - slope * S + 0.005 * C ** 2).ravel()
+    x, y = S.ravel(), C.ravel()
+
+    tri = []
+    for i in range(ns - 1):
+        for j in range(nc - 1):
+            a, b = i * nc + j, i * nc + j + 1
+            c, d = (i + 1) * nc + j, (i + 1) * nc + j + 1
+            tri += [[a, b, c], [b, d, c]]
+    mesh = Mesh(x=x, y=y, triangles=np.array(tri), bottom=bottom,
+                ipobo=np.zeros(x.size, int), boundary_nodes=np.array([], int),
+                element_matid=np.ones(len(tri), int), node_matid=np.ones(x.size, int),
+                roughness=np.full(x.size, ks))
+
+    centerline = tmp_path / "centerline.gpkg"
+    gpd.GeoDataFrame(geometry=[LineString([(0.0, 0.0), (length, 0.0)])],
+                     crs="EPSG:25832").to_file(centerline, driver="GPKG")
+    # real liquid boundaries: the seed must keep the inflow section wet or DEBIMP
+    # aborts the run at t=0
+    liquid = tmp_path / "liquid.gpkg"
+    gpd.GeoDataFrame(
+        {"Type (inflow/outflow)": ["inflow", "outflow",
+                                   "int-outflow-lose", "int-inflow-gain"],
+         "Target flow": [10.0, 10.0, 0.065, 0.065]},
+        geometry=[LineString([(length, -20.0), (length, 20.0)]),
+                  LineString([(0.0, -20.0), (0.0, 20.0)]),
+                  # internal exchange lines bracketing the bar at x = 85 .. 115
+                  LineString([(85.0, -15.0), (85.0, 15.0)]),
+                  LineString([(115.0, -15.0), (115.0, 15.0)])],
+        crs="EPSG:25832").to_file(liquid, driver="GPKG")
+    zones = tmp_path / "zones.gpkg"
+    gpd.GeoDataFrame(
+        {"Zone Name": ["Main channel"]},
+        geometry=[Polygon([(-1, -20), (length + 1, -20),
+                           (length + 1, 20), (-1, 20)])],
+        crs="EPSG:25832").to_file(zones, driver="GPKG")
+
+    model = tmp_path / "model"
+    model.mkdir(exist_ok=True)
+    dummy = tmp_path / "dummy"
+    dummy.write_text("")
+    cfg = Config(
+        name="prewet-reach", crs_epsg=25832, config_dir=tmp_path,
+        preprocessing_dir=tmp_path, model_dir=model, postprocessing_dir=tmp_path,
+        calibration_dir=tmp_path,
+        telemac=TelemacEnv(pysource=dummy),
+        geodata=Geodata(dem_initial=dummy, boundary=dummy, mesh_zones=zones,
+                        channel_centerline=centerline),
+        boundaries=Boundaries(liquid_boundaries=liquid, prescribed_flowrate=10.0),
+        initialization=Initialization(prewet_depth=0.30, drainable_prewet=False,
+                                      dry_start_extent=3.0, dry_start_depth=0.5),
+        mesh=MeshConfig(), friction=Friction(), hydrodynamics=Hydrodynamics(),
+        morphodynamics=Morphodynamics(), ground_truth=GroundTruth(),
+        calibration=Calibration(),
+    )
+    return cfg, mesh, C.ravel()
+
+
+def test_normal_depth_prewet_never_seeds_above_its_own_surface(tmp_path):
+    """The normal-depth seed lays water only where the target surface is above the
+    bed, and the seeded surface is (per cross-section) flat - so no water sits on
+    ground higher than the level that carries the discharge."""
+    from hydromate.steering import _normal_depth_prewet_depth
+
+    cfg, mesh, cross = _straight_reach(tmp_path)
+    mask = np.ones(mesh.x.size, dtype=bool)
+    depth = _normal_depth_prewet_depth(cfg, mesh, mask, discharge=10.0)
+
+    assert (depth >= 0).all()
+    wet = depth > 0
+    assert wet.any(), "the seed must wet the channel"
+    surface = mesh.bottom + depth
+    # per cross-section the seeded surface is one level (flat), and every dry node
+    # of that section stands above it
+    for i in range(0, mesh.x.size, 41):
+        sec = slice(i, i + 41)
+        sec_wet = wet[sec]
+        if sec_wet.sum() < 2:
+            continue
+        level = surface[sec][sec_wet]
+        assert level.max() - level.min() < 1e-6
+        assert (mesh.bottom[sec][~sec_wet] >= level.max() - 1e-6).all()
+    # the thalweg (cross == 0) is the deepest column
+    thalweg = np.isclose(cross, 0.0)
+    assert depth[thalweg & wet].mean() > depth[wet].mean()
+
+
+def test_normal_depth_prewet_is_monotonic_in_fill(tmp_path):
+    """prewet_fill scales the depth above the thalweg, so a lower fill seeds
+    strictly less water - the knob that keeps the seed under the converged
+    surface."""
+    from hydromate.steering import _normal_depth_prewet_depth
+
+    cfg, mesh, _ = _straight_reach(tmp_path)
+    mask = np.ones(mesh.x.size, dtype=bool)
+    volumes = []
+    for fill in (0.5, 0.7, 1.0):
+        cfg.initialization.prewet_fill = fill
+        volumes.append(_normal_depth_prewet_depth(cfg, mesh, mask, 10.0).sum())
+    assert volumes[0] < volumes[1] < volumes[2]
+
+
+def test_prewet_min_depth_floor_drops_the_feathered_margin(tmp_path):
+    """Nodes that would get less than prewet_min_depth are left dry: a feathered
+    seed margin carries no flow and is what stalls as stagnant film."""
+    from hydromate.steering import write_initial_conditions
+    from hydromate import selafin
+
+    cfg, mesh, _ = _straight_reach(tmp_path)
+    cfg.initialization.prewet_min_depth = 0.0
+    depth_all = selafin.read_slf(
+        write_initial_conditions(cfg, mesh))["values"]["WATER DEPTH"]
+    cfg.initialization.prewet_min_depth = 0.15
+    depth_floor = selafin.read_slf(
+        write_initial_conditions(cfg, mesh))["values"]["WATER DEPTH"]
+
+    # the inflow plug is re-imposed after the floor, so exclude it from the comparison
+    from hydromate.steering import _inflow_plug_mask
+
+    plug = _inflow_plug_mask(cfg, mesh)
+    thin = (depth_all > 0) & (depth_all < 0.15) & ~plug
+    assert thin.any(), "the V section must produce a thin margin to drop"
+    assert np.all(depth_floor[thin] == 0.0)
+    # nothing below the floor survives, and the deep water is untouched
+    kept = (depth_floor > 0) & ~plug
+    assert depth_floor[kept].min() >= 0.15
+    assert np.allclose(depth_floor[kept], depth_all[kept])
+
+
+def test_prewet_always_wets_the_inflow_section(tmp_path):
+    """Whatever the seed and its filters leave behind, the inflow cross-section must
+    end up wet: TELEMAC's DEBIMP scales the prescribed discharge by the depth
+    integral along that section, so a dry inflow aborts the run at t=0."""
+    from hydromate import selafin
+    from hydromate.steering import _inflow_plug_mask, write_initial_conditions
+
+    cfg, mesh, _ = _straight_reach(tmp_path)
+    plug = _inflow_plug_mask(cfg, mesh)
+    assert plug.any(), "the fixture must produce an inflow plug"
+
+    # a floor high enough to wipe out the whole synthetic seed
+    cfg.initialization.prewet_min_depth = 5.0
+    depth = selafin.read_slf(
+        write_initial_conditions(cfg, mesh))["values"]["WATER DEPTH"]
+
+    assert (depth[plug] >= cfg.initialization.dry_start_depth - 1e-9).all()
+    assert np.all(depth[~plug] == 0.0)     # nothing else survived that floor
+
+
+def test_prewet_falls_back_to_constant_without_a_centerline(tmp_path):
+    """No centerline (or no discharge) -> the older constant-depth seed, so a case
+    that cannot size a normal depth still builds."""
+    from hydromate import selafin
+    from hydromate.steering import _inflow_plug_mask, write_initial_conditions
+
+    cfg, mesh, _ = _straight_reach(tmp_path)
+    cfg.geodata.channel_centerline = None
+    depth = selafin.read_slf(
+        write_initial_conditions(cfg, mesh))["values"]["WATER DEPTH"]
+    # constant prewet_depth on the mask (the inflow plug is deeper by design)
+    plug = _inflow_plug_mask(cfg, mesh)
+    assert np.isclose(depth[~plug].max(), 0.30)
+    assert np.allclose(depth[~plug][depth[~plug] > 0], 0.30)
+
+
+def test_water_table_pool_survives_both_seed_filters(tmp_path):
+    """A closed depression fed by the bar's water table must be seeded and must
+    survive the filters that exist to remove *unsupported* water.
+
+    It cannot fill any other way: it sits on a bar above the channel, so no surface
+    flow reaches it, and `drainable_prewet` refuses by design to seed behind a rim.
+    Ordinary trapped ground with no water table must still be dropped.
+    """
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+
+    from hydromate import selafin
+    from hydromate.steering import write_initial_conditions
+
+    cfg, mesh, cross = _straight_reach(tmp_path)
+    bottom = np.asarray(mesh.bottom, float).copy()
+    # two identical bowls 0.5 m deep, both closed; only the first is inside a patch
+    for cx, cy in ((100.0, 0.0), (200.0, 0.0)):
+        bowl = np.exp(-(((mesh.x - cx) / 6.0) ** 2 + ((cross - cy) / 6.0) ** 2))
+        bottom -= 0.5 * bowl
+    mesh.bottom = bottom
+
+    zone = tmp_path / "zone.gpkg"
+    gpd.GeoDataFrame(
+        {"Patch name": ["bar"], "porous depth (m)": [0.5]},
+        geometry=[Polygon([(85, -15), (115, -15), (115, 15), (85, 15)])],
+        crs="EPSG:25832").to_file(zone, driver="GPKG")
+    cfg.percolation.zone = zone
+    cfg.percolation.mode = "fortran"
+    cfg.percolation.water_table = "phreatic"
+    # a table just above the first bowl's floor (bed there ~ 100 - 0.005*100 - 0.5)
+    level = float(bottom[np.argmin(np.hypot(mesh.x - 100.0, cross))]) + 0.25
+    cfg.percolation.water_table_levels = {"losing": level, "gaining": level}
+    cfg.initialization.drainable_prewet = True
+
+    depth = np.asarray(selafin.read_slf(
+        write_initial_conditions(cfg, mesh))["values"]["WATER DEPTH"], float)
+
+    in_patch = (np.abs(mesh.x - 100.0) < 8) & (np.abs(cross) < 8)
+    elsewhere = (np.abs(mesh.x - 200.0) < 8) & (np.abs(cross) < 8)
+    assert depth[in_patch].max() > 0.2, "the supported pool must be seeded"
+    # the unsupported twin is dropped by the drainable filter (it is behind a rim
+    # and has no source), which is what makes this a real test of the exemption
+    assert depth[elsewhere].max() < depth[in_patch].max()
+
+
 def test_prescribed_flowrates_split_across_inflows(tmp_path):
     """The total reach Q is distributed across multiple inflow boundaries by node
     count (not prescribed in full on each, which would multiply the supplied

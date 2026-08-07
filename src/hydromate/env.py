@@ -10,6 +10,7 @@ user-configured ``pysource.*.sh`` (exporting HOMETEL + PYTHONPATH + the right
 
 from __future__ import annotations
 
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -89,7 +90,7 @@ class TelemacRuntime:
         *sortie* (default True) adds ``-s --nozip`` so TELEMAC writes a plain-text
         ``<cas>_<timestamp>.sortie`` listing next to the case. That listing carries
         the per-boundary cumulated flowrates and volume balance that the flux-
-        convergence analysis (pythomac) reads; ``--nozip`` keeps it unzipped in
+        convergence analysis (hydromate.sortie) reads; ``--nozip`` keeps it unzipped in
         parallel runs so the parser can find it.
 
         *on_line* is forwarded to :meth:`run`: pass a callback (e.g.
@@ -100,7 +101,14 @@ class TelemacRuntime:
         parallel = f" --ncsize={ncsize}" if ncsize and ncsize > 1 else ""
         sortie_flags = " -s --nozip" if sortie else ""
         launcher = solver or self.env.solver
-        cmd = f"{launcher}.py {shlex.quote(str(cas_file))}{parallel}{sortie_flags}"
+        # The TELEMAC python launcher (telemac2d/3d.py) needs numpy, which the bare
+        # pysource shell may lack; run it under a conda env that has the scientific
+        # stack (numpy/…). The env's python + the pysource-exported PYTHONPATH gives
+        # both numpy and the TELEMAC modules. Override with HYDROMATE_TELEMAC_ENV.
+        solver_env = os.environ.get("HYDROMATE_TELEMAC_ENV", "hydromate-env")
+        prefix = f"mamba run -n {shlex.quote(solver_env)} " if solver_env else ""
+        cmd = (f"{prefix}{launcher}.py {shlex.quote(str(cas_file))}"
+               f"{parallel}{sortie_flags}")
         return self.run(cmd, cwd=cwd, check=check, on_line=on_line)
 
     def check_available(self) -> str:

@@ -42,7 +42,15 @@ from hydromate.vertical_convergence import (
     layer_levels, run_vertical_convergence,
 )
 from hydromate.rating import (
-    generate_stage_discharge, normal_depth, synthesize_outflow_rating,
+    generate_stage_discharge, normal_depth, section_rating, stage_for_discharge,
+    synthesize_outflow_rating, synthesize_outflow_rating_from_section,
+)
+from hydromate.sections import line_discharges, write_line_discharges
+from hydromate.wetting import (
+    outlet_profile, OutletProfile, wetting_report, WettingReport,
+)
+from hydromate.watertable import (
+    fit_phreatic_plane, patch_node_mask, PhreaticPlane, water_table_depth,
 )
 from hydromate.convergence import percent_levels, ratio_levels, run_mesh_convergence
 from hydromate.mesh_validity import MeshValidity, channel_ks, check_level
@@ -50,7 +58,14 @@ from hydromate.unsteady import (
     build_unsteady_case, build_unsteady_3d_case, load_hydrograph,
     write_control_sections,
 )
-from hydromate.flux_convergence import analyze_flux_convergence, FluxConvergence
+from hydromate.flux_convergence import (
+    analyze_flux_convergence, convergence_index, convergence_rate, FluxConvergence,
+    relative_imbalance,
+)
+from hydromate.sortie import (
+    find_lines, latest_sortie, read_sortie, sediment_mass_profile, Sortie,
+    tracer_mass_profile,
+)
 from hydromate.workflow import (
     format_3d_cases, format_flux_convergence, prepare_steady_inputs,
     resolve_discharge, synthesize_constant_inflow, synthesize_rating_if_missing,
@@ -76,11 +91,20 @@ __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "select_3d_turbulence",
            "layer_levels", "run_vertical_convergence",
            "generate_stage_discharge", "normal_depth", "synthesize_outflow_rating",
+           "section_rating", "stage_for_discharge",
+           "synthesize_outflow_rating_from_section",
+           "line_discharges", "write_line_discharges",
+           "wetting_report", "WettingReport", "outlet_profile", "OutletProfile",
+           "PhreaticPlane", "fit_phreatic_plane", "patch_node_mask",
+           "water_table_depth",
            "run_mesh_convergence", "percent_levels", "ratio_levels",
            "MeshValidity", "channel_ks", "check_level",
            "build_unsteady_case", "build_unsteady_3d_case", "load_hydrograph",
            "write_control_sections",
            "analyze_flux_convergence", "FluxConvergence",
+           "relative_imbalance", "convergence_rate", "convergence_index",
+           "read_sortie", "latest_sortie", "Sortie",
+           "sediment_mass_profile", "tracer_mass_profile", "find_lines",
            "format_3d_cases", "format_flux_convergence",
            "prepare_steady_inputs", "resolve_discharge",
            "synthesize_constant_inflow", "synthesize_rating_if_missing",

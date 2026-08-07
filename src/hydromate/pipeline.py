@@ -7,7 +7,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from hydromate import boundary, calibration, dem, hydraulics, mesh, steering
+from hydromate import boundary, calibration, dem, fortran, hydraulics, mesh, steering
 from hydromate.config import Config
 from hydromate.env import TelemacRuntime
 from hydromate.logsetup import log_step, setup_logging
@@ -26,6 +26,8 @@ class Artifacts:
     liquid_boundaries: Path | None = None
     liquid_boundaries_meta: Path | None = None
     gaia_cas: Path | None = None
+    source_regions: Path | None = None   # SOURCE REGIONS DATA FILE (losing-gaining reach)
+    user_fortran: Path | None = None     # FORTRAN FILE folder (percolation.mode: fortran)
     ground_truth: Path | None = None
     calibration_csv: Path | None = None
     hbc_config: Path | None = None
@@ -44,8 +46,17 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
         when a caller already routes everything to its own compound log, e.g. the
         mesh-convergence study logging the per-level builds to postprocessing/).
     """
-    cfg.validate()
     cfg.ensure_dirs()
+    # synthesise a missing outflow rating before validating: with
+    # boundaries.rating_method set, leaving stage_discharge unset is a legitimate
+    # "derive it from the geodata at the simulated Q" (see workflow.
+    # synthesize_rating_if_missing), and it must land before validate() checks it.
+    if (cfg.boundaries.outflow_condition == "stage_discharge"
+            and cfg.boundaries.stage_discharge is None
+            and cfg.boundaries.prescribed_flowrate is not None):
+        from hydromate.workflow import synthesize_rating_if_missing
+        synthesize_rating_if_missing(cfg, float(cfg.boundaries.prescribed_flowrate))
+    cfg.validate()
     # compound logfile for the build, in the simulation (model) output folder
     if log_to_file:
         setup_logging(cfg.model_path(cfg.log_file))
@@ -123,17 +134,42 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
         else:
             art.initial_conditions = steering.write_dry_start_conditions(cfg, the_mesh)
             prev_comp = art.initial_conditions.name if art.initial_conditions else None
-        # internal point sources/sinks for a losing-gaining reach (empty unless the
+        # internal source/sink REGIONS for a losing-gaining reach (empty unless the
         # liquid-boundary layer carries internal 'int-*' lines); shared by every .cas
-        sources = boundary.load_internal_sources(cfg, the_mesh)
-        for s in sources:
-            log.info("  internal source %s: %+.4f m3/s at (%.1f, %.1f)",
-                     s.name, s.discharge, s.x, s.y)
+        source_regions = boundary.load_internal_source_regions(cfg, the_mesh)
+        for r in source_regions:
+            log.info("  internal source region %s: %+.4f m3/s over %d node(s), "
+                     "%.0f m2", r.name, r.discharge, r.n_nodes, r.area)
+        # The water table the generated routine uses as the drain's taper floor must
+        # be the one the pre-wet seeded the pools with, so it is re-fitted here from
+        # the initial-conditions file that was just written. With explicit
+        # percolation.water_table_levels both fits read the same numbers and are
+        # identical by construction; derived from the seeded surface they can differ
+        # by a centimetre or so near the internal lines.
+        plane = None
+        if cfg.percolation.water_table == "phreatic" and art.initial_conditions:
+            import numpy as np
+
+            from hydromate import selafin, watertable
+
+            ic = selafin.read_slf(art.initial_conditions)["values"]["WATER DEPTH"]
+            plane = watertable.fit_phreatic_plane(
+                cfg, the_mesh, surface=np.asarray(the_mesh.bottom, float) + ic)
+        if source_regions:
+            if cfg.gain_lose.active and cfg.gain_lose.implementation == "fortran":
+                # USER_RAIN percolation: the generated routine withdraws over the
+                # patch depth-limited and reinjects at the gaining line; no
+                # SOURCE REGIONS file (the .cas carries FORTRAN FILE + RAIN keys).
+                art.user_fortran = fortran.write_user_fortran(cfg, source_regions,
+                                                              plane=plane)
+                log.info("  percolation USER_RAIN routine -> %s", art.user_fortran)
+            else:
+                art.source_regions = steering.write_source_regions(cfg, source_regions)
         # the initial run is ALWAYS steady (steady2d.cas)
         art.cas_file = steering.write_cas(
             cfg, liquids, inflow_q, outflow_wse, gaia_cas=gaia_name,
             previous_computation=prev_comp, turbulence_model=turb_model,
-            sources=sources,
+            source_regions=source_regions,
         )
         # additionally write the unsteady hydrograph case when a varying inflow
         # series is available (a constant-Q inflow needs no unsteady run)
@@ -145,7 +181,7 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
                 previous_computation=prev_comp, turbulence_model=turb_model,
                 unsteady=True, liquid_boundaries_file=art.liquid_boundaries.name,
                 duration=_hydrograph_duration(inflow), out_name=cfg.unsteady_cas_file,
-                sources=sources,
+                source_regions=source_regions,
             )
             log.info("  unsteady hydrograph case -> %s (Q(t) from %s)",
                      art.unsteady_cas.name, art.liquid_boundaries.name)

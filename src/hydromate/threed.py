@@ -282,6 +282,7 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
                  n_time_steps: int | None = None,
                  listing_period: int | None = None,
                  graphic_period: int | None = None,
+                 min_depth: float | None = None,
                  data: dict | None = None) -> ThreeDSetup:
     """Write ``<case-name>3d.cas`` next to the 2D case and return the setup summary.
 
@@ -357,8 +358,11 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
     listing = listing_period or max(1, n_steps // 10)
 
     law, coef = _global_friction(cfg)
-    # positive depth floor (~5% of a layer) so dry hotstart columns don't divide by 0
-    depth_floor = round(max(0.005, 0.05 * vd.dz), 4)
+    # positive depth floor (~5% of a layer) so dry hotstart columns don't divide by 0;
+    # callers can raise it (e.g. 0.10 m for the KB15 continuation runs, which need a
+    # firmer floor to keep the sigma transform / PPE stable on the dry floodplain).
+    depth_floor = (float(min_depth) if min_depth is not None
+                   else round(max(0.005, 0.05 * vd.dz), 4))
     # reuse the 2D prescriptions + horizontal velocity profiles verbatim (boundary
     # consistency); one pass over the 2D steering for all three keywords
     vals = (_read_cas_values(cas_2d, "PRESCRIBED FLOWRATES", "PRESCRIBED ELEVATIONS",
@@ -406,6 +410,12 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
         "/ INPUT / OUTPUT FILES",
         f"GEOMETRY FILE : {cfg.geometry_slf}",
         f"BOUNDARY CONDITIONS FILE : {cfg.boundary_cli}",
+        # user-fortran overrides (compiled + linked in) when a `user_fortran/`
+        # directory is present in the model dir - e.g. the KB15 Spalart-Allmaras
+        # source-term fix (sousa.f wall distance + dry-cell source clip) so 3D
+        # turbulence produces physical eddy viscosity. See user_fortran/README.
+        *([f"FORTRAN FILE : {(model / 'user_fortran').name}"]
+          if (model / "user_fortran").is_dir() else []),
         # hydrograph forcing (Q(t)/SL(t)) for the unsteady run
         *([f"LIQUID BOUNDARIES FILE : {liquid_boundaries_file}"]
           if (unsteady and liquid_boundaries_file) else []),
@@ -413,7 +423,7 @@ def build_3d_cas(cfg: Config, results_2d: str | Path | None = None,
         f"2D RESULT FILE : {results2d_name or cfg.results2d_from_3d_slf}",
         "MASS-BALANCE : YES",
         # per-boundary flux printouts in the listing - what the boundary-flux
-        # convergence analysis (hydromate.flux_convergence / pythomac) reads
+        # convergence analysis (hydromate.flux_convergence) reads
         "PRINTING CUMULATED FLOWRATES : YES",
         "/",
         *hotstart_lines,

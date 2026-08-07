@@ -139,6 +139,44 @@ friction: {{boundary_law: 3, boundary_coefficient: 38}}
     assert abs(df["WSE"][0] - (379.8 + df["depth"][0])) < 0.05
 
 
+def test_stage_for_discharge_matches_section_rating(tmp_path):
+    """``stage_for_discharge`` is the solver ``section_rating`` writes out, so the
+    outflow rating and the normal-depth pre-wet cannot drift apart."""
+    import numpy as np
+    import pandas as pd
+
+    from hydromate.rating import section_rating, stage_for_discharge
+
+    station = np.linspace(0.0, 20.0, 81)
+    bed = 100.0 + 0.02 * (station - 10.0) ** 2      # V/parabolic section
+    ks, slope = 0.05, 0.004
+    qs = [1.0, 5.0, 20.0]
+
+    out = section_rating(tmp_path / "r.csv", qs, station=station, bed=bed, ks=ks,
+                         slope=slope)
+    df = pd.read_csv(out)
+    for q, wse in zip(df["Q"], df["WSE"]):
+        direct = stage_for_discharge(q, station=station, bed=bed, ks=ks, slope=slope)
+        assert abs(direct - wse) < 1e-3
+
+
+def test_stage_for_discharge_is_monotonic_and_validated():
+    import numpy as np
+    import pytest
+
+    from hydromate.rating import stage_for_discharge
+
+    station = np.linspace(0.0, 20.0, 81)
+    bed = 100.0 + 0.02 * (station - 10.0) ** 2
+    kw = dict(station=station, bed=bed, ks=0.05, slope=0.004)
+    stages = [stage_for_discharge(q, **kw) for q in (1.0, 5.0, 20.0)]
+    assert stages[0] < stages[1] < stages[2]
+    assert stages[0] > bed.min()                    # above the section thalweg
+
+    with pytest.raises(ValueError, match="positive bed slope"):
+        stage_for_discharge(5.0, station=station, bed=bed, ks=0.05, slope=0.0)
+
+
 if __name__ == "__main__":
     import tempfile
 

@@ -12,17 +12,17 @@
 # -----------------------------------------------------------------------------
 
 project:
-  name: isar-mar-2025                    # case name; used in titles and file headers
+  name: isar-mar-2025-greenampt                    # case name; used in titles and file headers
   crs_epsg: 25832              # [REQUIRED] project CRS, metric. 25832 = ETRS89/UTM32N
   sim_dir: hydromate-case
-  # Scenario A (PRESCRIBED exchange). Each percolation scenario gets its own tree
+  # Scenario B (GREEN-AMPT / conductivity-driven exchange). Each percolation scenario gets its own tree
   # under hydromate-case/scenarios/ so the two can be compared side by side and
   # neither disturbs the legacy hydromate-case/simulation/ (the failed Jul-2026 run,
   # kept as the evidence behind test-approaches.md).
-  preprocessing_dir: hydromate-case/scenarios/prescribed-q/preprocessing
-  model_dir: hydromate-case/scenarios/prescribed-q/simulation
-  postprocessing_dir: hydromate-case/scenarios/prescribed-q/postprocessing
-  calibration_dir: hydromate-case/scenarios/prescribed-q/calibration-validation
+  preprocessing_dir: hydromate-case/scenarios/green-ampt/preprocessing
+  model_dir: hydromate-case/scenarios/green-ampt/simulation
+  postprocessing_dir: hydromate-case/scenarios/green-ampt/postprocessing
+  calibration_dir: hydromate-case/scenarios/green-ampt/calibration-validation
 
 telemac:
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported).
@@ -45,10 +45,7 @@ geodata:
   # zonation (zone 1 = channel ks ~0.2 m, zone 2 = floodplain ks ~0.5 m).
   roughness_zones: user-sources/geodata/roughness-zones.gpkg
   roughness_table: user-sources/geodata/roughness-table.csv
-  # internal cross-sections ("baffles"): after the run the discharge across each
-  # line is integrated from r2d.slf into simulation/baffle-XS-q.csv, so the split
-  # of the total Q between the threads of the braided reach can be read off (and
-  # checked against the FlowTracker transects). Layer is EPSG:4326 - reprojected.
+  # internal cross-sections ("baffles") -> simulation/baffle-XS-q.csv after the run.
   control_sections: user-sources/geodata/baffles.gpkg
   control_section_name_field: "Baffle Name"
   # dem_of_difference: path/to/dod.tif         # precomputed bed-change raster (else from DEMs)
@@ -67,17 +64,11 @@ boundaries:
   outflow_condition: stage_discharge
   # prescribed_elevation: 0.0  # m a.s.l.; only for outflow_condition: elevation
   # outlet rating curve (Q,WSE): one Q-h pair at the steady discharge suffices.
-  # Left UNSET so each scenario synthesises its own into preprocessing/rating-curve.csv.
-  # The old user-sources/geodata/rating-curve.csv gave WSE 815.1139 - 0.25 m BELOW the
-  # reach's own normal depth at this section, because it came from the "trapezoid"
-  # method: a rectangle as wide as the 9.55 m outflow line at the full depth. The real
-  # section is V-shaped, so that idealisation over-states the flow area, returns too
-  # low a stage, and the boundary then held the outlet below the natural level. The
-  # flow accelerated to pass 2.4 m3/s through the resulting 1.3 m2 gap: |U| ~1.0 m/s
-  # mean and 2.2 m/s peak at Fr ~1.4 (supercritical) right at the model outlet.
+  # Unset: synthesised per scenario into preprocessing/rating-curve.csv. The old file
+  # held WSE 815.1139, 0.25 m below the reach's normal depth at this section (the
+  # "trapezoid" idealisation over-states the flow area of a V-shaped section), which
+  # forced a supercritical drawdown at the outlet - see case-config.yml.
   # stage_discharge: user-sources/geodata/rating-curve.csv
-  # "section" integrates the ACTUAL DEM cross-section along the outflow line with the
-  # ks of the roughness zone each sample falls in -> WSE 815.359 at Q=2.4 m3/s.
   rating_method: section
   # Internal ('int-*') losing/gaining lines in the layer above (int-outflow-lose
   # -0.065, int-inflow-gain +0.065 m3/s: percolation through the gravel patch)
@@ -139,6 +130,9 @@ initialization:
   # the 14411 m2 wetted area (34%) was standing still at under 2 cm/s, holding 322 m3,
   # and 92% of that area had been seeded by the pre-wet. On freely draining ground the
   # spill elevation equals the bed, so the open channel is seeded exactly as before.
+  # Seed the depth from each node's SPILL elevation, not its bed, so no water lands
+  # below the rim of a closed depression - a 2D model cannot drain it, so it would
+  # stay as a wrongly wetted alcove for the whole run. See case-config.yml.
   drainable_prewet: true
 
 mesh:
@@ -259,6 +253,27 @@ gain_lose:
   water_table_levels:
     losing: 817.318
     gaining: 816.807
+
+  # --- GREEN-AMPT (conductivity-driven) exchange -----------------------------
+  # With `conductivity` set, the withdrawal is COMPUTED instead of prescribed:
+  #     f = kf * (h + Lz + hf) / Lz     [m/s]
+  # i.e. Green-Ampt's saturated limit, with the wetting front at the base of the
+  # porous layer. The exchange then responds to water level, and kf is a
+  # physically meaningful (and calibratable) parameter.
+  #
+  # NOTE: TELEMAC's own Green-Ampt (RAINFALL-RUNOFF MODEL : 3) CANNOT be used
+  # here - runoff_greenampt.f abstracts infiltration from RAINFALL only, so with
+  # no rain there is no infiltration, and it is a pure sink with no way to return
+  # the water at the gaining line. Only the formula is reused, inside USER_RAIN.
+  #
+  # kf = 3e-4 m/s is a central estimate for a SOMEWHAT CLOGGED river gravel bed
+  # (clean gravel 1e-2..1e-1; moderately colmated 1e-4..1e-3; strongly colmated
+  # 1e-7..1e-5). Sanity check: the target 0.065 m3/s over the ~178 m2 of wet area
+  # in the 12 m strip implies 3.7e-4 m/s - i.e. the prescribed discharge and this
+  # conductivity describe the same physics from two directions.
+  conductivity: 3.0e-4       # kf [m/s] saturated hydraulic conductivity
+  suction: 0.2               # hf [m] Green-Ampt wetting-front suction
+  porous_depth: 0.5          # Lz [m] fallback; the patch layer's own field wins
 
 drying:
   # Remove water too thin to be surface flow. On this bed (Nikuradse ks 0.05-0.5 m)

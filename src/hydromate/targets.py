@@ -86,6 +86,11 @@ class ParameterSpec:
         if self.module == "gaia":
             name = f"gaia{self.keyword}"
             return f"{name} {klass}" if klass is not None else name
+        if self.module == "gainlose":
+            # HydroBayesCal rewrites a line in the FORTRAN FILE for any parameter
+            # prefixed "f." - that is how a constant living in the generated
+            # USER_RAIN routine (rather than in a .cas keyword) is calibrated.
+            return f"f.{self.keyword}"
         return self.keyword
 
 
@@ -157,6 +162,16 @@ PARAMETER_CATALOG: tuple[ParameterSpec, ...] = (
         "PRANDTL NUMBER", "telemac3d", "PRANDTL NUMBER", "", 0.5, 2.0,
         "turbulent Prandtl/Schmidt number (eddy viscosity / eddy diffusivity); "
         "~0.7-1.0 in free shear flows"),
+    # --- gain-lose reach (porous body) --------------------------------------- #
+    ParameterSpec(
+        "POROUS ZONE kf (gain-lose)", "gainlose", "HMP_KF", "", 1e-6, 1e-2,
+        "saturated hydraulic conductivity [m/s] of the porous body - the parameter "
+        "that sets how much water a gain-lose reach exchanges. Riverbed values span "
+        "orders of magnitude, so calibrate rather than assume: clean gravel "
+        "1e-2..1e-1, moderately colmated 1e-4..1e-3, silted 1e-7..1e-5 (Calver 2001, "
+        "doi:10.1111/j.1745-6584.2001.tb02343.x, pools published riverbed data over "
+        "1e-9..1e-2 m/s). Needs gain_lose.conductivity set (not a prescribed "
+        "discharge, which fixes the exchange and ignores kf)"),
     # --- GAIA (morphodynamics) ---------------------------------------------- #
     ParameterSpec(
         "CLASSES SHIELDS PARAMETERS", "gaia", "CLASSES SHIELDS PARAMETERS",

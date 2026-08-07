@@ -235,6 +235,24 @@ def build_unsteady_case(cfg: Config, *, control_sections: bool = True) -> Unstea
     gaia = steering.write_gaia_cas(cfg)
     turb = _turbulence_model(cfg)
 
+    # internal losing/gaining source regions (percolation) carry over to the
+    # unsteady run - without them the exchange (and the side channel it feeds)
+    # would silently vanish from the hydrograph run. No mesh here (no re-meshing
+    # in the standalone script), so node counts are not re-verified; the regions
+    # file is (re)written to match the region order in the .cas. The layer is only
+    # needed for its internal lines, so an unreadable/absent one warns (loudly -
+    # the exchange would be dropped) rather than aborting the unsteady build.
+    regions: list = []
+    try:
+        regions = boundary.load_internal_source_regions(cfg)
+    except Exception as exc:  # noqa: BLE001 - degrade, but say so
+        log.warning("could not re-read %s for internal source regions (%s); the "
+                    "unsteady case will carry NO internal losing/gaining exchange",
+                    cfg.boundaries.liquid_boundaries, exc)
+    if regions and not (cfg.gain_lose.active
+                        and cfg.gain_lose.implementation == "fortran"):
+        steering.write_source_regions(cfg, regions)
+
     cas = steering.write_cas(
         cfg, liquids, inflow_q=q0, outflow_wse=outflow_wse,
         gaia_cas=gaia.name if gaia else None,
@@ -245,6 +263,7 @@ def build_unsteady_case(cfg: Config, *, control_sections: bool = True) -> Unstea
         sections_input=sections.name if sections else None,
         sections_output=cfg.sections_output_file if sections else None,
         hotstart_note="/ hotstart: continue from the converged steady result r2d.slf",
+        source_regions=regions,
     )
     n_in = sum(1 for lb in liquids if lb.kind == "inflow")
     n_out = sum(1 for lb in liquids if lb.kind == "outflow")

@@ -12,17 +12,19 @@
 # -----------------------------------------------------------------------------
 
 project:
-  name: isar-mar-2025                    # case name; used in titles and file headers
+  name: isar-mar-2025-freeoutflow                  # case name; used in titles and file headers
   crs_epsg: 25832              # [REQUIRED] project CRS, metric. 25832 = ETRS89/UTM32N
   sim_dir: hydromate-case
-  # Scenario A (PRESCRIBED exchange). Each percolation scenario gets its own tree
+  # Scenario C (FREE OUTFLOW). Identical to scenario B (green-ampt) in EVERY
+  # setting except boundaries.outflow_condition, so the comparison isolates the
+  # downstream boundary. Each percolation scenario gets its own tree
   # under hydromate-case/scenarios/ so the two can be compared side by side and
   # neither disturbs the legacy hydromate-case/simulation/ (the failed Jul-2026 run,
   # kept as the evidence behind test-approaches.md).
-  preprocessing_dir: hydromate-case/scenarios/prescribed-q/preprocessing
-  model_dir: hydromate-case/scenarios/prescribed-q/simulation
-  postprocessing_dir: hydromate-case/scenarios/prescribed-q/postprocessing
-  calibration_dir: hydromate-case/scenarios/prescribed-q/calibration-validation
+  preprocessing_dir: hydromate-case/scenarios/free-outflow/preprocessing
+  model_dir: hydromate-case/scenarios/free-outflow/simulation
+  postprocessing_dir: hydromate-case/scenarios/free-outflow/postprocessing
+  calibration_dir: hydromate-case/scenarios/free-outflow/calibration-validation
 
 telemac:
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported).
@@ -45,10 +47,7 @@ geodata:
   # zonation (zone 1 = channel ks ~0.2 m, zone 2 = floodplain ks ~0.5 m).
   roughness_zones: user-sources/geodata/roughness-zones.gpkg
   roughness_table: user-sources/geodata/roughness-table.csv
-  # internal cross-sections ("baffles"): after the run the discharge across each
-  # line is integrated from r2d.slf into simulation/baffle-XS-q.csv, so the split
-  # of the total Q between the threads of the braided reach can be read off (and
-  # checked against the FlowTracker transects). Layer is EPSG:4326 - reprojected.
+  # internal cross-sections ("baffles") -> simulation/baffle-XS-q.csv after the run.
   control_sections: user-sources/geodata/baffles.gpkg
   control_section_name_field: "Baffle Name"
   # dem_of_difference: path/to/dod.tif         # precomputed bed-change raster (else from DEMs)
@@ -64,20 +63,23 @@ boundaries:
   prescribed_flowrate: 2.4    # inflow Q [m3/s] for steady2d.cas
   # outflow (downstream) boundary type: stage_discharge (WSE from the rating curve
   # at the simulated Q) | elevation (fixed prescribed_elevation) | free (Neumann).
-  outflow_condition: stage_discharge
+  # FREE (Neumann, cli code 4 4 4): the outlet prescribes NOTHING and the model
+  # sets its own level there. This variant exists to settle the outflow-stage
+  # question independently of the rating: with `stage_discharge` the level comes
+  # from the section rating (815.3473 m at 2.4 m3/s) and any doubt about that
+  # number propagates into the depths near the outlet.
+  # CAUTION: a Neumann outlet is under-specified for subcritical flow (the outlet
+  # runs at Fr ~ 0.45-0.5 here), so the level can drift or the reach can drain
+  # progressively. Watch outlet-profile.csv and the flux balance; if it drifts,
+  # that IS the result - the section rating stands.
+  outflow_condition: free
   # prescribed_elevation: 0.0  # m a.s.l.; only for outflow_condition: elevation
   # outlet rating curve (Q,WSE): one Q-h pair at the steady discharge suffices.
-  # Left UNSET so each scenario synthesises its own into preprocessing/rating-curve.csv.
-  # The old user-sources/geodata/rating-curve.csv gave WSE 815.1139 - 0.25 m BELOW the
-  # reach's own normal depth at this section, because it came from the "trapezoid"
-  # method: a rectangle as wide as the 9.55 m outflow line at the full depth. The real
-  # section is V-shaped, so that idealisation over-states the flow area, returns too
-  # low a stage, and the boundary then held the outlet below the natural level. The
-  # flow accelerated to pass 2.4 m3/s through the resulting 1.3 m2 gap: |U| ~1.0 m/s
-  # mean and 2.2 m/s peak at Fr ~1.4 (supercritical) right at the model outlet.
+  # Unset: synthesised per scenario into preprocessing/rating-curve.csv. The old file
+  # held WSE 815.1139, 0.25 m below the reach's normal depth at this section (the
+  # "trapezoid" idealisation over-states the flow area of a V-shaped section), which
+  # forced a supercritical drawdown at the outlet - see case-config.yml.
   # stage_discharge: user-sources/geodata/rating-curve.csv
-  # "section" integrates the ACTUAL DEM cross-section along the outflow line with the
-  # ks of the roughness zone each sample falls in -> WSE 815.359 at Q=2.4 m3/s.
   rating_method: section
   # Internal ('int-*') losing/gaining lines in the layer above (int-outflow-lose
   # -0.065, int-inflow-gain +0.065 m3/s: percolation through the gravel patch)
@@ -139,6 +141,9 @@ initialization:
   # the 14411 m2 wetted area (34%) was standing still at under 2 cm/s, holding 322 m3,
   # and 92% of that area had been seeded by the pre-wet. On freely draining ground the
   # spill elevation equals the bed, so the open channel is seeded exactly as before.
+  # Seed the depth from each node's SPILL elevation, not its bed, so no water lands
+  # below the rim of a closed depression - a 2D model cannot drain it, so it would
+  # stay as a wrongly wetted alcove for the whole run. See case-config.yml.
   drainable_prewet: true
 
 mesh:
@@ -202,28 +207,43 @@ hydrodynamics:
   # if a rung needs it.
   implicitation: 0.80
 
-gain_lose:
-  # GAIN-LOSE REACH: flow that leaves the surface through this porous gravel bar and
-  # returns to it downstream (user-sources/geodata/percolation-zone.gpkg: one
-  # 'main-side' patch, ~110 x 15 m, porous depth 0.5 m). A 2D model has no
-  # subsurface, so the underflow is a withdrawal where the water infiltrates plus an
-  # injection where it resurfaces. `enabled` selects the generated USER_RAIN routine
-  # (depth-limited and mass-exact); see the GainLose docstring in config.py.
-  enabled: true
+percolation:
+  # Percolation through the porous gravel patch (see user-sources/geodata/
+  # percolation-zone.gpkg: one 'main-side' patch, ~110 x 15 m, porous depth 0.5 m,
+  # spanning the losing line to the gaining line). Three modes:
+  #   off     - the int-* lines alone drive the exchange, each buffered to a
+  #             boundaries.internal_source_region_width strip (the default).
+  #   region  - the LOSING exchange is spread over the whole patch polygon instead
+  #             of the thin strip: the same -0.065 m3/s over ~1650 m2 rather than
+  #             ~90 m2, so the per-node depth rate drops by ~20x. No Fortran needed.
+  #   fortran - a generated USER_RAIN routine (FORTRAN FILE) withdraws over the
+  #             patch DEPTH-LIMITED (tapering to zero near min_depth, so a sink can
+  #             never dry a cell) and reinjects exactly what it extracted at the
+  #             gaining line: mass-exact and unconditionally stable. Needs a
+  #             compiler on the TELEMAC host (TELEMAC compiles it at run time).
+  # The ladder in test-approaches.md escalates off -> region -> fortran.
+  # THE PHYSICS: the gravel bar is so porous that ~0.065 m3/s flows THROUGH it
+  # beneath the surface (top ~0.5 m, the 'porous depth (m)' attribute). The bar is
+  # therefore DRY ON TOP at 2.4 m3/s - that is correct, not a DEM error. A 2D model
+  # has no subsurface, so the underflow is represented as a withdrawal at the
+  # infiltration face (the losing line, in the channel) plus an injection where it
+  # resurfaces (the gaining line, feeding the side channel).
+  #
+  # VERIFIED SETTINGS (see test-approaches.md, rungs T1-T6):
+  #   mode: fortran        - a FIXED-RATE sink diverges as the local depth -> 0 and
+  #                          blows the run up (T2 died in 28 s, T3 in 255 s). Only
+  #                          the depth-limited USER_RAIN routine is stable.
+  #   losing_region: line  - take the water from the CHANNEL at the losing line,
+  #                          where it actually infiltrates - NOT from the dry bar
+  #                          it then flows beneath. Drawing from the bar is stable
+  #                          but meaningless: it decayed to 0.008 m3/s and left the
+  #                          side channel unchanged (29.3 % wetted vs the 29.8 %
+  #                          no-exchange baseline). With the line strip the
+  #                          exchange holds at the full 0.065 m3/s and the side
+  #                          channel reaches 33.9 % wetted / 0.0219 m mean depth.
   zone: user-sources/geodata/percolation-zone.gpkg
-  # WHERE the exchange happens. "lines" pins it to the int-* lines drawn in
-  # liquid-boundaries.gpkg, which is right HERE because this reach's exchange faces
-  # were surveyed and calibrated (T6 in test-approaches.md): the loss is taken from
-  # the CHANNEL at the losing line, where the water actually infiltrates - not from
-  # the dry bar it then flows beneath. The magnitude likewise comes from those lines'
-  # own flow column (0.065 m3/s each way), so no `discharge` key is needed.
-  # The core default is "water-table", which derives both faces from the bar's
-  # phreatic surface and needs no drawn lines at all - use that for a new reach where
-  # it is fuzzy exactly where percolation begins and ends. On this bar it gives a
-  # 5.30 permille table (against 7.39 from the lines) and a self-determining
-  # 0.21 m3/s at kf=3e-4, i.e. kf would have to be calibrated down to reproduce the
-  # measured 0.065.
-  faces: lines
+  mode: fortran
+  losing_region: line
   min_depth: 0.05            # [m] never extract below this depth (fortran mode)
   taper_depth: 0.05          # [m] linear taper band above min_depth (fortran mode)
   # ALSO drain standing surface water off the bar itself. The patch is porous gravel:
@@ -238,49 +258,27 @@ gain_lose:
   # min_depth / taper_depth guard and whatever it takes is added to what the gaining
   # line reinjects, so the routine stays mass-exact.
   patch_drain: true
-  # WATER TABLE under the bar. The patch exchanges with the channel at the losing
-  # line (measured WSE 817.318 m) and the gaining line (816.807 m); the surface
-  # joining those two levels IS the water table of the through-flow, and its
-  # gradient is what drives the exchange. Fitted as a plane (7.65 permille,
-  # residual 0.049 m) it wets 118 m2 / 10.4 m3 inside the patch - filling the
-  # 0.33 m deep DEM pool to its rim - while leaving 95 % of the patch dry with
-  # 0.37 m of freeboard. It is clipped to the patch polygon; the same plane would
-  # otherwise stand above 22 598 m2 of bed elsewhere in the domain.
-  # Why it is needed: that pool sits on a bar ABOVE the channel, so no surface flow
-  # can ever reach it, and the drainable-seed filter deliberately refuses to seed
-  # anything behind a rim. Without a water table it stays dry (or holds the 2.6 cm
-  # skim the drain leaves) for the whole run. With it, the pre-wet seeds it and the
-  # patch drain tapers to zero AT THE TABLE instead of at min_depth, so the drain
-  # still clears the bar top but cannot empty the pool.
-  water_table: phreatic
-  # Measured on the converged Aug-2026 run. Left unset, the levels are read off the
-  # seeded surface at build time (817.251 / 816.878 here - within 0.07 m, and with
-  # opposite signs at the two ends, so mid-patch they agree to ~2 mm).
-  water_table_levels:
-    losing: 817.318
-    gaining: 816.807
 
-drying:
-  # Remove water too thin to be surface flow. On this bed (Nikuradse ks 0.05-0.5 m)
-  # water 5 mm deep is not flowing OVER the bed, it is standing WITHIN the grain
-  # roughness, and physically it drains into the substrate. A 2D model has no
-  # substrate, so it stays put and paints a wetted area far larger than the reach
-  # has: measured on the Aug-2026 green-ampt result, the sub-centimetre band covered
-  # 1503 m2 - 13 % of the wetted AREA - while holding 4.4 m3, i.e. 0.16 % of the
-  # volume. Invisible in any budget, dominant in any picture.
-  # TELEMAC has no keyword for this: H CLIPPING + MINIMUM VALUE OF DEPTH do the
-  # OPPOSITE (the dico says the truncation "is equivalent to adding mass") and are
-  # marked "not fully implemented". So the term is generated into the same USER_RAIN
-  # routine the percolation exchange uses, and what it withdraws is reinjected at the
-  # gaining line - mass-exact. That matters: a net domain sink S would make the
-  # steady budget read |Q_in| - |Q_out| = S, putting a floor of ~1.8e-3 under the
-  # relative flux imbalance (above the 1e-3 tolerance), so no hotstart would ever be
-  # written.
-  film_infiltration: true
-  film_depth: 0.01       # [m] shallower than this ...
-  film_velocity: 0.005   # [m/s] ... AND slower than this = film. The velocity gate
-                         # is what keeps the term off the active wet/dry margin.
-  film_rate: 1.0e-5      # [m/s] withdrawal rate; clears a 5 mm film in ~500 s
+  # --- GREEN-AMPT (conductivity-driven) exchange -----------------------------
+  # With `conductivity` set, the withdrawal is COMPUTED instead of prescribed:
+  #     f = kf * (h + Lz + hf) / Lz     [m/s]
+  # i.e. Green-Ampt's saturated limit, with the wetting front at the base of the
+  # porous layer. The exchange then responds to water level, and kf is a
+  # physically meaningful (and calibratable) parameter.
+  #
+  # NOTE: TELEMAC's own Green-Ampt (RAINFALL-RUNOFF MODEL : 3) CANNOT be used
+  # here - runoff_greenampt.f abstracts infiltration from RAINFALL only, so with
+  # no rain there is no infiltration, and it is a pure sink with no way to return
+  # the water at the gaining line. Only the formula is reused, inside USER_RAIN.
+  #
+  # kf = 3e-4 m/s is a central estimate for a SOMEWHAT CLOGGED river gravel bed
+  # (clean gravel 1e-2..1e-1; moderately colmated 1e-4..1e-3; strongly colmated
+  # 1e-7..1e-5). Sanity check: the target 0.065 m3/s over the ~178 m2 of wet area
+  # in the 12 m strip implies 3.7e-4 m/s - i.e. the prescribed discharge and this
+  # conductivity describe the same physics from two directions.
+  conductivity: 3.0e-4       # kf [m/s] saturated hydraulic conductivity
+  suction: 0.2               # hf [m] Green-Ampt wetting-front suction
+  porous_depth: 0.5          # Lz [m] fallback; the patch layer's own field wins
 
 # morphodynamics:              # optional GAIA extension (v1 focuses on 2D hydraulics)
 #   enabled: true

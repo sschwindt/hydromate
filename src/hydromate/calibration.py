@@ -135,6 +135,13 @@ def emit_hbc_config(cfg: Config, calibration_csv: Path | None) -> Path:
     params = [p.name for p in parameters]
     ranges = [[p.min, p.max] for p in parameters]
     results_base = Path(cfg.results_slf).stem
+    # HydroBayesCal resolves this against <model_dir>/user_fortran/, and rewrites a
+    # line in it for any calibration parameter prefixed `f.` - which is how the
+    # gain-lose conductivity (`f.HMP_KF`) is calibrated. Only meaningful when a
+    # gain-lose reach actually generated the routine.
+    fortran_file = ("user_rain.f"
+                    if (cfg.gain_lose.active
+                        and cfg.gain_lose.implementation == "fortran") else None)
 
     def pylist(items, q=True):
         if q:
@@ -179,7 +186,7 @@ hydrodynamic_simulation = {{
     'results_filename_base': {results_base!r},
     'control_file': {cfg.cas_file!r},
     'friction_file': {cfg.friction_tbl!r},
-    'fortran_file': None,
+    'fortran_file': {fortran_file!r},
 }}
 
 {morph}calibration = {{

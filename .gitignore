@@ -60,6 +60,11 @@ dist/
 .idea/
 .vscode/
 .spyproject/
+# emacs autosave / backup files, which otherwise sit next to an edited config and
+# get swept into a commit (#case-config.yml#, case-config.yml~)
+\#*\#
+.\#*
+*~
 
 # --- Sphinx docs build ---
 docs/_build/
