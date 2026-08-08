@@ -219,6 +219,16 @@ execution = {{
     'validation': False,
     'user_param_values': False,
 }}
+
+extraction = {{
+    # Read the CONVERGED final frame, not a mean over the last n steps: hydromate
+    # runs start (near-)dry, so a mean_last window would average the wetting
+    # transient into the calibration values. HydroBayesCal >= 1.4.0 reads this from
+    # the config's `extraction` block (stage_driver also patches the driver default
+    # to 'last' as a fallback for older versions).
+    'output_extraction_time': 'last',
+    'n_last': 80,
+}}
 '''
     path = cfg.calibration_path(cfg.hbc_config)
     path.write_text(text)

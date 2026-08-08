@@ -98,23 +98,29 @@ def stage_driver(out_dir: Path, template_name: str, *, checkout: Path | None = N
     """Copy a HydroBayesCal driver into ``out_dir`` with the extraction window
     patched ``mean_last`` -> ``last``.
 
-    The template lives in the checkout root or its ``templates/``. ``also`` names
-    further driver files copied verbatim next to it (e.g. the multiflow driver
-    imports the single-flow one). Returns the staged primary driver path.
+    The template lives in the checkout root, its ``templates/`` (HydroBayesCal
+    <= 1.4.1) or ``src/hydroBayesCal/drivers/`` (>= 1.4.2, where the drivers became
+    package data). ``also`` names further driver files copied verbatim next to it
+    (e.g. the multiflow driver imports the single-flow one). Returns the staged
+    primary driver path.
     """
     checkout = checkout or hbc_dir()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     def _find(name):
-        return next((p for p in (checkout / name, checkout / "templates" / name)
-                     if p.is_file()), None)
+        # search order covers both layouts: the pre-1.4.2 checkout root / templates/
+        # and the >=1.4.2 packaged src/hydroBayesCal/drivers/ location.
+        candidates = (checkout / name, checkout / "templates" / name,
+                      checkout / "src" / "hydroBayesCal" / "drivers" / name)
+        return next((p for p in candidates if p.is_file()), None)
 
     template = _find(template_name)
     if template is None:
         raise SystemExit(
             f"HydroBayesCal driver {template_name!r} not found in {checkout} "
-            "(or its templates/). Set HYDROBAYESCAL_DIR to the checkout.")
+            "(searched ./, templates/ and src/hydroBayesCal/drivers/). "
+            "Set HYDROBAYESCAL_DIR to the checkout.")
     text = template.read_text()
     n = text.count('output_extraction_time="mean_last"')
     (out_dir / template_name).write_text(
