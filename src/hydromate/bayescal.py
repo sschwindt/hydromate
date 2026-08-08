@@ -98,19 +98,28 @@ def stage_driver(out_dir: Path, template_name: str, *, checkout: Path | None = N
     """Copy a HydroBayesCal driver into ``out_dir`` with the extraction window
     patched ``mean_last`` -> ``last``.
 
-    The template lives in the checkout root, its ``templates/`` (HydroBayesCal
-    <= 1.4.1) or ``src/hydroBayesCal/drivers/`` (>= 1.4.2, where the drivers became
-    package data). ``also`` names further driver files copied verbatim next to it
-    (e.g. the multiflow driver imports the single-flow one). Returns the staged
-    primary driver path.
+    HydroBayesCal is meant to be pip-installed alongside hydromate, so the driver is
+    resolved from the **installed package** first (``hydroBayesCal.driver_path``, drivers
+    are package data since 1.4.2). A source checkout (``HYDROBAYESCAL_DIR``) is only a
+    fallback for dev / upstream-fix work: its root, ``templates/`` (<= 1.4.1) or
+    ``src/hydroBayesCal/drivers/`` (>= 1.4.2). ``also`` names further driver files copied
+    verbatim next to it (e.g. the multiflow driver imports the single-flow one). Returns
+    the staged primary driver path.
     """
     checkout = checkout or hbc_dir()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     def _find(name):
-        # search order covers both layouts: the pre-1.4.2 checkout root / templates/
-        # and the >=1.4.2 packaged src/hydroBayesCal/drivers/ location.
+        # Prefer the pip-installed package (the intended deployment). driver_path raises
+        # for an unknown name, so guard it and fall through to a source checkout.
+        try:
+            import hydroBayesCal
+            p = Path(hydroBayesCal.driver_path(name))
+            if p.is_file():
+                return p
+        except Exception:
+            pass
         candidates = (checkout / name, checkout / "templates" / name,
                       checkout / "src" / "hydroBayesCal" / "drivers" / name)
         return next((p for p in candidates if p.is_file()), None)
