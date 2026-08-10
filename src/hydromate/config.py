@@ -1015,6 +1015,14 @@ class Calibration:
     # gpytorch; 25000 OOM-kills a 16 GB box. A low-dimensional roughness posterior
     # needs only a few thousand - 5000 is ample and memory-safe. Raise with RAM.
     prior_samples: int = 5000
+    # Which solver HydroBayesCal drives, and which case files it perturbs. The
+    # defaults calibrate the steady 2D case built by pipeline.run; a 3D profile
+    # calibration points them at the 3D steering file instead (HydroBayesCal maps
+    # 'Telemac3d' to telemac3d.py and extracts per-plane vertical profiles, picking
+    # the sigma plane nearest each measurement height).
+    solver_name: str = "Telemac2d"        # 'Telemac2d' | 'Telemac3d'
+    control_file: str | None = None       # .cas to calibrate (default: cfg.cas_file)
+    results_base: str | None = None       # results basename (default: from the .cas)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Calibration":
