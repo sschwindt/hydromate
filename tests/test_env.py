@@ -54,12 +54,21 @@ def test_launcher_runs_under_hydromates_own_interpreter(tmp_path, monkeypatch):
 
 
 def test_no_conda_environment_is_hard_coded(tmp_path, monkeypatch):
-    """The machine assumption this module must not make."""
+    """The machine assumption this module must not make.
+
+    Asserted on the command *shape*, not on substrings: the interpreter is
+    ``sys.executable``, and its path legitimately carries the environment name
+    (``.../envs/hydromate-env/bin/python``, and on a conda install the string
+    "conda" too) whenever hydromate itself runs inside one. What must not appear
+    is an env-*activation* wrapper naming an environment.
+    """
     rt = _runtime(tmp_path)
     cmd = _captured_command(rt, tmp_path, monkeypatch, ncsize=1)
 
-    assert "mamba" not in cmd and "conda" not in cmd
-    assert "hydromate-env" not in cmd
+    for wrapper in ("mamba run", "conda run", "conda activate", "source activate"):
+        assert wrapper not in cmd
+    # the only interpreter named is the running one - no environment is named
+    assert cmd.split()[0] == sys.executable
 
 
 def test_solver_python_can_be_overridden(tmp_path, monkeypatch):
