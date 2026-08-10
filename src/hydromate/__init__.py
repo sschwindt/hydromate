@@ -67,9 +67,10 @@ from hydromate.sortie import (
     tracer_mass_profile,
 )
 from hydromate.workflow import (
-    format_3d_cases, format_flux_convergence, prepare_steady_inputs,
-    resolve_discharge, synthesize_constant_inflow, synthesize_rating_if_missing,
-    run_solver_streaming, expected_duration,
+    format_3d_cases, format_flux_convergence, mesh_from_geometry,
+    prepare_steady_inputs, report_sections, report_wetting, resolve_discharge,
+    synthesize_constant_inflow, synthesize_rating_if_missing, run_solver_streaming,
+    expected_duration, water_table_mask,
 )
 from hydromate.progress import SolverProgress
 from hydromate.logsetup import setup_logging, log_step, logging_to
@@ -108,7 +109,9 @@ __all__ = ["Config", "load_config", "clip_to_roi", "clip_dem_to_roi",
            "format_3d_cases", "format_flux_convergence",
            "prepare_steady_inputs", "resolve_discharge",
            "synthesize_constant_inflow", "synthesize_rating_if_missing",
-           "run_solver_streaming", "expected_duration", "SolverProgress",
+           "run_solver_streaming", "expected_duration",
+           "report_wetting", "report_sections", "mesh_from_geometry",
+           "water_table_mask", "SolverProgress",
            "setup_logging", "log_step", "logging_to",
            "campaigns", "FlowSpec", "run_single_flow_calibration",
            "run_multiflow_calibration", "build_velocity_csv", "require_hbc",

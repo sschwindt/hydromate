@@ -78,13 +78,32 @@ attribute table is not read (only its geometry).
      - ``channel-centerline.gpkg``
      - **line**
      - --
-     - a single line down the channel thalweg; the channel cells are elongated along it (also used for the pre-wetting longitudinal profile). Using a hillshade is recommended for this purpose (see below image)
+     - a single line down the channel thalweg; the channel cells are elongated along it. Also used for the pre-wetting cross-sections and, for a :ref:`gain-lose reach <usage-gain-lose>`, to find the two ends of the porous body's reach extent. Using a hillshade is recommended for this purpose (see below image)
    * - ``geodata.roughness_zones`` *(optional)*
      - ``roughness-zones.gpkg``
      - **polygons**
      - ``Zone ID`` (integer)
      - one polygon per friction zone; each polygon's integer ``Zone ID`` becomes the per-node ``FRIC_ID`` and is paired with ``geodata.roughness_table`` (e.g.
        zone ``1`` = channel, ``2`` = floodplain).
+   * - ``geodata.control_sections`` *(optional)*
+     - ``cross-sections.gpkg``
+     - **lines**
+     - a name field (``control_section_name_field``)
+     - cross-sections at which the discharge is integrated **from the result** after
+       a run, into ``baffle-XS-q.csv`` (one row per line). Because it reads the
+       result rather than the steering file, the lines can be drawn and moved in GIS
+       without re-running the solver - which is how the split of the total discharge
+       between the threads of a braided reach is read off and checked against field
+       transects.
+   * - ``gain_lose.zone`` *(optional)*
+     - ``porous-body.gpkg``
+     - **polygon(s)**
+     - ``Patch name``, ``porous depth (m)``
+     - the porous body of a :ref:`gain-lose reach <usage-gain-lose>` (a gravel bar,
+       an alluvial patch). With the default ``faces: water-table`` this is the
+       **only** geometry needed - the exchange faces follow from the body's water
+       table, so nothing has to be drawn where percolation is thought to begin and
+       end. Needs ``geodata.channel_centerline``.
    * - ``geodata.breaklines`` *(optional)*
      - ``breaklines.shp``
      - **lines**

@@ -13,7 +13,12 @@ chain - each step only makes sense once the previous one has succeeded:
    clip the DEM(s), build the mesh + bathymetry, classify the liquid boundaries,
    and write the complete TELEMAC case (``geometry.slf``, ``boundaries.cli``,
    ``friction.tbl``, ``steady2d.cas``) plus the calibration CSV and HydroBayesCal
-   ``config_Telemac.py``. No solver is launched.
+   ``config_Telemac.py``. No solver is launched. This is also where everything that
+   depends on the *geometry* is decided and logged, so it can be checked before any
+   compute is spent: the :ref:`initial condition <usage-initial-condition>` (seeded
+   at the normal-flow stage of real cross-sections), the outflow rating, and - for a
+   :ref:`gain-lose reach <usage-gain-lose>` - the water table, the exchange faces it
+   implies and the discharge they would carry.
 #. **Initial run** (``initial_run.py``) - test-run the built case once to confirm
    it does not crash, and check that the boundary fluxes have reached mass balance
    (the hotstart convergence check). The solver's output streams live with a
@@ -59,7 +64,7 @@ convergence check; see :doc:`hbc`):
   ``telemac2d.py steady2d.cas --ncsize=<N> -s --nozip``, so the wrapper adds no
   compute overhead versus launching TELEMAC by hand.
 * **Flux convergence + the generated hotstart case.** After the run,
-  :func:`hydromate.analyze_flux_convergence` (delegating to pythomac) reads the
+  :func:`hydromate.analyze_flux_convergence` reads the
   ``.sortie`` listing and writes ``extracted-fluxes.csv`` / ``flux-convergence.png``
   (the per-boundary fluxes) and ``convergence-rate.csv`` / ``convergence-rate.png``
   (the relative imbalance and its rate) into ``simulation/``; the per-processor
@@ -70,6 +75,35 @@ convergence check; see :doc:`hbc`):
   the steady case: it continues from ``r2d.slf`` with that steady time as
   ``DURATION`` and the constant Q/H prescriptions unchanged
   (:func:`hydromate.steering.write_hotstart_cas`).
+* **Where the water is** (:func:`hydromate.report_wetting`). A balanced flux budget
+  says nothing about wetted *extent*, and the two are independent failure modes: a
+  run can close its budget to 1e-4 and still show water standing where the reach has
+  none. ``wetting-report.csv`` splits the wetted area into **active** flow, stagnant
+  **film** and **isolated puddles**, says how much of each the initial condition put
+  there, and - by re-reading earlier frames - whether the film is still draining or
+  has **plateaued**. The distinction matters because a 2D model has neither
+  infiltration nor evaporation: water seeded above the level the run converges to
+  can never leave, so a plateaued film is a defect no amount of extra runtime will
+  fix. Water an external source holds in place (a
+  :ref:`water-table pool <usage-gain-lose>`) is reported separately, so it does not
+  read as a defect. ``outlet-profile.csv`` then bands the flowing nodes by distance
+  from the outflow and compares the near-boundary surface slope with the reach's
+  own, returning ``backwater`` (the prescribed stage is holding water up over ground
+  that should be dry), ``drawdown`` or ``neutral``.
+
+  The report's wetted threshold is ``hydrodynamics.wet_depth`` (0.01 m). This is a
+  *reporting* convention rather than a model setting: on a bed with Nikuradse
+  ``ks`` 0.05-0.5 m, water 5 mm deep stands *within* the grain roughness rather than
+  flowing over it. Filter the result in ParaView at the same depth so the picture and
+  the report agree. To remove such water from the model instead, see the ``drying``
+  block.
+* **Discharge across your own cross-sections** (:func:`hydromate.report_sections`).
+  With ``geodata.control_sections`` set, each line of that layer is integrated from
+  the result (``Q = int (H*U).n ds``) into ``baffle-XS-q.csv``. Because it reads the
+  *result* rather than the steering file, sections can be drawn and moved in GIS
+  without re-running the solver - which is how the split of the total discharge
+  between the threads of a braided reach is read off and checked against field
+  transects.
 
 Optional 3D extension (after the 2D path)
 -----------------------------------------
@@ -109,6 +143,114 @@ whose resolution the mesh-convergence study has already validated.
 The ``cases/example-Inn/`` scripts drive the worked Inn example from its
 ``case-config.yml``; copy the data-free ``cases/case-template/`` folder to start
 your own case.
+
+.. _usage-gain-lose:
+
+Gain-lose reaches (flow through a porous body)
+----------------------------------------------
+
+Some reaches lose flow into a porous body - a gravel bar, an alluvial patch - and
+regain it downstream. A 2D depth-averaged model has no subsurface, so ``hydromate``
+represents the underflow as an internal **withdrawal** where water infiltrates plus
+an **injection** where it resurfaces, generated into a TELEMAC ``USER_RAIN`` routine
+(``FORTRAN FILE``; TELEMAC compiles it at run time). Enable it by pointing
+``gain_lose.zone`` at the porous body:
+
+.. code-block:: yaml
+
+   gain_lose:
+     enabled: true
+     zone: user-sources/geodata/porous-body.gpkg
+     conductivity: 3.0e-4        # kf [m/s]
+     water_table: phreatic
+
+The generated routine is **depth-limited** - the withdrawal tapers to zero as a cell
+approaches ``min_depth`` and is additionally capped at half the water available that
+step - so a sink can never dry a cell. TELEMAC's own source terms carry no such
+guard, and an unguarded sink drying marginal cells spikes the velocities and pins the
+CFL-adaptive time step at a value from which the run never recovers. It is also
+**mass-exact**: whatever is withdrawn is reinjected in the same step, so no net sink
+appears in the boundary budget - which matters beyond tidiness, because a permanent
+sink ``S`` makes the steady budget read ``|Q_in| - |Q_out| = S`` and puts a floor
+under the relative flux imbalance, so no hotstart case would ever be written again.
+
+**Where the exchange happens** is ``gain_lose.faces``:
+
+``water-table`` (the default)
+   The faces follow the physics and **nothing has to be drawn**. The body's saturated
+   zone is bounded by the two channel levels it exchanges with, so its water table is
+   known (:mod:`hydromate.watertable` fits it as a plane, taking those levels from
+   the channel surface at each end of the zone's reach extent). A node then **loses**
+   where it is wet and its free surface stands above the table, and **gains** where
+   the table stands above the bed. The classification runs *inside* the generated
+   routine, so the faces move with the stage - a rising river widens the losing face,
+   which a build-time mask cannot represent. Needs ``geodata.channel_centerline``.
+   Prefer this: it is genuinely fuzzy where percolation begins and ends, so asking
+   for the faces to be drawn asks for a number nobody has.
+
+``lines``
+   The exchange is pinned to the ``int-*`` lines of
+   ``boundaries.liquid_boundaries``, each buffered to a strip. Pick this when the
+   location is actually known - a surveyed seepage face, a spring line - or to
+   reproduce a calibrated exchange.
+
+**How big it is** is either ``conductivity`` or ``discharge``, and both work with
+either geometry. ``conductivity`` (``kf``) drives it by default through Green-Ampt's
+saturated limit ``f = kf (h + Lz + hf) / Lz`` at the local head, so the exchange
+*responds to water level*; ``discharge`` overrides that with a measured total,
+normalised over the losing face.
+
+.. note::
+
+   Riverbed ``kf`` is not a textbook constant - it spans 1e-9 to 1e-2 m/s with grain
+   size and colmation, and varies within a single site (Calver, A., 2001, *Riverbed
+   Permeabilities: Information from Pooled Data*, Ground Water 39(4), 546-553,
+   `doi:10.1111/j.1745-6584.2001.tb02343.x
+   <https://ngwa.onlinelibrary.wiley.com/doi/10.1111/j.1745-6584.2001.tb02343.x>`_).
+   As a starting bracket: clean open-framework gravel 1e-2..1e-1, moderately colmated
+   gravel 1e-4..1e-3, strongly colmated or silted 1e-7..1e-5. Because the plausible
+   range is this wide, ``kf`` is exposed to HydroBayesCal as the calibration
+   parameter ``POROUS ZONE kf (gain-lose)`` - pick a bracket from the reference and
+   let the calibration find the value rather than assuming one.
+
+The water table does one more thing worth knowing. With ``water_table: phreatic`` the
+pre-wet seeds any ground lying below it, so **closed depressions on the bar start
+full**. They can never fill otherwise: a hollow sitting above the channel is
+unreachable by surface flow, and the drainable-seed filter deliberately refuses to
+seed behind a rim. The patch drain likewise tapers to zero *at the table* rather than
+at an absolute depth, so it clears standing water off the bar top without emptying a
+pool that cuts below the saturated zone.
+
+.. _usage-initial-condition:
+
+The initial condition
+---------------------
+
+The steady run starts either **dry** (the default: a thin water plug only at the
+inflow line, because a fully dry bed makes TELEMAC's ``DEBIMP`` abort at a
+prescribed-Q inflow) or **pre-wetted** (``initialization.prewet_depth``), which skips
+marching the wetting front from the inflow and is what the mesh-convergence study
+uses.
+
+How the pre-wet surface is built matters more than it looks. With
+``prewet_mode: normal-depth`` (the default) ``hydromate`` cuts a real cross-section
+every ``prewet_bin_spacing`` metres along the centerline and seeds the **stage that
+conveys the case discharge** through it, using the same Keulegan conveyance inversion
+that builds the outflow rating. The seeded surface then tracks the surface the run
+converges to.
+
+``prewet_fill`` scales the depth above the thalweg and defaults to **0.70 -
+deliberately below 1**. The asymmetry is the point: under-seeding is recoverable,
+because the flow refills a pool within seconds, whereas over-seeding is not. Water
+seeded above the converged surface has nowhere to go in a model with neither
+infiltration nor evaporation; it drains only where it can flow, and on flat ground
+over coarse gravel it stops as immobile film that survives to the end of the run.
+``prewet_min_depth`` similarly leaves a node dry rather than laying down a feathered
+margin, since a seed film is exactly what stalls.
+
+Whatever the mode, the **inflow plug is re-imposed after every filter**: none of them
+has any reason to keep the inflow cross-section wet, and ``DEBIMP`` aborts at t=0
+without it. Check the result with the wetted-extent report from `The initial run`_.
 
 .. _morphodynamics:
 
@@ -307,7 +449,8 @@ the ``initialization`` block):
   by ``DURATION`` - the explicit ``hydrodynamics.duration`` (seconds), else the
   ``n_time_steps * time_step`` fallback, so the small CFL start step no longer shrinks
   the simulated time; ``NUMBER OF TIME STEPS`` does **not** terminate a variable-dt run. Convergence is judged afterwards from the **boundary-flux
-  balance** (``initial_run.py`` / pythomac), not by the solver. The **steady-state
+  balance** (``initial_run.py``, :mod:`hydromate.sortie` +
+  :mod:`hydromate.flux_convergence`), not by the solver. The **steady-state
   auto-stop** (``stop_if_steady``) is **off by default** and only honoured with a fixed
   time step: TELEMAC's ``STOP CRITERIA`` is an *absolute per-step* change, which with the
   tiny CFL dt false-fires during a slow transient (a still-filling reach) long before the

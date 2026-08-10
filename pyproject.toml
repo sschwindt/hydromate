@@ -39,7 +39,12 @@ gui = ["streamlit>=1.30"]
 # drivers lived only in a source checkout, so hydromate had to be told where that
 # checkout was via an environment variable - which broke whenever it moved or was
 # absent on a machine.
-calibration = ["hydrobayescal>=1.4.2"]
+# >=1.4.3 additionally hoists save_calibration_data into HydroSimulations, so the
+# "truth value of an array is ambiguous" crash on BAL's first iteration is fixed once
+# for every binding rather than per-binding, and the restart collocation-points CSV
+# that only_bal_mode reads is written by the shared path (hydromate's --resume relies
+# on that restart data).
+calibration = ["hydrobayescal>=1.4.3"]
 
 [project.scripts]
 hydromate = "hydromate.cli:main"

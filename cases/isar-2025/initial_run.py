@@ -37,11 +37,10 @@ from pathlib import Path
 
 from hydromate import (
     format_flux_convergence,
-    outlet_profile,
+    report_sections,
+    report_wetting,
     run_solver_streaming,
     setup_logging,
-    wetting_report,
-    write_line_discharges,
 )
 from hydromate.config import load_config
 from hydromate.env import TelemacRuntime
@@ -58,38 +57,6 @@ cfg = load_config(CONFIG)
 # set an integer here to override it for this run only (e.g. NCSIZE = 8).
 NCSIZE: int | None = None
 
-
-def _water_table_depth(cfg):
-    """Depth the bar's water table holds in place, per node (None when unused).
-
-    Rebuilt here from the same config the build used, so the report and the model
-    agree on which water is groundwater-fed rather than stray.
-    """
-    if cfg.percolation.water_table != "phreatic":
-        return None
-    try:
-        import numpy as np
-
-        from hydromate import selafin, watertable
-        from hydromate.mesh import Mesh
-
-        geo = selafin.read_slf(cfg.model_path(cfg.geometry_slf))
-        mesh = Mesh(x=geo["x"], y=geo["y"], triangles=geo["ikle"],
-                    bottom=np.asarray(geo["values"]["BOTTOM"], float),
-                    ipobo=geo["ipobo"],
-                    boundary_nodes=np.flatnonzero(np.asarray(geo["ipobo"]) > 0),
-                    element_matid=np.ones(len(geo["ikle"]), int),
-                    node_matid=np.ones(len(geo["x"]), int))
-        ic = selafin.read_slf(cfg.model_path(cfg.ic_slf))["values"]["WATER DEPTH"]
-        plane = watertable.fit_phreatic_plane(
-            cfg, mesh, surface=np.asarray(mesh.bottom, float) + ic)
-        if plane is None:
-            return None
-        return watertable.water_table_depth(
-            plane, mesh, watertable.patch_node_mask(cfg, mesh))
-    except Exception as exc:  # noqa: BLE001 - a reporting aid, never fatal
-        print(f"water-table mask unavailable: {type(exc).__name__}: {exc}")
-        return None
 
 
 def main() -> None:
@@ -132,63 +99,20 @@ def main() -> None:
         for line in format_flux_convergence(fc):
             print(line)
 
-    # discharge across the internal cross-sections ("baffles"): how the total Q
-    # splits between the threads of the braided reach. Written next to the results
-    # as baffle-XS-q.csv (Baffle Name, discharge in m3/s).
-    if cfg.geodata.control_sections is not None:
-        try:
-            df = write_line_discharges(
-                cfg.model_path(cfg.results_slf),
-                cfg.geodata.control_sections,
-                cfg.model_path("baffle-XS-q.csv"),
-                geometry=cfg.model_path(cfg.geometry_slf),
-                name_field=cfg.geodata.control_section_name_field,
-                crs_epsg=cfg.crs_epsg,
-            )
-        except Exception as exc:  # noqa: BLE001 - the run already succeeded
-            print(f"cross-section discharges skipped: {type(exc).__name__}: {exc}")
-        else:
-            print(f"\ncross-section discharges -> {cfg.model_path('baffle-XS-q.csv')}")
-            for _, r in df.iterrows():
-                print(f"  {r['name']:<16} {r['discharge']:8.4f} m3/s"
-                      f"   (wet {r['wetted_width']:5.1f} m, mean h {r['mean_depth']:.3f} m,"
-                      f" mean |U| {r['mean_velocity']:.3f} m/s)")
 
-    # WHERE the water sits. A balanced flux budget says nothing about wetted extent:
+    # WHERE the water is. A balanced flux budget says nothing about wetted extent:
     # water seeded above the level the run converges to cannot leave a 2D model (no
     # infiltration, no evaporation) and survives as stagnant film. The report splits
     # the wetted area into active flow / film / isolated puddles, attributes the film
-    # to the pre-wet seed, and shows whether it is still draining. The outlet profile
-    # then checks the prescribed outflow stage against the reach's own surface slope.
-    try:
-        rep = wetting_report(
-            cfg.model_path(cfg.results_slf),
-            geometry=cfg.model_path(cfg.geometry_slf),
-            initial_conditions=cfg.model_path(cfg.ic_slf),
-            # water the bar's water table holds in place is legitimately wet: without
-            # this it would be counted as film AND as an isolated puddle, i.e.
-            # reported as a defect when it is exactly what the model intends
-            supported=_water_table_depth(cfg),
-            wet_depth=cfg.hydrodynamics.wet_depth,
-            out=cfg.model_dir,
-        )
-    except Exception as exc:  # noqa: BLE001 - the run already succeeded
-        print(f"wetting report skipped: {type(exc).__name__}: {exc}")
-    else:
-        print(f"\nwetted-extent report -> {cfg.model_path('wetting-report.csv')}")
-        for line in rep.summary():
-            print(f"  {line}")
+    # to the pre-wet seed, and says whether it is still draining; the outlet profile
+    # checks the prescribed downstream stage against the reach's own surface slope.
+    for line in report_wetting(cfg):
+        print(line)
 
-    try:
-        prof = outlet_profile(cfg, cfg.model_path(cfg.results_slf),
-                              geometry=cfg.model_path(cfg.geometry_slf),
-                              out=cfg.model_dir)
-    except Exception as exc:  # noqa: BLE001 - the run already succeeded
-        print(f"outlet profile skipped: {type(exc).__name__}: {exc}")
-    else:
-        print(f"\noutlet profile -> {cfg.model_path('outlet-profile.csv')}")
-        for line in prof.summary():
-            print(f"  {line}")
+    # discharge across the geodata.control_sections lines, if the case defines any -
+    # how the total Q splits between the threads of a braided reach.
+    for line in report_sections(cfg):
+        print(line)
 
     print("next: python cases/<your-case>/mesh_convergence_study.py")
 

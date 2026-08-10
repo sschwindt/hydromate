@@ -86,7 +86,7 @@ def require_hbc():
         raise SystemExit(
             "The installed HydroBayesCal is too old: it does not ship the calibration "
             "drivers with the package (hydroBayesCal.copy_driver is missing). "
-            "Upgrade with:  pip install -U 'hydrobayescal>=1.4.2'"
+            "Upgrade with:  pip install -U 'hydrobayescal>=1.4.3'"
         )
     return hydroBayesCal
 

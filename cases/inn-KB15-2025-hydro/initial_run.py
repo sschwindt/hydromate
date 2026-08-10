@@ -26,7 +26,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hydromate import format_flux_convergence, run_solver_streaming, setup_logging
+from hydromate import (
+    format_flux_convergence,
+    report_sections,
+    report_wetting,
+    run_solver_streaming,
+    setup_logging,
+)
 from hydromate.config import load_config
 from hydromate.env import TelemacRuntime
 from hydromate.flux_convergence import HOTSTART_TOLERANCE, analyze_flux_convergence
@@ -76,6 +82,21 @@ def main() -> None:
     else:
         for line in format_flux_convergence(fc):
             print(line)
+
+
+    # WHERE the water is. A balanced flux budget says nothing about wetted extent:
+    # water seeded above the level the run converges to cannot leave a 2D model (no
+    # infiltration, no evaporation) and survives as stagnant film. The report splits
+    # the wetted area into active flow / film / isolated puddles, attributes the film
+    # to the pre-wet seed, and says whether it is still draining; the outlet profile
+    # checks the prescribed downstream stage against the reach's own surface slope.
+    for line in report_wetting(cfg):
+        print(line)
+
+    # discharge across the geodata.control_sections lines, if the case defines any -
+    # how the total Q splits between the threads of a braided reach.
+    for line in report_sections(cfg):
+        print(line)
 
     print("next: python cases/example-Inn/mesh_convergence_study.py")
 

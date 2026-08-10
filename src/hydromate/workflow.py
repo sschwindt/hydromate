@@ -257,3 +257,135 @@ def run_solver_streaming(runtime: TelemacRuntime, cfg: Config, *,
     finally:
         if progress is not None:
             progress.close()
+
+
+# --------------------------------------------------------------------------- #
+# post-run reporting (shared by every case's initial_run.py)
+# --------------------------------------------------------------------------- #
+def mesh_from_geometry(cfg: Config):
+    """Rebuild a :class:`~hydromate.mesh.Mesh` from the built ``geometry.slf``.
+
+    Enough of one for the geometry-only helpers (water table, node masks, areas):
+    coordinates, element table, bed and the boundary numbering. Saves re-meshing
+    just to ask a question about a finished run.
+    """
+    import numpy as np
+
+    from hydromate import selafin
+    from hydromate.mesh import Mesh
+
+    geo = selafin.read_slf(cfg.model_path(cfg.geometry_slf))
+    ipobo = np.asarray(geo["ipobo"])
+    return Mesh(
+        x=geo["x"], y=geo["y"], triangles=geo["ikle"],
+        bottom=np.asarray(geo["values"]["BOTTOM"], dtype=float),
+        ipobo=ipobo, boundary_nodes=np.flatnonzero(ipobo > 0),
+        element_matid=np.ones(len(geo["ikle"]), dtype=int),
+        node_matid=np.ones(len(geo["x"]), dtype=int),
+    )
+
+
+def water_table_mask(cfg: Config):
+    """Depth the porous body's water table holds in place, per node (else ``None``).
+
+    Rebuilt from the same config and the same seeded surface the build used, so the
+    report and the model agree on which water is groundwater-fed rather than stray.
+    Returns ``None`` - never raises - when the case has no water table or it cannot
+    be reconstructed: this only decorates a report.
+    """
+    if cfg.gain_lose.water_table != "phreatic":
+        return None
+    try:
+        import numpy as np
+
+        from hydromate import selafin, watertable
+
+        mesh = mesh_from_geometry(cfg)
+        ic = selafin.read_slf(cfg.model_path(cfg.ic_slf))["values"]["WATER DEPTH"]
+        plane = watertable.fit_phreatic_plane(
+            cfg, mesh, surface=np.asarray(mesh.bottom, dtype=float) + ic)
+        if plane is None:
+            return None
+        return watertable.water_table_depth(
+            plane, mesh, watertable.patch_node_mask(cfg, mesh))
+    except Exception as exc:  # noqa: BLE001 - a reporting aid, never fatal
+        log.debug("water-table mask unavailable (%s: %s)", type(exc).__name__, exc)
+        return None
+
+
+def report_wetting(cfg: Config) -> list[str]:
+    """Wetted-extent + outlet-profile report for a finished run.
+
+    A balanced flux budget says nothing about **where** the water is, which is the
+    question this answers: how much of the wetted area actually carries flow, how
+    much is stagnant film, how much the initial condition put there, and whether the
+    film is still draining or has plateaued (a 2D model has neither infiltration nor
+    evaporation, so water perched above the converged surface never leaves). The
+    outlet profile then says whether the prescribed downstream stage is holding water
+    up over ground that should be dry.
+
+    Writes ``wetting-report.csv`` and ``outlet-profile.csv`` into ``model_dir`` and
+    returns report lines. Never raises: a diagnostic must not fail a successful run.
+    """
+    from hydromate.wetting import outlet_profile, wetting_report
+
+    results = cfg.model_path(cfg.results_slf)
+    geometry = cfg.model_path(cfg.geometry_slf)
+    lines: list[str] = []
+    try:
+        rep = wetting_report(
+            results, geometry=geometry,
+            initial_conditions=cfg.model_path(cfg.ic_slf),
+            # water an external source holds in place (a water-table pool) is
+            # legitimately wet; without this it counts as BOTH film and an isolated
+            # puddle, i.e. reads as a defect when it is what the model intends
+            supported=water_table_mask(cfg),
+            wet_depth=cfg.hydrodynamics.wet_depth,
+            out=cfg.model_dir,
+        )
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"wetting report skipped: {type(exc).__name__}: {exc}")
+    else:
+        lines.append(f"wetted-extent report -> {cfg.model_path('wetting-report.csv')}")
+        lines += [f"  {ln}" for ln in rep.summary()]
+
+    try:
+        prof = outlet_profile(cfg, results, geometry=geometry, out=cfg.model_dir)
+    except Exception as exc:  # noqa: BLE001
+        lines.append(f"outlet profile skipped: {type(exc).__name__}: {exc}")
+    else:
+        lines.append(f"outlet profile -> {cfg.model_path('outlet-profile.csv')}")
+        lines += [f"  {ln}" for ln in prof.summary()]
+    return lines
+
+
+def report_sections(cfg: Config, out_name: str = "baffle-XS-q.csv") -> list[str]:
+    """Discharge across the ``geodata.control_sections`` lines of a finished run.
+
+    Integrates ``Q = int (H*U) . n ds`` from the result, so the sections can be drawn
+    and changed in GIS without re-running the solver - which is how the split of the
+    total discharge between the threads of a braided reach gets read off and checked
+    against field transects. Empty list when the case defines no control sections.
+    """
+    if cfg.geodata.control_sections is None:
+        return []
+    from hydromate.sections import write_line_discharges
+
+    try:
+        df = write_line_discharges(
+            cfg.model_path(cfg.results_slf),
+            cfg.geodata.control_sections,
+            cfg.model_path(out_name),
+            geometry=cfg.model_path(cfg.geometry_slf),
+            name_field=cfg.geodata.control_section_name_field,
+            crs_epsg=cfg.crs_epsg,
+        )
+    except Exception as exc:  # noqa: BLE001 - the run already succeeded
+        return [f"cross-section discharges skipped: {type(exc).__name__}: {exc}"]
+    lines = [f"cross-section discharges -> {cfg.model_path(out_name)}"]
+    for _, r in df.iterrows():
+        lines.append(
+            f"  {r['name']:<16} {r['discharge']:8.4f} m3/s   "
+            f"(wet {r['wetted_width']:5.1f} m, mean h {r['mean_depth']:.3f} m,"
+            f" mean |U| {r['mean_velocity']:.3f} m/s)")
+    return lines

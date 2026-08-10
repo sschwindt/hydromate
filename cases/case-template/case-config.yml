@@ -59,6 +59,14 @@ geodata:
   # breaklines: user-sources/geodata/breaklines.shp     # internal constraint lines (mesh + zone edges)
   # region_points: user-sources/geodata/region-points.shp  # seed points carrying a MATID field
   # region_table: user-sources/geodata/region-pts-table.txt  # legend mapping MATID -> material/roughness
+  # internal cross-sections: a LINE layer whose lines are integrated from the
+  # RESULT after a run (Q = int (H*U).n ds) into simulation/baffle-XS-q.csv, one row
+  # per line. Because it reads the result rather than the steering file, the sections
+  # can be drawn and moved in GIS without re-running the solver - which is how the
+  # split of the total discharge between the threads of a braided reach is read off
+  # and checked against field transects. Any CRS (reprojected on ingest).
+  # control_sections: user-sources/geodata/cross-sections.gpkg
+  # control_section_name_field: "Section Name"   # attribute naming each line
   # dem_of_difference: user-sources/geodata/dod.tif     # precomputed bed-change raster (else derived from DEMs)
 
 boundaries:
@@ -230,6 +238,33 @@ hydrodynamics:
   # converge in fewer steps once the case is known to be stable, or extend `duration`
   # if a run has not converged within the budget.
   # desired_courant: 0.30
+
+# drying:                      # optional: remove water too thin to be surface flow
+#                              # On a bed with Nikuradse ks 0.05-0.5 m, water 5 mm
+#                              # deep is not flowing OVER the bed - it stands WITHIN
+#                              # the grain roughness, and in the field it drains into
+#                              # the substrate. A 2D model has no substrate, so it
+#                              # stays put and paints a wetted area far larger than
+#                              # the reach has (measured on a braided gravel reach:
+#                              # the sub-cm band was 13 % of the wetted AREA but
+#                              # 0.16 % of the volume).
+#                              # TELEMAC has no keyword for this: H CLIPPING +
+#                              # MINIMUM VALUE OF DEPTH do the OPPOSITE (the dico
+#                              # says the truncation "is equivalent to adding mass").
+#                              # So it is generated into the same USER_RAIN routine
+#                              # the gain-lose exchange uses - which is why it
+#                              # currently needs a gain_lose reach in fortran mode:
+#                              # the water it withdraws is reinjected at the gaining
+#                              # face, keeping the domain mass-exact. That matters -
+#                              # a permanent net sink S makes the steady budget read
+#                              # |Q_in| - |Q_out| = S and puts a floor under the
+#                              # relative flux imbalance, so no hotstart would be
+#                              # written again.
+#   film_infiltration: true
+#   film_depth: 0.01           # [m] shallower than this ...
+#   film_velocity: 0.005       # [m/s] ... AND slower than this = film. The velocity
+#                              # gate keeps the term off the active wet/dry margin.
+#   film_rate: 1.0e-5          # [m/s] withdrawal rate; clears a 5 mm film in ~500 s
 
 # gain_lose:                   # optional: a reach that loses flow into a porous
 #                              # body (a gravel bar, an alluvial patch) and regains
