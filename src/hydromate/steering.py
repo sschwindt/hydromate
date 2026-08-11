@@ -846,12 +846,20 @@ def write_source_regions(cfg: Config, regions: list) -> Path:
     """Write the TELEMAC ``SOURCE REGIONS DATA FILE`` (``source-regions.txt``).
 
     Format (``read_source_data.f``): ``#`` comment lines; per region a header line
-    ``X(i)   Y(i)`` followed by one ``x y`` vertex pair per line; a comment/blank
-    line separates regions. The region order defines TELEMAC's region numbering
-    and must match the order of ``WATER DISCHARGE OF SOURCES`` in the ``.cas``
-    (both come from the same *regions* list here). TELEMAC assigns every mesh node
-    inside a polygon to its region and spreads the region discharge uniformly over
-    the enclosed area (``telemac2d_init.F`` / ``prosou.f``).
+    ``X(i)   Y(i)`` followed by one ``x y`` vertex pair per line; a ``#`` comment
+    line terminates each region block. The region order defines TELEMAC's region
+    numbering and must match the order of ``WATER DISCHARGE OF SOURCES`` in the
+    ``.cas`` (both come from the same *regions* list here). TELEMAC assigns every
+    mesh node inside a polygon to its region and spreads the region discharge
+    uniformly over the enclosed area (``telemac2d_init.F`` / ``prosou.f``).
+
+    **No blank lines, and no line may start with a space or tab.**
+    ``read_source_data.f`` skips leading whitespace with a ``GO TO 2`` that jumps
+    back onto ``2 CONTINUE`` - which re-runs ``IDEB=1``. Any whitespace-only line
+    reaching that block therefore loops forever: the solver spins at 100% CPU
+    right after ``RESCUE : SPALART ALLMARAS``, with no error, no time step and no
+    end (only ``MAXIMUM NUMBER OF TIME STEPS``, unused here, would ever stop it).
+    Hence the ``#`` block terminators rather than blank separator lines.
     """
     lines = ["# hydromate: internal source/sink regions (losing-gaining reach)"]
     for i, region in enumerate(regions, start=1):
@@ -861,7 +869,7 @@ def write_source_regions(cfg: Config, regions: list) -> Path:
             f"X({i})   Y({i})",
         ]
         lines += [f"{x:.3f} {y:.3f}" for x, y in _region_coords(region)]
-        lines.append("#")
+        lines.append("#")   # terminates the block; never a blank line (see above)
     path = cfg.model_path(cfg.source_regions_file)
     path.write_text("\n".join(lines) + "\n")
     return path
@@ -1108,14 +1116,32 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
         # returns through a gaining line is a withdrawal (-Q) and an injection (+Q),
         # each spread by TELEMAC over the mesh nodes inside a polygon region
         # (SOURCE REGIONS DATA FILE; Q/area as a depth rate - far gentler per node
-        # than point sources). No source velocity is prescribed, so the exchange
-        # takes the local flow velocity. NOTE: never emit ABSCISSAE/ORDINATES OF
-        # SOURCES together with the region file - the coordinate route would
-        # shadow it (lecdon precedence). TYPE OF SOURCES must stay 1: with
-        # regions, type 2 (Dirac) adds the full Q at EVERY region node.
+        # than point sources). One discharge value per region also keeps the steering
+        # file inside DAMOCLES' 72-column line buffer, which a point source per node
+        # would overflow. No source velocity is prescribed, so the exchange takes the
+        # local flow velocity. NOTE: never emit ABSCISSAE/ORDINATES OF SOURCES
+        # together with the region file - the coordinate route would shadow it
+        # (lecdon precedence).
+        #
+        # TYPE OF SOURCES MUST BE 1 ("normal") FOR REGIONS, never 2 ("Dirac").
+        # prosou.f:528 branches on OPTSOU inside the per-node region loop:
+        #   OPTSOU=1  SMH(II) += DSCE/AREA_P   -> integrates to exactly DSCE
+        #   OPTSOU=2  SMH(II) += DSCE          -> the FULL discharge at EVERY node,
+        #                                         i.e. n_nodes x DSCE injected
+        # Dirac is only correct for a POINT source (a single node). On the isar-2025
+        # 221/326-node regions it would have withdrawn 14.4 and injected 21.2 m3/s
+        # against a 2.4 m3/s inflow. OPTSOU=1 is in turn rejected by the finite-volume
+        # kernel (prosou message 323), so region sources need the FE kernel.
         qs = ";".join(f"{r.discharge:g}" for r in source_regions)
         tags = ", ".join(f"{r.name} {r.discharge:+g} m3/s over {r.n_nodes} node(s)"
                          f" / {r.area:.0f} m2" for r in source_regions)
+        # MAXSCE counts REGIONS, not the nodes they capture: point_telemac2d.f sizes
+        # PT_IN_POLY(MAXSCE, NPOIN), so an oversized MAXSCE wastes MAXSCE*NPOIN ints
+        # (721 on a 231k-node mesh = 666 MB) for nothing. MAXIMUM NUMBER OF POINTS FOR
+        # SOURCES REGIONS (MAXPTSCE, default 10) must in turn cover the polygon with
+        # the most vertices (the region file drops the closing duplicate, matching
+        # write_source_regions) or TELEMAC overruns its array - and also the region
+        # COUNT, since PTS_REG is allocated MAXPTSCE but indexed by region number.
         max_vertices = max(len(_region_coords(r)) for r in source_regions)
         lines += [
             "/",
@@ -1128,6 +1154,14 @@ def write_cas(cfg: Config, liquids: list[LiquidBoundary],
             f"WATER DISCHARGE OF SOURCES : {qs}",
             "TYPE OF SOURCES : 1",
         ]
+        # finite_volumes lives on cfg.hydrodynamics, not on cfg - reading it off cfg
+        # made this guard dead code (getattr always fell back to False).
+        if h.finite_volumes:
+            log.warning(
+                "internal source REGIONS need TYPE OF SOURCES 1, which the "
+                "finite-volume kernel rejects (prosou: 'ONLY SOURCES WITH DIRAC "
+                "OPTION'). Set hydrodynamics.finite_volumes: false, or the run will "
+                "abort at the first time step.")
 
     lines += [
         "/",

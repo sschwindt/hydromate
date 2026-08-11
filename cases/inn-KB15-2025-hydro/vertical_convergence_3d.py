@@ -34,8 +34,22 @@ CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)
 
 CONV_TOLERANCE = 0.02     # convergence tolerance on the QoI (2%)
-# explicit vertical-layer counts to test (few -> many)
-LAYER_COUNTS = (4, 7, 10, 14)
+# Explicit vertical-layer counts to test (few -> many).
+#
+# 2026-08-10: the ladder was (4, 7, 10, 14) and did NOT converge - because at 7+
+# levels the study leaves the regime where a rough-wall law is even defined. With
+# LAW OF BOTTOM FRICTION 5, telemac3d's tfond.f evaluates u*^2 =
+# (kappa/ln(30 dz/ks))^2 U^2 at the FIRST layer, so the effective bed friction is a
+# function of the layer count at fixed ks: refining multiplied Cf by 4.6x from 4 to
+# 14 levels, which is what the diverging QoI was measuring. A wall function needs
+# its first node above the roughness tops, dz > ks; with ks = 0.2 m that caps the
+# level count at 5 for the median wetted depth (0.83 m) and 3 at p25 (0.50 m).
+# (3, 4, 5) is the admissible ladder, and its dz ratios 1.5 / 1.33 both clear the
+# r >= 1.3 that Celik et al. (2008) require. L4 is already on disk from the previous
+# ladder with byte-identical steering, so only 3 and 5 are re-run here; build the
+# 3-level report over 3,4,5 with RESUME-runbook/build_vertical_report_offline.py.
+# See postprocessing/vertical-convergence/FINDING-wall-function-limit.md.
+LAYER_COUNTS = (3, 5)
 TOTAL_TIME_FACTOR = 4.0   # (ignored when TARGET_TIME is set)
 # KB15 3D runs use the continuation hotstart (fast spin-up from the equilibrium 2D
 # field; the Spalart-Allmaras source-term fix in simulation/user_fortran/ is compiled

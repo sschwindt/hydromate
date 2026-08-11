@@ -242,6 +242,34 @@ def test_internal_source_regions(tmp_path):
     far = SimpleNamespace(x=np.array([X0 + 500.0]), y=np.array([Y0 + 500.0]))
     with pytest.raises(ValueError, match="contains no mesh node"):
         boundary.load_internal_source_regions(cfg, far)
+
+    from hydromate import steering
+
+    cfg.ensure_dirs()
+    text = steering.write_source_regions(cfg, regions).read_text()
+    assert "X(1)   Y(1)" in text and "X(2)   Y(2)" in text
+    for line in text.splitlines():
+        # No blank line, and no leading whitespace, ANYWHERE. TELEMAC's
+        # read_source_data.f skips leading spaces with a GO TO that jumps back onto
+        # the label that resets the column index, so a whitespace-only line makes
+        # telemac2d spin at 100% CPU forever right after "RESCUE : SPALART
+        # ALLMARAS" - no error, no time step, no end.
+        assert line.strip(), f"blank line in region file -> TELEMAC infinite loop: {text!r}"
+        assert not line[0].isspace(), f"leading whitespace -> TELEMAC infinite loop: {line!r}"
+        if not line.startswith("#") and not line.startswith("X("):
+            # a single "x y" vertex, well under the 72-column DAMOCLES buffer
+            assert len(line) < 72 and len(line.split()) == 2
+
+    # MAXSCE counts regions (it sizes PT_IN_POLY as MAXSCE x NPOIN), not their nodes
+    cas = steering.write_cas(
+        cfg, [], inflow_q=1.0, outflow_wse=None, source_regions=regions,
+    ).read_text()
+    assert "MAXIMUM NUMBER OF SOURCES : 2" in cas, cas
+    # Regions REQUIRE the "normal" source type. With Dirac (2), prosou.f adds the
+    # full region discharge at every captured node instead of DSCE/AREA_P, so the
+    # exchange is multiplied by the node count (hundreds) - silently.
+    assert "TYPE OF SOURCES : 1" in cas, cas
+    assert "TYPE OF SOURCES : 2" not in cas, cas
     print("INTERNAL-SOURCE REGION TEST PASSED")
 
 

@@ -19,8 +19,16 @@ edge (`int-outflow-lose`), travels *under* the bar, and resurfaces at
 
 The consequences for the model:
 
-* The underflow can only be represented as a **withdrawal + injection pair** on the surface model.
-* **The withdrawal must be taken from the channel where the water infiltrates** (at the losing line), **not from the dry bar it subsequently flows beneath.** This distinction is what rungs T4-T6 turn on: taking it from the bar is numerically stable but physically meaningless, and moves no water (see the [side-channel comparison](#side-channel-comparison-the-deliverable-measurement)).
+* **The bar is DRY on top - by design, at 2.4 m3/s.** A converged run showing no
+  surface water on the bar is *correct*, not a DEM or discharge error. Do not
+  "fix" it.
+* **A 2D depth-averaged model has no subsurface**, so this underflow can only be
+  represented as a **withdrawal + injection pair** on the surface model.
+* **The withdrawal must be taken from the channel where the water infiltrates**
+  (at the losing line), **not from the dry bar it subsequently flows beneath.**
+  This distinction is what rungs T4-T6 turn on: taking it from the bar is
+  numerically stable but physically meaningless, and moves no water (see the
+  [side-channel comparison](#side-channel-comparison-the-deliverable-measurement)).
 
 Getting water into the side channel is the point of the whole exercise; the steady
 run must reach a stable boundary-flux balance with that exchange active.
@@ -1030,8 +1038,6 @@ surface model - none of them blocks the steady run):
 `USER_RAIN` the way they do in TELEMAC's own output code. It now throttles on the
 routine's own `SAVE`d call counter, which is why the label reads `CALL n` rather
 than an iteration number.
-
----
 
 ---
 

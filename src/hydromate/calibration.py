@@ -134,7 +134,17 @@ def emit_hbc_config(cfg: Config, calibration_csv: Path | None) -> Path:
     parameters = merged_parameters(cfg)
     params = [p.name for p in parameters]
     ranges = [[p.min, p.max] for p in parameters]
-    results_base = Path(cfg.results_slf).stem
+    # which case HydroBayesCal drives: the built steady 2D case by default, or the
+    # 3D steering file when calibrating vertical profiles (calibration.solver_name)
+    control_file = c.control_file or cfg.cas_file
+    if c.results_base:
+        results_base = c.results_base
+    elif c.solver_name == "Telemac3d":
+        # HydroBayesCal sets '3D RESULT FILE' from this base and derives the
+        # companion 2D file as <base>_<id>_2d.slf, so the base must be the 3D one.
+        results_base = Path(cfg.results3d_slf).stem
+    else:
+        results_base = Path(cfg.results_slf).stem
     # HydroBayesCal resolves this against <model_dir>/user_fortran/, and rewrites a
     # line in it for any calibration parameter prefixed `f.` - which is how the
     # gain-lose conductivity (`f.HMP_KF`) is calibrated. Only meaningful when a
@@ -181,10 +191,10 @@ paths = {{
 }}
 
 hydrodynamic_simulation = {{
-    'solver_name': 'Telemac2d',
+    'solver_name': {c.solver_name!r},
     'n_processors': {cfg.telemac.n_processors},
     'results_filename_base': {results_base!r},
-    'control_file': {cfg.cas_file!r},
+    'control_file': {control_file!r},
     'friction_file': {cfg.friction_tbl!r},
     'fortran_file': {fortran_file!r},
 }}
@@ -206,6 +216,8 @@ hydrodynamic_simulation = {{
 # no-ops if that literal ever changes. This says it in the config, which is the
 # interface the drivers actually document. (The patch is kept as well - hydrobayescal
 # 1.4.3's multiflow driver ignores this block, and only honours it from 1.4.4 on.)
+# n_last is unused while output_extraction_time is 'last'; 1 is the value that keeps
+# the intent if anyone flips this back to 'mean_last'.
 extraction = {{
     'output_extraction_time': 'last',
     'n_last': 1,
