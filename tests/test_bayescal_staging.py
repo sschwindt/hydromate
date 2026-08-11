@@ -47,6 +47,24 @@ def test_extraction_window_is_patched_to_the_converged_frame(tmp_path):
         original.count('output_extraction_time="mean_last"')
 
 
+def test_every_staged_file_is_patched_not_just_the_primary(tmp_path):
+    """The multiflow driver imports run_complex_model from its bal_telemac.py sibling
+    and calls it WITHOUT passing output_extraction_time, so it takes the sibling's
+    default. Patching only the primary left multi-flow calibrations averaging the
+    dry-start transient while single-flow ones did not - a silent, mode-dependent
+    difference in what the calibration is fitted to."""
+    from hydromate.bayescal import stage_driver
+
+    stage_driver(tmp_path, "bal_telemac_multiflow.py")
+
+    remaining = sum(p.read_text().count('output_extraction_time="mean_last"')
+                    for p in tmp_path.glob("*.py"))
+    assert remaining == 0
+    # ... and the sibling is where those sites actually live
+    assert (tmp_path / "bal_telemac.py").read_text().count(
+        'output_extraction_time="last"') > 0
+
+
 def test_multiflow_driver_brings_the_sibling_it_imports(tmp_path):
     """bal_telemac_multiflow.py imports bal_telemac.py by file name, so staging one
     without the other yields an ImportError only at run time, hours in."""

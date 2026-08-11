@@ -143,6 +143,13 @@ def stage_driver(out_dir: Path, template_name: str, *, checkout: Path | None = N
     calibration values. ``last`` takes the converged frame. *also* names further
     drivers to place beside it (kept for callers that name the companion explicitly;
     ``copy_driver`` already brings known siblings).
+
+    **Every** staged file is patched, not just the primary one. That is not caution:
+    ``bal_telemac_multiflow.py`` imports ``run_complex_model`` / ``run_bal_model``
+    from its ``bal_telemac.py`` sibling and calls them *without* passing
+    ``output_extraction_time``, so a multi-flow run takes the sibling's default. With
+    only the primary patched, multi-flow calibrations silently averaged the transient
+    - the exact failure this patch exists to prevent - while single-flow ones did not.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -174,14 +181,22 @@ def stage_driver(out_dir: Path, template_name: str, *, checkout: Path | None = N
         primary = out_dir / template_name
         source = f"hydroBayesCal {_hbc_version()}"
 
-    text = Path(primary).read_text()
-    n = text.count('output_extraction_time="mean_last"')
-    (out_dir / template_name).write_text(
-        text.replace('output_extraction_time="mean_last"',
-                     'output_extraction_time="last"'))
+    if checkout is not None:
+        # the checkout branch has not copied the primary yet
+        shutil.copy2(primary, out_dir / template_name)
+
+    patched = 0
+    for staged in sorted(out_dir.glob("*.py")):
+        text = staged.read_text()
+        n = text.count('output_extraction_time="mean_last"')
+        if n:
+            staged.write_text(text.replace('output_extraction_time="mean_last"',
+                                           'output_extraction_time="last"'))
+            patched += n
     print(f"staged {template_name} from {source}"
           + (f" (+{', '.join(also)})" if also else "")
-          + f" -> {out_dir}" + (f" (extraction mean_last -> last, {n} sites)" if n else ""))
+          + f" -> {out_dir}"
+          + (f" (extraction mean_last -> last, {patched} sites)" if patched else ""))
     return out_dir / template_name
 
 
