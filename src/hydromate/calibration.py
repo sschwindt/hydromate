@@ -197,6 +197,20 @@ hydrodynamic_simulation = {{
     'dict_output_name': 'extraction-data',
 }}
 
+# WHEN to read the model outputs. "last" takes the converged frame; the stock
+# default "mean_last" averages the final n_last frames, which on a run marching to
+# steady state from a dry or pre-wetted start folds the residual transient into the
+# values the surrogate is trained on.
+# Emitting it here rather than relying on hydromate's source patch of the staged
+# driver: the patch rewrites a string literal in someone else's file, so it silently
+# no-ops if that literal ever changes. This says it in the config, which is the
+# interface the drivers actually document. (The patch is kept as well - hydrobayescal
+# 1.4.3's multiflow driver ignores this block, and only honours it from 1.4.4 on.)
+extraction = {{
+    'output_extraction_time': 'last',
+    'n_last': 1,
+}}
+
 sampling = {{
     'init_runs': {c.init_runs},
     'max_runs': {c.max_runs},

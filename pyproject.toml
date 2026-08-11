@@ -44,7 +44,13 @@ gui = ["streamlit>=1.30"]
 # for every binding rather than per-binding, and the restart collocation-points CSV
 # that only_bal_mode reads is written by the shared path (hydromate's --resume relies
 # on that restart data).
-calibration = ["hydrobayescal>=1.4.3"]
+# >=1.4.4 makes the MULTI-FLOW driver honour the config's `extraction` block. Before
+# it, that driver took run_complex_model's "mean_last" default regardless of the
+# configuration, so a multi-flow calibration averaged the last frames while a
+# single-flow one on the same config did not - the two were fitted to different data.
+# hydromate emits `extraction` in config_Telemac.py (see calibration.emit_hbc_config),
+# which only reaches the multi-flow path from this release on.
+calibration = ["hydrobayescal>=1.4.4"]
 
 [project.scripts]
 hydromate = "hydromate.cli:main"
@@ -58,3 +64,11 @@ hydromate = ["templates/*.cas", "templates/*.tbl"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+# Pinned EXPLICITLY rather than left to ruff's defaults: those defaults widened in
+# ruff 0.16, so the same `ruff check src/` went from clean to 88 findings purely by
+# upgrading ruff on one machine (all of them style nits - intentional multi-line
+# prose flagged as ISC004, deliberate `except Exception` reporting as BLE001).
+# Naming the rule set makes the lint contract the same on every machine and in CI.
+select = ["E4", "E7", "E9", "F"]
