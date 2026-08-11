@@ -60,7 +60,8 @@ def _write_fixtures(d: Path) -> Path:
     res = 2.0
     nx, ny = int((w + 20) / res), int((h + 20) / res)
     transform = from_origin(x0 - 10, y0 + h + 10, res, res)  # north-up
-    cols = np.arange(nx); rows = np.arange(ny)
+    cols = np.arange(nx)
+    rows = np.arange(ny)
     xs = (x0 - 10) + (cols + 0.5) * res
     ys = (y0 + h + 10) - (rows + 0.5) * res
     XX, YY = np.meshgrid(xs, ys)

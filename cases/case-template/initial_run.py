@@ -8,7 +8,7 @@ hand off to HydroBayesCal.
 
 Because this steady result is also the **hotstart** seed for the HydroBayesCal
 calibration, the run then gets a flux / mass-balance convergence analysis (via the
-``pythomac`` package). It writes the same four files as pythomac's example into the
+``hydromate.sortie`` + ``hydromate.flux_convergence``). It writes four files into the
 simulation folder -- ``extracted-fluxes.csv`` + ``flux-convergence.png`` (per-boundary
 fluxes) and ``convergence-rate.csv`` + ``convergence-rate.png`` (the relative flux
 imbalance and its convergence rate) -- and reports the simulation time at which the
@@ -20,10 +20,7 @@ with that steady time as ``DURATION`` and the constant Q / H prescriptions kept
 alive. The per-processor ``*_p0000N.sortie`` copies of a parallel run are deleted.
 See ``hydromate.flux_convergence``.
 
-Needs ``telemac.pysource`` in case-config.yml to point at a real TELEMAC env, and
-``pythomac`` importable (``pip install pythomac`` or set ``PYTHOMAC_DIR`` to a local
-checkout).
-
+Needs ``telemac.pysource`` in case-config.yml to point at a real TELEMAC env.
 Run: mamba run -n hydromate-env python cases/<your-case>/initial_run.py
 """
 

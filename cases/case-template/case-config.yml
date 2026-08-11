@@ -212,7 +212,7 @@ hydrodynamics:
   # step. TELEMAC's STOP CRITERIA is an ABSOLUTE per-step change; with the variable
   # (CFL) time step the per-step change is tiny, so it false-fires during a slow
   # transient (e.g. a low-Q reach still filling) long before the fluxes balance.
-  # Convergence is judged by the boundary-flux balance (initial_run.py / pythomac).
+  # Convergence is judged by the boundary-flux balance (initial_run.py).
   # stop_if_steady: true          # only takes effect with variable_timestep: false
   # stop_criteria: "1.E-4;1.E-4;1.E-4"   # absolute per-step change: H; (U,V); tracers
   graphic_printout_period: 500

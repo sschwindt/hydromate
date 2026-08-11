@@ -73,7 +73,7 @@ cases/<your-case>/
      python cases/<your-case>/preprocessing.py
 
 5. Step 1b - test-run the built case once to confirm it does not crash, check
-   the boundary-flux convergence (extracted-fluxes.csv + plots via pythomac),
+   the boundary-flux convergence (extracted-fluxes.csv + plots),
    and - once the fluxes stay balanced (<1e-3 m3/s over 10 printouts, or in the
    10-printout mean) - generate hotstart2d.cas (a continuation of r2d.slf capped
    at that steady time, Q/H prescriptions kept). This ends the preprocessing
