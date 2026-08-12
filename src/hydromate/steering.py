@@ -17,6 +17,7 @@ import math
 from pathlib import Path
 
 from hydromate.config import Config
+from hydromate.core.geodata import dataset
 from hydromate.boundary import LiquidBoundary
 
 log = logging.getLogger("hydromate")
@@ -224,7 +225,7 @@ def _liquid_node_mask(cfg: Config, mesh, kind: str, tol: float | None = None):
     from hydromate import boundary as bnd
 
     on_boundary = np.asarray(mesh.ipobo) > 0
-    lines = bnd._load_liquid_lines(cfg).get(kind)
+    lines = bnd.liquid_lines(cfg).get(kind)
     if lines is None:
         return on_boundary          # untagged: allow the whole outer boundary
     geom = unary_union(lines)
@@ -299,12 +300,9 @@ def spill_elevations(mesh, seed_mask):
 
 def _channel_centerline(cfg: Config):
     """The channel centerline as a single LineString in the project CRS."""
-    import geopandas as gpd
     from shapely.ops import linemerge, unary_union
 
-    gdf = gpd.read_file(cfg.geodata.channel_centerline)
-    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
+    gdf = dataset(cfg).centerline_frame()
     merged = unary_union(gdf.geometry.values)
     line = linemerge(merged) if merged.geom_type == "MultiLineString" else merged
     if line.geom_type == "MultiLineString":          # disjoint parts: take longest
@@ -400,12 +398,11 @@ def _normal_depth_prewet_depth(cfg: Config, mesh, mask, discharge):
     import shapely
     from scipy.spatial import cKDTree
 
-    from hydromate import mesh as mesh_mod
     from hydromate.rating import stage_for_discharge
 
     init = cfg.initialization
     line = _channel_centerline(cfg)
-    channel = mesh_mod._channel_union(cfg)
+    channel = dataset(cfg).channel_union()
     spacing = float(init.prewet_bin_spacing)
     half = float(init.prewet_transect_half_width)
     sample = 0.5
@@ -711,7 +708,7 @@ def _inflow_plug_mask(cfg: Config, mesh):
     from hydromate import boundary
 
     try:
-        inflow = boundary._load_liquid_lines(cfg).get("inflow")
+        inflow = boundary.liquid_lines(cfg).get("inflow")
     except Exception as exc:  # noqa: BLE001 - a seed must not fail on a bad layer
         log.debug("no inflow plug (%s: %s)", type(exc).__name__, exc)
         return None

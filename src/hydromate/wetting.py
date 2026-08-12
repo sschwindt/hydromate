@@ -358,9 +358,9 @@ def outlet_profile(cfg, results, *, geometry=None, bands=OUTLET_BANDS,
     import numpy as np
     import shapely
 
-    from hydromate.boundary import _load_liquid_lines
+    from hydromate.boundary import liquid_lines
 
-    lines = _load_liquid_lines(cfg)
+    lines = liquid_lines(cfg)
     if "outflow" not in lines:
         raise ValueError("outlet_profile needs an 'outflow' line in "
                          "boundaries.liquid_boundaries")

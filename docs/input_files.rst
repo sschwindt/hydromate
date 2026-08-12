@@ -85,6 +85,20 @@ attribute table is not read (only its geometry).
      - ``Zone ID`` (integer)
      - one polygon per friction zone; each polygon's integer ``Zone ID`` becomes the per-node ``FRIC_ID`` and is paired with ``geodata.roughness_table`` (e.g.
        zone ``1`` = channel, ``2`` = floodplain).
+   * - ``geodata.structures`` *(optional)*
+     - ``structures.gpkg``
+     - **polygons** or **lines**
+     - ``Type``, ``Crest (m)`` or ``Height (m)``, ``Width (m)`` (lines), optional ``Mode``, ``Name``
+     - dams, weirs, walls and buildings. A **polygon** is the footprint directly;
+       a **line** is buffered by ``Width (m)`` - the natural way to draw a wall or a
+       dam crest. ``Crest (m)`` gives a *level* crest (dam, weir, floodwall),
+       ``Height (m)`` a crest that *follows the terrain* (embankment, levee). The
+       ``Type`` text selects the mode by substring - ``dam``/``weir``/``levee`` are
+       **overflow** (the bed is raised to the crest), ``wall``/``building``/``pier``
+       are **solid** (OpenFOAM removes the footprint; TELEMAC raises the bed to
+       crest + ``solid_freeboard_2d``) - and a ``Mode`` column overrides it per
+       feature. **No STL is needed**: that is a ``snappyHexMesh`` requirement, and
+       hydromate writes its mesh itself. See :ref:`usage-structures`.
    * - ``geodata.control_sections`` *(optional)*
      - ``cross-sections.gpkg``
      - **lines**
@@ -130,7 +144,16 @@ Drawing user vector layers (QGIS)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The mesh zones (``mesh-zones.gpkg``), roughness zones (``roughness-zones.gpkg``), liquid boundaries (``liquid-boundaries.gpkg``) and channel centerline (``channel-centerline.gpkg``) are digitised by hand in a GIS, over the ROI polygon (``roi-<reach>.gpkg``). They must line up: the liquid-boundary lines span the inflow / outflow cross-sections and coincide with the outer bounds of the mesh zones, and the centerline runs down the channel. Give each layer the **attribute fields** listed in the table above (``Zone Name`` + ``Max Edge Length (m)`` on the
-mesh zones, ``Zone ID`` on the roughness zones, the ``inflow`` / ``outflow`` *type* field on the liquid boundaries). 
+mesh zones, ``Zone ID`` on the roughness zones, the ``inflow`` / ``outflow`` *type* field on the liquid boundaries).
+
+**Structures** (``structures.gpkg``) are digitised the same way and need nothing
+special: no 3D geometry, no STL, no CAD. Trace a dam crest or a wall as a **line** and
+give it a ``Width (m)``, or digitise a building as a **polygon**; then type in a
+``Crest (m)`` (a level crest) or a ``Height (m)`` (above the local ground). QGIS's 3D
+map view will even extrude the footprints by the height attribute for a visual check,
+but hydromate reads only the geometry and the attributes.
+
+
 
 .. figure:: img/inflow-bc.jpg
    :alt: Mesh zones, roughness zones, liquid boundary and channel centerline at the Inn model inlet, over a hillshade

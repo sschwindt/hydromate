@@ -34,6 +34,7 @@ import math
 from dataclasses import dataclass, field
 
 from hydromate.config import Config
+from hydromate.core.geodata import dataset
 
 log = logging.getLogger("hydromate")
 
@@ -104,20 +105,16 @@ def channel_ks(cfg: Config) -> float | None:
             return _ks_from_law(z.law, z.coefficient)
     if cfg.geodata.roughness_zones is not None and cfg.geodata.roughness_table is not None:
         try:
-            import geopandas as gpd
-
-            from hydromate import mesh as mesh_mod
-
-            table = mesh_mod.read_roughness_table(cfg.geodata.roughness_table)
-            gdf = gpd.read_file(cfg.geodata.roughness_zones)
-            if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-                gdf = gdf.to_crs(epsg=cfg.crs_epsg)
+            table = dataset(cfg).roughness_table()
+            gdf = dataset(cfg).roughness_zones()
             id_field = next((c for c in gdf.columns
                              if str(c).lower() == cfg.mesh.roughness_zone_field.lower()),
                             None)
             if id_field is None:
                 return None
-            channel = mesh_mod._channel_union(cfg)
+            # was mesh_mod._channel_union(cfg): a reach into another
+            # module's private helper, which the shared Dataset removes
+            channel = dataset(cfg).channel_union()
             overlap: dict[int, float] = {}
             for zid, geom in zip(gdf[id_field], gdf.geometry.values):
                 if geom is None:

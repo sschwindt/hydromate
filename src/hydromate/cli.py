@@ -12,6 +12,13 @@ Two forms:
 * ``hydromate targets <config.yml> [-o <out.xlsx>] [--force]`` - generate the
   user-fillable ``calibration-target-data.xlsx`` template (hydraulics /
   morphodynamics ground truth + calibration-parameter ranges) for a case.
+* ``hydromate openfoam <config.yml> [--check] [--cell-size <m>] [--layers <n>]`` -
+  build the OpenFOAM (interFoam) free-surface case: a terrain-following
+  all-hexahedral mesh, fields seeded from the converged TELEMAC 2D result, and both
+  staged dictionary sets. ``--check`` only reports the cell count.
+* ``hydromate status <config.yml> [--check-env] [--full]`` - report what the case can
+  do (implemented / configured / built / run, per solver) and refresh its
+  ``MODEL=<SOLVER>_<ENABLED|DISABLED>`` marker files.
 """
 
 from __future__ import annotations
@@ -151,6 +158,102 @@ def _run_targets(argv: list[str]) -> int:
     return 0
 
 
+def _status_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="hydromate status",
+        description="Report what this case can do, and write its "
+                    "MODEL=<SOLVER>_<ENABLED|DISABLED> marker files. Each capability "
+                    "is reported on three axes: implemented (does hydromate support "
+                    "it for that solver), configured (does this case ask for it), and "
+                    "built/run (do the artifacts exist).",
+    )
+    p.add_argument("config", type=Path, help="path to the YAML configuration file")
+    p.add_argument("--check-env", action="store_true",
+                   help="also probe whether each solver's environment can be sourced "
+                        "on THIS machine (spawns a shell per solver)")
+    p.add_argument("--full", action="store_true",
+                   help="print the full marker tables instead of the short summary")
+    p.add_argument("--no-write", action="store_true",
+                   help="report only; do not write the marker files")
+    p.add_argument("-v", "--verbose", action="store_true")
+    return p
+
+
+def _run_status(argv: list[str]) -> int:
+    args = _status_parser().parse_args(argv)
+    setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
+    log = logging.getLogger("hydromate")
+    from hydromate.core.capabilities import CaseStatus
+
+    try:
+        cfg = load_config(args.config)
+        status = CaseStatus.collect(cfg, check_env=args.check_env)
+    except Exception as exc:
+        log.error("%s: %s", type(exc).__name__, exc)
+        if args.verbose:
+            raise
+        return 1
+
+    print(status.render() if args.full else "\n".join(status.summary()))
+    if not args.no_write:
+        for path in status.write_markers():
+            print(f"wrote {path.name}")
+    return 0
+
+
+def _openfoam_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="hydromate openfoam",
+        description="Build the OpenFOAM (interFoam) free-surface case for a reach: a "
+                    "terrain-following all-hexahedral mesh written straight to "
+                    "constant/polyMesh (no snappyHexMesh), fields seeded from the "
+                    "converged TELEMAC 2D result, and the two staged dictionary sets "
+                    "for the spin-up and production runs.",
+    )
+    p.add_argument("config", type=Path, help="path to the YAML configuration file")
+    p.add_argument("--check", action="store_true",
+                   help="report the cell count the current settings would produce, "
+                        "then exit without building")
+    p.add_argument("--hotstart", type=Path, default=None,
+                   help="2D result to seed from (default: the case's own r2d.slf)")
+    p.add_argument("--cell-size", type=float, default=None,
+                   help="override openfoam.cell_size [m] for this build")
+    p.add_argument("--layers", type=int, default=None,
+                   help="override openfoam.n_layers for this build")
+    p.add_argument("-v", "--verbose", action="store_true")
+    return p
+
+
+def _run_openfoam(argv: list[str]) -> int:
+    args = _openfoam_parser().parse_args(argv)
+    setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
+    log = logging.getLogger("hydromate")
+    from hydromate.openfoam import build_case, estimate_cells, load_hotstart, summarise
+
+    try:
+        cfg = load_config(args.config)
+        if args.cell_size is not None:
+            cfg.openfoam.cell_size = args.cell_size
+        if args.layers is not None:
+            cfg.openfoam.n_layers = args.layers
+        state = load_hotstart(cfg, args.hotstart)
+        if args.check:
+            n = estimate_cells(cfg, state=state)
+            log.info("a %g m lattice with %d layers gives about %s cells",
+                     cfg.openfoam.cell_size, cfg.openfoam.n_layers, f"{n:,}")
+            return 0
+        art = build_case(cfg, state=state)
+    except Exception as exc:
+        log.error("%s: %s", type(exc).__name__, exc)
+        if args.verbose:
+            raise
+        return 1
+    for line in summarise(art):
+        log.info("%s", line)
+    log.info("run it with  python cases/<your-case>/openfoam_run.py")
+    return 0
+
+
 def _run_build(argv: list[str] | None) -> int:
     args = _build_parser().parse_args(argv)
     level = logging.DEBUG if args.verbose else logging.INFO
@@ -213,6 +316,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_rating(argv[1:])
     if argv and argv[0] == "targets":
         return _run_targets(argv[1:])
+    if argv and argv[0] == "openfoam":
+        return _run_openfoam(argv[1:])
+    if argv and argv[0] == "status":
+        return _run_status(argv[1:])
     return _run_build(argv)
 
 

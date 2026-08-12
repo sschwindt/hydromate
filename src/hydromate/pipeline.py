@@ -9,6 +9,7 @@ from pathlib import Path
 
 from hydromate import boundary, calibration, dem, fortran, hydraulics, mesh, steering
 from hydromate.config import Config
+from hydromate.core.capabilities import refresh_markers
 from hydromate.env import TelemacRuntime
 from hydromate.logsetup import log_step, setup_logging
 
@@ -110,7 +111,7 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
             outflow_wse = None
             log.info("  prescribed inflow Q=%.3f m3/s, free (Neumann) outflow", inflow_q)
         else:
-            outflow_wse = _resolve_outflow_wse(cfg, inflow_q)
+            outflow_wse = resolve_outflow_wse(cfg, inflow_q)
             log.info("  prescribed inflow Q=%.3f m3/s, outflow WSE=%.3f m (%s)",
                      inflow_q, outflow_wse, cfg.boundaries.outflow_condition)
 
@@ -236,6 +237,8 @@ def run(cfg: Config, *, validate_env: bool = True, dry_run: bool = False,
                     f"{cfg.telemac.solver} failed (rc={proc.returncode}) on "
                     f"{cfg.cas_file}; see the listing above / {cfg.model_dir}")
 
+    # refresh the case's MODEL= markers so the folder describes itself as it is now
+    refresh_markers(cfg)
     log.info("build done: case '%s' in %.2fs", cfg.name, time.perf_counter() - t_start)
     return art
 
@@ -271,7 +274,7 @@ def _outflow_wse_fn(cfg: Config):
     return hydraulics.read_stage_discharge(Path(cfg.boundaries.stage_discharge))
 
 
-def _resolve_outflow_wse(cfg: Config, inflow_q: float) -> float:
+def resolve_outflow_wse(cfg: Config, inflow_q: float) -> float:
     """Downstream water-surface elevation for a prescribed-elevation outflow.
 
     ``stage_discharge`` (default) reads the rating curve and interpolates the WSE
@@ -293,3 +296,8 @@ def _resolve_outflow_wse(cfg: Config, inflow_q: float) -> float:
         )
     wse_at = hydraulics.read_stage_discharge(Path(cfg.boundaries.stage_discharge))
     return wse_at(inflow_q)
+
+
+# the OpenFOAM extension needs the same downstream stage the .cas is written with,
+# so this is public now; the old private spelling is kept for existing callers
+_resolve_outflow_wse = resolve_outflow_wse

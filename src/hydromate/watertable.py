@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from hydromate.core.geodata import dataset
 
 log = logging.getLogger("hydromate")
 
@@ -70,13 +71,9 @@ class PhreaticPlane:
 
 def _internal_lines(cfg):
     """``[(tag, geometry), ...]`` for the ``int-*`` lines of the liquid boundaries."""
-    import geopandas as gpd
-
     from hydromate.boundary import _is_internal, _type_column
 
-    gdf = gpd.read_file(cfg.boundaries.liquid_boundaries)
-    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
+    gdf = dataset(cfg).liquid_boundaries()
     col = _type_column(gdf)
     if col is None:
         return []

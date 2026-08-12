@@ -136,7 +136,9 @@ class Geodata:
     breaklines: Path | None = None       # internal constraint lines (shp/gpkg)
     mesh_zones: Path | None = None       # polygons with a 'Zone Name' (channel/floodplain) for sizing
     channel_centerline: Path | None = None  # line the channel cells are elongated along
-    roughness_zones: Path | None = None  # polygons with a 'Zone ID' for per-node roughness
+    roughness_zones: Path | None = None
+    # dams / weirs / walls / buildings (polygons, or lines + a width)
+    structures: Path | None = None  # polygons with a 'Zone ID' for per-node roughness
     roughness_table: Path | None = None  # csv: zone_id, roughness (e.g. ks) -> calibrated by HBC
     region_points: Path | None = None    # seed points carrying MATID + max area
     region_table: Path | None = None     # region-pts-table.txt (MATID legend)
@@ -158,6 +160,35 @@ class Geodata:
             p = getattr(self, name)
             if p is not None and not Path(p).exists():
                 raise FileNotFoundError(f"geodata.{name} set but not found: {p}")
+
+
+@dataclass
+class Structures:
+    """Dams, weirs, walls and buildings (optional; off unless a layer is given).
+
+    Deliberately expressed as an ordinary vector layer with attributes rather than a
+    triangulated surface: hydromate writes the mesh itself, so a structure only has
+    to say where its footprint is and how high it stands. No STL, no CAD step, and
+    nothing QGIS cannot author or round-trip. See :mod:`hydromate.core.structures`.
+    """
+
+    enabled: bool = True          # ignored unless geodata.structures is set
+    # attribute names; each is looked up case-insensitively with sensible aliases
+    type_field: str = "Type"          # dam / weir / wall / building / embankment ...
+    mode_field: str = "Mode"          # optional explicit override: solid | overflow
+    crest_field: str = "Crest (m)"    # LEVEL crest elevation [m a.s.l.]
+    height_field: str = "Height (m)"  # or: height above the local ground [m]
+    width_field: str = "Width (m)"    # line features only: buffer width [m]
+    name_field: str = "Name"
+    default_width: float = 1.0        # [m] when a line carries no width
+    # For a solid structure in a 2D depth-averaged model there is no vertical wall to
+    # remove, so the bed is raised to the crest plus this freeboard instead - the
+    # standard practice for a never-overtopped wall in TELEMAC.
+    solid_freeboard_2d: float = 2.0
+
+    def validate(self) -> None:
+        if self.default_width <= 0:
+            raise ValueError("structures.default_width must be > 0")
 
 
 @dataclass
@@ -1032,6 +1063,108 @@ class Calibration:
         return cls(parameters=params, **_only_known(cls, rest))
 
 
+@dataclass
+class OpenFoam:
+    """The optional OpenFOAM free-surface (interFoam) extension.
+
+    Entirely additive: a case config without an ``openfoam:`` block gets this
+    dataclass at its defaults and nothing in the TELEMAC path ever consults it.
+    See :mod:`hydromate.openfoam` for what the values mean physically.
+
+    The defaults are tuned for a small gravel-bed reach hotstarted from a converged
+    TELEMAC 2D result. The two that matter most:
+
+    * ``freeboard`` sets how much air the domain carries. The lid is clamped this far
+      above the 2D free surface instead of being a flat plane over the terrain, which
+      is what keeps the air phase from dominating the Courant number - but it must
+      stay well above any surface rise the 3D run can produce, or the flow hits the
+      lid.
+    * ``auto_bed_layer`` pins the bed-adjacent layer to the reach's own ``ks`` so
+      OpenFOAM's rough wall function is admissible. On a gravel bed that layer is a
+      large fraction of the depth; refining past it silently invalidates the wall
+      function rather than improving anything (see :mod:`hydromate.openfoam.quality`).
+    """
+
+    # ---- environment --------------------------------------------------------
+    # the OpenFOAM etc/bashrc to source (as telemac.pysource is for TELEMAC)
+    bashrc: Path | None = None
+    n_processors: int = 1
+    solver: str = "interFoam"
+
+    # ---- mesh ---------------------------------------------------------------
+    cell_size: float = 0.5          # plan lattice spacing dx [m]
+    n_layers: int = 14              # sigma layers per column
+    domain: str = "wetted"          # wetted | roi
+    wet_margin: float = 5.0         # [m] buffer around the 2D wetted extent
+    lid: str = "follow"             # follow (the 2D free surface) | flat
+    lid_elevation: float | None = None      # pin the lid to this level [m a.s.l.]
+    freeboard: float = 0.5          # [m] air layer kept above the free surface
+    lid_smoothing: int = 2          # averaging passes over the lid
+    # Running-max radius (in cells) applied before smoothing. 2, not 1: on the isar
+    # reach a 1-cell dilation left one severely non-orthogonal face (70.16 deg, which
+    # fails checkMesh) where the lid dipped over a shallow cell, and 2 removes it
+    # while also improving the worst aspect ratio and the smallest cell volume.
+    lid_dilation: int = 2
+    align_to_flow: bool = True      # rotate the lattice onto the reach's axis
+    min_column_height: float = 0.10  # [m] floor on lid - bed
+    layer_expansion: float = 1.0    # top/bed layer thickness ratio
+    bed_layer_height: float | None = None   # explicit bed-layer thickness [m]
+    auto_bed_layer: bool = True     # else derive it from the roughness zones
+    boundary_tolerance: float | None = None  # [m] liquid-line match (default 1.5*dx)
+    max_plan_columns: int = 4_000_000
+
+    # ---- physics ------------------------------------------------------------
+    turbulence: str = "kOmegaSST"   # kOmegaSST | kEpsilon | laminar
+    water_density: float = 998.2
+    water_viscosity: float = 1.0e-6
+    air_density: float = 1.0
+    air_viscosity: float = 1.48e-5
+    surface_tension: float = 0.07
+    roughness_constant: float = 0.5   # nutkRoughWallFunction Cs
+    friction_ks: float = 0.05         # fallback ks [m] with no roughness zones
+
+    # ---- run ----------------------------------------------------------------
+    spinup_time: float = 30.0       # [s] stage 1 (settle the interface)
+    end_time: float = 300.0         # [s] end of stage 2
+    write_interval: float = 10.0    # [s] of simulated time
+    initial_time_step: float = 0.001
+    max_time_step: float = 0.5
+    max_courant: float = 0.9        # stage 2 (stage 1 uses spinup_courant)
+    spinup_courant: float = 0.3
+    # Cap on |U| enforced by the limitVelocity fvConstraint. Water never reaches it;
+    # an air jet does, and this is the most effective single stop on the air phase
+    # collapsing the time step. None -> 5x the expected water velocity.
+    air_velocity_cap: float | None = None
+
+    def validate(self) -> None:
+        if self.domain not in ("wetted", "roi"):
+            raise ValueError(
+                f"openfoam.domain must be 'wetted' or 'roi', got {self.domain!r}")
+        if self.lid not in ("follow", "flat"):
+            raise ValueError(f"openfoam.lid must be 'follow' or 'flat', got {self.lid!r}")
+        if self.turbulence not in ("kOmegaSST", "kEpsilon", "laminar"):
+            raise ValueError(
+                "openfoam.turbulence must be 'kOmegaSST', 'kEpsilon' or 'laminar', "
+                f"got {self.turbulence!r}")
+        if self.cell_size <= 0:
+            raise ValueError("openfoam.cell_size must be > 0")
+        if self.n_layers < 1:
+            raise ValueError("openfoam.n_layers must be >= 1")
+        if self.freeboard <= 0:
+            raise ValueError("openfoam.freeboard must be > 0 (the air layer above "
+                             "the free surface)")
+        if self.end_time <= self.spinup_time:
+            raise ValueError(
+                f"openfoam.end_time ({self.end_time}) must exceed spinup_time "
+                f"({self.spinup_time}): stage 2 continues from where stage 1 stopped")
+        if self.bashrc is not None and not Path(self.bashrc).is_file():
+            raise FileNotFoundError(
+                f"OpenFOAM bashrc not found: {self.bashrc}. Point openfoam.bashrc at "
+                "the etc/bashrc of your install (e.g. "
+                "/home/modelling/OpenFOAM/OpenFOAM-9/etc/bashrc)."
+            )
+
+
 # --------------------------------------------------------------------------- #
 # top-level config
 # --------------------------------------------------------------------------- #
@@ -1063,6 +1196,19 @@ class Config:
     gain_lose: GainLose = field(default_factory=GainLose)
     # removal of water too thin to be surface flow (optional; off by default)
     drying: Drying = field(default_factory=Drying)
+    # dams / weirs / walls / buildings (optional; see hydromate.core.structures)
+    structures: Structures = field(default_factory=Structures)
+    # OpenFOAM free-surface extension (optional; purely additive, see hydromate.openfoam)
+    openfoam: OpenFoam = field(default_factory=OpenFoam)
+    # where the OpenFOAM case tree is written; defaults to <sim_dir>/openfoam
+    openfoam_dir: Path | None = None
+    # Top-level blocks the YAML actually contained. Every solver section has a
+    # dataclass with defaults, so `cfg.openfoam` exists whether or not the case asked
+    # for OpenFOAM; this records what was *declared*, which is what decides whether a
+    # solver is ENABLED for the case (see hydromate.core.capabilities). Recorded as
+    # raw key names rather than resolved backends so config.py stays free of any
+    # knowledge of which solvers exist.
+    declared_blocks: frozenset[str] = frozenset()
 
     # canonical output filenames inside model_dir -----------------------------
     geometry_slf: str = "geometry.slf"
@@ -1109,6 +1255,21 @@ class Config:
         return Path(self.calibration_dir) / filename
 
     @property
+    def openfoam_case_dir(self) -> Path:
+        """The OpenFOAM case root (``<sim_dir>/openfoam`` unless configured).
+
+        Derived rather than required so a config predating the OpenFOAM extension
+        still resolves it; it sits beside ``simulation/``, not inside it, because an
+        OpenFOAM case owns its whole directory (``0/ constant/ system/ processor*/``).
+        """
+        if self.openfoam_dir is not None:
+            return Path(self.openfoam_dir)
+        return Path(self.model_dir).parent / "openfoam"
+
+    def openfoam_path(self, filename: str) -> Path:
+        return self.openfoam_case_dir / filename
+
+    @property
     def ground_truth_path(self) -> Path:
         """Where the tidy ground-truth table lives (explicit input, else compiled)."""
         if self.ground_truth.measurements is not None:
@@ -1147,6 +1308,8 @@ class Config:
                 "provided for topographic-change calibration data."
             )
         self.percolation.validate()
+        self.structures.validate()
+        self.openfoam.validate()
         self.initialization.validate()
         self.drying.validate(self.percolation)
         self.dem_of_difference.validate()
@@ -1290,7 +1453,16 @@ def load_config(path: str | os.PathLike) -> Config:
         **_only_known(DemOfDifference, raw.get("dem_of_difference", {}) or {}))
     gain_lose = _load_gain_lose(raw, cfg_dir)
     drying = Drying(**_only_known(Drying, raw.get("drying", {}) or {}))
+    structures = Structures(**_only_known(Structures, raw.get("structures", {}) or {}))
     calib = Calibration.from_dict(raw.get("calibration", {}) or {})
+
+    # OpenFOAM extension: absent block -> defaults, and nothing consults them
+    ofdict = dict(raw.get("openfoam") or {})
+    if "bashrc" in ofdict and ofdict["bashrc"] is not None:
+        ofdict["bashrc"] = _resolve(cfg_dir, ofdict["bashrc"])
+    openfoam = OpenFoam(**_only_known(OpenFoam, ofdict))
+    openfoam_dir = _resolve(cfg_dir, project.get("openfoam_dir")) if \
+        project.get("openfoam_dir") else None
 
     cfg = Config(
         name=project.get("name", path.stem),
@@ -1313,6 +1485,10 @@ def load_config(path: str | os.PathLike) -> Config:
         dem_of_difference=dod,
         gain_lose=gain_lose,
         drying=drying,
+        structures=structures,
+        openfoam=openfoam,
+        openfoam_dir=openfoam_dir,
+        declared_blocks=frozenset(raw),
     )
     # apply optional output-filename overrides
     for key, value in (raw.get("outputs", {}) or {}).items():

@@ -299,6 +299,59 @@ dem_of_difference:
   # min_lod: 0.10
   mask_below_lod: true
 
+openfoam:
+  # OPTIONAL 3D free-surface (interFoam) extension - see openfoam_preprocessing.py.
+  # Purely additive: delete this block and nothing about the TELEMAC case changes.
+  # The 3D case is built from the converged 2D result (simulation/r2d.slf), so run
+  # preprocessing.py -> initial_run.py first.
+  bashrc: /home/modelling/OpenFOAM/OpenFOAM-9/etc/bashrc
+  n_processors: 16
+
+  # ---- mesh ---------------------------------------------------------------
+  # A terrain-following, all-hexahedral, structured lattice written straight to
+  # constant/polyMesh. NOT snappyHexMesh: a river bed is a single-valued height
+  # field, so it is followed rather than snapped to, which removes the castellate/
+  # snap stage where that mesher degenerates.
+  cell_size: 0.5           # plan dx [m]; ~ the 0.3 m channel zone of the 2D mesh
+  n_layers: 14             # sigma layers per column
+  # 0.5 m x 14 over the wetted corridor gives ~1.6 M cells (~28,200 m2 of footprint).
+  # `hydromate openfoam case-config.yml --check` reports the count without building.
+
+  domain: wetted           # mesh only the 2D wetted corridor, not the whole 66,000 m2 ROI
+  wet_margin: 5.0          # [m] buffer, so the bank walls stand on dry ground
+  align_to_flow: true      # rotate the lattice onto the reach axis (+32.9 deg here)
+
+  # ---- the air phase ------------------------------------------------------
+  # The lid is clamped this far above the 2D free surface instead of being a flat
+  # plane over the terrain. That is the single biggest lever on interFoam's cost and
+  # stability here: air that does not exist as cells cannot drive the Courant number,
+  # and the atmosphere patch stays close to the interface where inletOutlet /
+  # totalPressure behave. It must still exceed any surface rise the 3D run can make,
+  # or the flow hits the lid - 0.5 m against a 0.22 m median depth is ample.
+  lid: follow
+  freeboard: 0.5           # [m]
+  # |U| cap enforced by the limitVelocity fvConstraint. Left unset it becomes 5x the
+  # reach's own p95 water speed (~4.5 m/s here). Water never reaches it; a runaway
+  # air jet does, and that is what collapses the time step.
+  # air_velocity_cap: 4.5
+
+  # ---- bed ----------------------------------------------------------------
+  # The bed layer is pinned to 2x the wetted median ks, so the first cell CENTRE
+  # clears the roughness crests and nutkRoughWallFunction is admissible. NOTE this
+  # reach's roughness (ks 0.085-0.5 m) is a large fraction of its depth (median
+  # 0.22 m), so ~40% of wetted bed faces fail that test even so - the build reports
+  # the share. Refining towards the bed does not help; it makes it worse. Read the
+  # result as bulk flow, not as a resolved bed boundary layer.
+  auto_bed_layer: true
+  turbulence: kOmegaSST
+
+  # ---- run ----------------------------------------------------------------
+  spinup_time: 30.0        # stage 1: settle the interface from the depth-averaged 2D state
+  end_time: 300.0          # stage 2 end
+  spinup_courant: 0.3
+  max_courant: 0.9         # semi-implicit MULES (MULESCorr) makes this affordable
+  write_interval: 10.0
+
 ground_truth:
   # Calibration ground truth: a tidy multi-tab table (measurements) OR raw sources
   # hydromate compiles into it. Compiled to preprocessing/ground-truth.xlsx unless

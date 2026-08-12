@@ -2,13 +2,103 @@ Usage
 =====
 
 ``hydromate`` is driven by a single YAML configuration file pointing at your
-:doc:`input files <input_files>`. From there the workflow is a fixed, ordered
-chain - each step only makes sense once the previous one has succeeded:
+:doc:`input files <input_files>`. **One case description, two simulation backends**:
+the geodata, the boundary conditions, the roughness, the structures and the ground
+truth are shared, and each solver adds only the knobs that are genuinely its own.
+
+What a case can do
+------------------
+
+Every case carries one marker file per solver at its top level, refreshed by any
+build and by ``hydromate status``:
+
+.. code-block:: bash
+
+   hydromate status cases/example-Inn/case-config.yml          # summary + refresh
+   hydromate status cases/example-Inn/case-config.yml --full   # the whole table
+   hydromate status cases/example-Inn/case-config.yml --check-env   # probe the solvers
+
+.. code-block:: text
+
+   cases/example-Inn/
+     MODEL=TELEMAC_ENABLED     # the NAME says whether the CASE declares this solver,
+     MODEL=OPENFOAM_DISABLED   # so it means the same on any machine
+
+Each capability is reported on three axes, which answer three different questions and
+have three different fixes:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 18 42 40
+
+   * - axis
+     - question
+     - values
+   * - ``implemented``
+     - does hydromate support this **for this solver**?
+     - ``yes`` / ``no`` (not yet) / ``n/a`` (never - OpenFOAM has no depth-averaged mode)
+   * - ``configured``
+     - does **this case** ask for it?
+     - from the config alone (a varying inflow implies ``unsteady2d``)
+   * - ``built`` / ``run``
+     - do the **artifacts** exist?
+     - ``steady2d.cas`` written, ``r2d.slf`` produced
+
+Cells that cannot arise render ``-``, never a confident ``no``. The files are
+generated, so they are gitignored - they describe the *currently available* setup,
+which is local state like ``hydromate-case/``.
+
+The general workflow
+--------------------
+
+Steps 1-3 are **shared**: the same inputs, the same commands, whichever solver you
+end up running.
 
 #. **Prepare the input files** - the :ref:`geodata <input-geodata>`, the
    :ref:`ground truth <input-ground-truth>` (generate the
    :ref:`calibration-target template <input-target-template>` with ``hydromate
    targets <config>`` and fill it in), and the :ref:`config YAML <input-config>`.
+#. **Describe the reach once** - the ROI polygon, the liquid boundaries, the mesh
+   zones and centerline, the roughness zones, the discharge and the outflow
+   condition, and any :ref:`structures <usage-structures>` (dams, weirs, walls,
+   buildings). Both meshers read exactly these.
+#. **Check what is set up** - ``hydromate status <config>``.
+
+From there the two backends diverge, because they answer different questions:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 39 39
+
+   * -
+     - **TELEMAC**
+     - **OpenFOAM (interFoam)**
+   * - answers
+     - depth-averaged flow, morphodynamics, calibration - the whole reach, many runs
+     - the vertical structure of the flow where the surface has a real gradient
+   * - mesh
+     - anisotropic triangles, flow-aligned (gmsh/BAMG) -> ``geometry.slf``
+     - terrain-following all-hexahedral lattice -> ``constant/polyMesh``
+   * - free surface
+     - a state variable of the shallow-water equations
+     - a resolved two-phase (VOF) interface
+   * - cost
+     - hours
+     - hours to days; see the cost report the build prints
+   * - run it when
+     - always - it is also the 3D run's hotstart
+     - after the 2D run has converged
+
+The TELEMAC workflow
+--------------------
+
+.. code-block:: bash
+
+   python cases/example-Inn/preprocessing.py            # build the case
+   python cases/example-Inn/initial_run.py              # test-run + hotstart convergence
+   python cases/example-Inn/mesh_convergence_study.py   # grid-independence study
+   python cases/example-Inn/run_Bayes_cal.py            # Bayesian calibration
+
 #. **Preprocessing / build** (``preprocessing.py``, or ``hydromate <config>``) -
    clip the DEM(s), build the mesh + bathymetry, classify the liquid boundaries,
    and write the complete TELEMAC case (``geometry.slf``, ``boundaries.cli``,
@@ -24,20 +114,111 @@ chain - each step only makes sense once the previous one has succeeded:
    (the hotstart convergence check). The solver's output streams live with a
    progress bar (see `The initial run`_). This concludes preprocessing.
 #. **Mesh-convergence study** (``mesh_convergence_study.py``) - the
-   grid-independence study. It runs the case on five meshes, so it is only worth
-   starting **once the initial run has confirmed the model runs**.
-#. **Calibration & validation** - hand the built case to HydroBayesCal
-   (:doc:`hbc`).
+   grid-independence study, worth starting only **once the initial run has confirmed
+   the model runs**.
+#. **Optional extensions** - ``add3d.py`` (TELEMAC-3D sigma layers) then
+   ``vertical_convergence_3d.py``; ``unsteady_run.py`` for a hydrograph.
+#. **Calibration & validation** - hand the built case to HydroBayesCal (:doc:`hbc`).
+
+The OpenFOAM workflow
+---------------------
+
+Use it when the **vertical structure** of the flow matters *and* the water surface
+has a gradient - which rules out ``simpleFoam`` and means a two-phase VOF solver.
+It runs **after** the TELEMAC 2D run, which supplies its hotstart, its lid and its
+wetted footprint.
 
 .. code-block:: bash
 
-   python cases/example-Inn/preprocessing.py            # build the case
-   python cases/example-Inn/initial_run.py              # test-run + hotstart convergence
-   python cases/example-Inn/mesh_convergence_study.py   # grid-independence study
+   hydromate openfoam cases/example-Inn/case-config.yml --check   # cell count, no build
+   python cases/example-Inn/openfoam_preprocessing.py             # build the case
+   python cases/example-Inn/openfoam_run.py                       # spin-up, run, report
+
+#. **Build** - a terrain-following, all-hexahedral mesh written straight to
+   ``constant/polyMesh`` (no snappyHexMesh: a river bed is a height field, so it is
+   *followed* rather than snapped to), fields seeded from the converged ``r2d.slf``,
+   and the two staged dictionary sets. The build prints its own **cost report** -
+   the time step the Courant target will settle on, the number of steps your
+   ``end_time`` implies, and how that compares with one flush of the reach.
+#. **Run** - ``checkMesh``, ``decomposePar``, then two stages of ``interFoam``:
+   a short spin-up that settles the interface from the depth-averaged hotstart,
+   then the production stage. Watch ``Co`` and ``dt`` on the progress bar; a healthy
+   run holds ``dt`` near the Courant target.
+#. **Report** - inlet/outlet **water** discharge and their relative imbalance,
+   judged against the same ``hydrodynamics.flux_tolerance`` the 2D run is judged by.
+
+The air phase is the usual reason such runs fail, so three things address it: the
+**lid follows the 2D free surface** at a fixed ``freeboard`` so most air cells never
+exist; **semi-implicit MULES** lets the Courant target run near 0.9 instead of the
+tutorials' 0.2; and a **``limitVelocity`` constraint** caps ``|U|`` at several times
+the reach's own water speed - water never reaches it, a runaway air jet does.
 
 Prefer a form to hand-editing the YAML? Launch the browser-based configuration
 editor with ``hydromate-gui`` (see :ref:`the graphical configurator <input-config>`);
 its **Build** button is the same build step as above.
+
+.. _usage-structures:
+
+Structures: dams, weirs, walls and buildings
+--------------------------------------------
+
+A structure is an **ordinary QGIS vector layer**, not a triangulated surface. STL is
+a ``snappyHexMesh`` requirement; hydromate writes its mesh itself, so a structure only
+has to say **where its footprint is** and **how high it stands** - both ordinary
+attributes. There is no CAD step and no format QGIS cannot author or round-trip.
+
+Draw it either way:
+
+* a **polygon** is the footprint directly (a building, a dam body, a pier);
+* a **line** is buffered by its ``Width (m)`` attribute - the natural way to draw a
+  wall or a dam crest, tracing the crest and saying how thick it is rather than
+  digitising two parallel sides.
+
+Say how high it stands in one of two ways, and the field you fill in is what decides:
+
+* a **crest elevation** (m a.s.l.) gives a *level* crest - a dam, a weir, a floodwall;
+* a **height** (m above the local ground) gives a crest that *follows the terrain* -
+  an embankment or levee of constant build height.
+
+Two modes, and the choice is hydraulic:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 16 42 42
+
+   * - mode
+     - what it is
+     - what the mesh does
+   * - ``overflow``
+     - dam, weir, embankment, levee, block ramp - water passes over it
+     - the **bed is raised to the crest**; the plan mesh is unchanged. Identical in
+       both solvers.
+   * - ``solid``
+     - wall, floodwall, building, pier - never overtopped
+     - OpenFOAM **removes the footprint**, so its sides are no-slip walls from bed to
+       lid. TELEMAC has no vertical wall to remove, so the bed is raised to crest +
+       ``structures.solid_freeboard_2d`` instead - the standard 2D practice.
+
+The mode is taken from the ``Type`` text by substring (``dam``/``weir``/``levee``…
+vs ``wall``/``building``/``pier``…), or set explicitly per feature in a ``Mode``
+column. Anything unrecognised is ``overflow``: raising the bed is the conservative
+failure, since it keeps the domain connected and lets water pass, whereas wrongly
+blanking a footprint would silently wall off part of the reach. A solid structure
+that cuts the domain in two is reported as a warning, not applied silently.
+
+.. code-block:: yaml
+
+   geodata:
+     structures: user-sources/geodata/structures.gpkg
+
+   structures:
+     type_field: "Type"           # dam | weir | wall | building | embankment ...
+     mode_field: "Mode"           # optional per-feature override: solid | overflow
+     crest_field: "Crest (m)"     # LEVEL crest elevation [m a.s.l.]
+     height_field: "Height (m)"   # or: height above the local ground [m]
+     width_field: "Width (m)"     # line features only
+     default_width: 1.0
+     solid_freeboard_2d: 2.0      # TELEMAC: how far above the crest a solid is raised
 
 The initial run
 ---------------

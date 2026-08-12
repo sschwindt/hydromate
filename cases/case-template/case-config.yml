@@ -357,6 +357,114 @@ dem_of_difference:
   # min_lod: 0.10               # explicit minimum level of detection [m]
   mask_below_lod: true          # |dz| < LoD -> nodata (true) or 0.0 (false)
 
+# =============================================================================
+# OPTIONAL: structures - dams, weirs, walls, buildings
+# =============================================================================
+# A structure is an ORDINARY QGIS VECTOR LAYER, not a triangulated surface. STL is a
+# snappyHexMesh requirement; hydromate writes its own mesh, so a structure only has to
+# say where its footprint is and how high it stands. No CAD step, nothing QGIS cannot
+# author. Read by BOTH solvers from the same layer.
+#
+# Draw it either way:
+#   * a POLYGON is the footprint directly      (building, dam body, pier)
+#   * a LINE is buffered by its Width (m)      (trace the crest, say how thick it is)
+#
+# Say how high, and the field you fill in is what decides:
+#   * Crest (m)   a LEVEL crest              -> dam, weir, floodwall
+#   * Height (m)  FOLLOWS the terrain        -> embankment, levee of constant height
+#
+# Two modes, from the Type text (or an explicit Mode column per feature):
+#   * overflow  dam / weir / levee / block ramp - water passes over it.
+#               The BED IS RAISED to the crest. Identical in both solvers.
+#   * solid     wall / floodwall / building / pier - never overtopped.
+#               OpenFOAM REMOVES the footprint (no-slip walls from bed to lid);
+#               TELEMAC has no vertical wall to remove, so it raises the bed to
+#               crest + solid_freeboard_2d instead (standard 2D practice).
+# Unrecognised text is treated as overflow: raising the bed keeps the domain
+# connected, whereas wrongly blanking a footprint would silently wall off the reach.
+#
+# geodata:
+#   structures: user-sources/geodata/structures.gpkg
+#
+# structures:
+#   type_field: "Type"            # dam | weir | wall | building | embankment ...
+#   mode_field: "Mode"            # optional per-feature override: solid | overflow
+#   crest_field: "Crest (m)"      # LEVEL crest elevation [m a.s.l.]
+#   height_field: "Height (m)"    # or: height above the local ground [m]
+#   width_field: "Width (m)"      # line features only
+#   name_field: "Name"
+#   default_width: 1.0            # [m] when a line carries no width
+#   solid_freeboard_2d: 2.0       # [m] TELEMAC only: how far above the crest a
+#                                 # solid structure is raised so it is not overtopped
+
+# =============================================================================
+# OPTIONAL: OpenFOAM free-surface (interFoam) extension
+# =============================================================================
+# Delete this whole block and nothing about the TELEMAC case changes - it is read
+# only by openfoam_preprocessing.py / openfoam_run.py / `hydromate openfoam`.
+#
+# Use it when you need the VERTICAL structure of the flow AND the water surface has
+# a gradient. The second half is why simpleFoam is not an option: a steady
+# single-phase solver cannot carry a sloping free surface, so the air-water
+# interface has to be modelled, which means a two-phase VOF solver (interFoam) and
+# with it an air phase that is of no interest but tends to dominate the cost.
+#
+# Build it only AFTER preprocessing.py + initial_run.py have produced a converged
+# simulation/r2d.slf: the 3D case is seeded from it, its lid follows its water
+# surface, and its footprint is that result's wetted corridor. Ideally after
+# mesh_convergence_study.py too, so `cell_size` is an informed choice.
+#
+# openfoam:
+#   bashrc: /opt/openfoam9/etc/bashrc   # [REQUIRED to run] your OpenFOAM etc/bashrc
+#   n_processors: 8
+#
+#   # ---- mesh -------------------------------------------------------------
+#   # A structured, terrain-following, ALL-HEXAHEDRAL lattice written straight to
+#   # constant/polyMesh. NOT snappyHexMesh: a river bed is a single-valued height
+#   # field, so it is followed rather than snapped to, which removes the
+#   # castellate/snap stage where that mesher degenerates into slivers.
+#   cell_size: 0.5          # plan dx [m]
+#   n_layers: 14            # sigma layers per column
+#   # Check the cost before building:
+#   #   hydromate openfoam case-config.yml --check
+#   domain: wetted          # wetted (the 2D wetted corridor) | roi (the whole ROI)
+#   wet_margin: 5.0         # [m] buffer, so the bank walls stand on DRY ground
+#   align_to_flow: true     # rotate the lattice onto the reach's principal axis
+#
+#   # ---- the air phase ----------------------------------------------------
+#   # The single biggest lever. The lid is clamped this far above the 2D free
+#   # surface instead of being a flat plane over the terrain, so most air cells
+#   # never exist, and the atmosphere patch stays near the interface where
+#   # inletOutlet / totalPressure behave. It must still exceed any surface rise the
+#   # 3D run can produce, or the flow hits the lid.
+#   lid: follow             # follow | flat
+#   freeboard: 0.5          # [m]
+#   # |U| cap enforced by the limitVelocity fvConstraint. Unset -> 5x the reach's
+#   # p95 water speed. Water never reaches it; a runaway air jet does, and that is
+#   # what collapses the time step.
+#   # air_velocity_cap: 4.0
+#
+#   # ---- bed --------------------------------------------------------------
+#   # nutkRoughWallFunction needs the first cell CENTRE above the roughness crests,
+#   # so the bed layer is pinned to 2x the wetted median ks. On a gravel bed where
+#   # ks is a large fraction of the depth this cannot always be met; the build
+#   # reports the share of wetted bed faces that fail, and OpenFOAM will NOT error
+#   # there - it clamps and carries on. Read such a result as bulk flow, not as a
+#   # resolved bed boundary layer. Refining towards the bed makes it worse.
+#   auto_bed_layer: true
+#   # bed_layer_height: 0.2   # explicit override [m]
+#   turbulence: kOmegaSST   # kOmegaSST | kEpsilon | laminar
+#
+#   # ---- run --------------------------------------------------------------
+#   # Two stages: stage 1 settles the interface from the depth-averaged 2D state at
+#   # a tight Courant number, stage 2 runs at the full one with semi-implicit MULES
+#   # (which is what makes 0.9 affordable instead of the tutorials' 0.2).
+#   spinup_time: 30.0
+#   end_time: 300.0
+#   spinup_courant: 0.3
+#   max_courant: 0.9
+#   write_interval: 10.0
+
 ground_truth:
   # The calibration consumes a tidy, multi-tab "measurements" table: one tab per
   # category (hydraulics, morphodynamics, ...), first three columns x,y,z (project

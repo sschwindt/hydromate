@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 
 from hydromate.config import Config
+from hydromate.core import geodata
+from hydromate.core.geodata import dataset
 from hydromate import selafin
 from hydromate.logsetup import log_step
 
@@ -58,24 +60,13 @@ class Mesh:
 # --------------------------------------------------------------------------- #
 
 
-def _boundary_polygon(cfg: Config):
+def roi_polygon(cfg: Config):
     """Return the ROI as a shapely Polygon (polygonising lines if needed)."""
-    import geopandas as gpd
-    from shapely.ops import polygonize, unary_union
-
-    gdf = gpd.read_file(cfg.geodata.boundary)
-    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
-    geoms = list(gdf.geometry.values)
-    if set(gdf.geom_type) & {"LineString", "MultiLineString"}:
-        polys = list(polygonize(unary_union(geoms)))
-        if not polys:
-            raise ValueError("boundary lines do not close into a polygon")
-        return max(polys, key=lambda p: p.area)
-    return max(geoms, key=lambda p: p.area)
+    return dataset(cfg).roi_polygon()
 
 
 def _read_lines(path: Path, crs_epsg: int):
+    """Coordinate lists of every line in *path*, in the project CRS."""
     import geopandas as gpd
 
     gdf = gpd.read_file(path)
@@ -92,20 +83,7 @@ def _read_lines(path: Path, crs_epsg: int):
 
 def _read_region_seeds(cfg: Config):
     """Return (xy array, matid array) of region seed points, or (None, None)."""
-    if cfg.geodata.region_points is None:
-        return None, None
-    import geopandas as gpd
-
-    gdf = gpd.read_file(cfg.geodata.region_points)
-    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
-    matid_col = next(
-        (c for c in gdf.columns if c.upper() in ("MATID", "FRIC_ID", "MAT_ID")), None
-    )
-    xy = np.array([[g.x, g.y] for g in gdf.geometry.values])
-    matids = (gdf[matid_col].astype(int).to_numpy() if matid_col
-              else np.ones(len(gdf), dtype=int))
-    return xy, matids
+    return dataset(cfg).region_seeds()
 
 
 def _build_gmsh(cfg: Config, *, bg_budget: int = 40000, aniso_relax: float = 1.0):
@@ -117,7 +95,7 @@ def _build_gmsh(cfg: Config, *, bg_budget: int = 40000, aniso_relax: float = 1.0
     gmsh.model.add(cfg.name)
     geo = gmsh.model.geo
 
-    poly = _boundary_polygon(cfg)
+    poly = roi_polygon(cfg)
 
     def add_ring(coords):
         pts = list(coords)
@@ -179,124 +157,26 @@ def _is_bamg_failure(exc: BaseException) -> bool:
     return "bamg" in str(exc).lower()
 
 
-_ZONE_PRIORITY = {"refinement": 0, "channel": 1, "floodplain": 2, "other": 3}
-
-
-def _match_field(gdf, name: str) -> str | None:
-    """Case-insensitive column lookup (so 'Zone Name'/'zone name' both match)."""
-    return next((c for c in gdf.columns if str(c).lower() == name.lower()), None)
-
-
-def _parse_decimal(value) -> float | None:
-    """Parse a numeric mesh-zone field robustly.
-
-    A GeoPackage ``double`` field already comes back as a float, but a field
-    authored in a German-locale GIS may arrive as the *string* ``"0,5"``. Accept
-    both: floats/ints pass through; strings have their decimal comma normalised to
-    a point before parsing. Returns ``None`` for blanks / NaN / unparseable values
-    so the caller can fall back to the configured default.
-    """
-    if value is None:
-        return None
-    if isinstance(value, (int, float)):
-        return None if (isinstance(value, float) and math.isnan(value)) else float(value)
-    s = str(value).strip().replace(",", ".")
-    try:
-        return float(s) if s else None
-    except ValueError:
-        return None
-
-
-def _classify_zone(name: str) -> str:
-    """Map a 'Zone Name' to a zone type by substring (case-insensitive)."""
-    n = str(name).lower()
-    if "channel" in n:
-        return "channel"
-    if "refinement" in n:        # local refinement zones (isotropic, fine)
-        return "refinement"
-    if "floodplain" in n:
-        return "floodplain"
-    return "other"
+# These helpers moved to hydromate.core.geodata when the fourteen scattered layer
+# readers were unified behind one cached Dataset. They stay reachable from here
+# because existing code and tests import hydromate.mesh._parse_decimal and friends.
+_ZONE_PRIORITY = geodata.ZONE_PRIORITY
+_match_field = geodata.match_field
+_parse_decimal = geodata.parse_decimal
+_classify_zone = geodata.classify_zone
+_fill_holes = geodata.fill_holes
 
 
 def _read_mesh_zones(cfg: Config):
-    """Read the mesh-zone polygons into a GeoDataFrame with, per polygon:
-
-    * ``_zone_type`` - ``channel`` / ``floodplain`` / ``refinement`` / ``other``,
-      from the ``Zone Name`` field (:func:`_classify_zone`),
-    * ``_edge_length`` - the target max edge length [m], read from the
-      ``Max Edge Length (m)`` field (``mesh.zone_size_field``) and parsed with
-      :func:`_parse_decimal`; if that field is absent or blank for a polygon, the
-      configured per-type default (``channel_size`` / ``floodplain_size`` /
-      ``refinement_size``) is used. Either way the value is multiplied by
-      ``mesh.size_scale`` (the global refinement factor the convergence study
-      varies - without it the gpkg sizes would override any per-level resizing),
-    * ``_prio`` - overlap priority (refinement > channel > floodplain), so a point
-      inside several zones takes the finest-intent zone.
-
-    Reprojected to the project CRS.
-    """
-    import geopandas as gpd
-
-    gdf = gpd.read_file(cfg.geodata.mesh_zones)
-    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
-    name_field = _match_field(gdf, cfg.mesh.zone_name_field)
-    if name_field is None:
-        raise ValueError(
-            f"mesh_zones {Path(cfg.geodata.mesh_zones).name!r} has no "
-            f"'{cfg.mesh.zone_name_field}' column (has {list(gdf.columns)})"
-        )
-    size_field = _match_field(gdf, cfg.mesh.zone_size_field)
-    defaults = {"channel": cfg.mesh.channel_size, "floodplain": cfg.mesh.floodplain_size,
-                "refinement": cfg.mesh.refinement_size, "other": cfg.mesh.floodplain_size}
-
-    ztypes = [_classify_zone(v) for v in gdf[name_field]]
-    scale = float(cfg.mesh.size_scale or 1.0)
-    edge = []
-    for zt, raw in zip(ztypes, (gdf[size_field] if size_field else [None] * len(gdf))):
-        val = _parse_decimal(raw)
-        edge.append((val if (val is not None and val > 0.0) else defaults[zt]) * scale)
-    return gdf.assign(_zone_type=ztypes, _edge_length=edge,
-                      _prio=[_ZONE_PRIORITY[zt] for zt in ztypes])
-
-
-def _fill_holes(geom):
-    """Return *geom* with all interior rings removed (only the exterior kept).
-
-    A mesh-zone author commonly carves holes into the channel polygon so a finer
-    ``refinement`` zone can be nested inside (e.g. around a structure). Such a hole
-    is enclosed by channel on every side, so it *is* channel - just meshed finer.
-    Dropping the holes keeps those nested pockets part of the channel footprint so
-    they are pre-wetted with the rest of the channel (otherwise the refinement
-    zones start dry and look walled off; see :func:`channel_node_mask`).
-    """
-    from shapely.geometry import Polygon
-    from shapely.ops import unary_union
-
-    if geom.geom_type == "Polygon":
-        return Polygon(geom.exterior)
-    if geom.geom_type == "MultiPolygon":
-        return unary_union([Polygon(p.exterior) for p in geom.geoms])
-    return geom
+    """Mesh-zone polygons with the derived ``_zone_type`` / ``_edge_length`` /
+    ``_prio`` columns. See :meth:`hydromate.core.geodata.Dataset.mesh_zones`."""
+    return dataset(cfg).mesh_zones()
 
 
 def _channel_union(cfg: Config):
     """Channel footprint: union of the '*channel*' mesh zones, holes filled.
-
-    Holes are filled (:func:`_fill_holes`) so refinement zones nested inside the
-    channel polygon count as channel for pre-wetting and quality reporting.
-    """
-    from shapely.ops import unary_union
-
-    zones = _read_mesh_zones(cfg)
-    channel = zones[zones["_zone_type"] == "channel"]
-    if channel.empty:
-        raise ValueError(
-            f"no mesh zone named '*channel*' in {Path(cfg.geodata.mesh_zones).name!r}; "
-            f"found {sorted(zones['_zone_type'].unique())}"
-        )
-    return _fill_holes(unary_union(channel.geometry.values))
+    See :meth:`hydromate.core.geodata.Dataset.channel_union`."""
+    return dataset(cfg).channel_union()
 
 
 def nominal_channel_size(cfg: Config) -> float:
@@ -323,23 +203,7 @@ def nominal_channel_size(cfg: Config) -> float:
 
 def _centerline_tangents(cfg: Config, spacing: float):
     """Sample the channel centerline -> (points, unit tangents, KD-tree)."""
-    import geopandas as gpd
-    from scipy.spatial import cKDTree
-    from shapely.ops import linemerge, unary_union
-
-    gdf = gpd.read_file(cfg.geodata.channel_centerline)
-    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
-    merged = unary_union(gdf.geometry.values)
-    line = linemerge(merged) if merged.geom_type == "MultiLineString" else merged
-    if line.geom_type == "MultiLineString":      # disjoint parts: take the longest
-        line = max(line.geoms, key=lambda g: g.length)
-    n = max(2, int(line.length / spacing))
-    s = np.linspace(0.0, line.length, n)
-    pts = np.array([[line.interpolate(d).x, line.interpolate(d).y] for d in s])
-    tang = np.gradient(pts, axis=0)
-    tang /= np.linalg.norm(tang, axis=1, keepdims=True).clip(1e-9)
-    return pts, tang, cKDTree(pts)
+    return dataset(cfg).centerline_tangents(spacing)
 
 
 def _assign_point_zones(cfg: Config, zones, pts: np.ndarray):
@@ -660,7 +524,8 @@ def _order_boundary(triangles: np.ndarray, npoin: int) -> tuple[np.ndarray, np.n
 # --------------------------------------------------------------------------- #
 
 
-def _interpolate_bottom(dem_path: Path, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+def sample_raster_at(dem_path: Path, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Bilinear raster value at arbitrary points, nearest-filled where nodata."""
     import rasterio
     from scipy.interpolate import RegularGridInterpolator
 
@@ -851,8 +716,15 @@ def build_mesh(cfg: Config, dem_initial_roi: Path | None = None) -> Mesh:
     ipobo = np.zeros(npoin, dtype=int)
     ipobo[boundary_nodes] = np.arange(1, boundary_nodes.size + 1)
 
-    bottom = (_interpolate_bottom(Path(dem_initial_roi), x, y)
+    bottom = (sample_raster_at(Path(dem_initial_roi), x, y)
               if dem_initial_roi is not None else np.zeros(npoin))
+    if dem_initial_roi is not None:
+        # dams, weirs, walls and buildings are terrain the DEM did not carry
+        bottom = _burn_structures(cfg, Mesh(
+            x=x, y=y, triangles=triangles, bottom=bottom, ipobo=ipobo,
+            boundary_nodes=boundary_nodes,
+            element_matid=np.ones(len(triangles), dtype=int),
+            node_matid=np.ones(npoin, dtype=int)), bottom)
     centroids = np.column_stack([
         x[triangles].mean(axis=1), y[triangles].mean(axis=1)
     ])
@@ -886,33 +758,61 @@ def build_mesh(cfg: Config, dem_initial_roi: Path | None = None) -> Mesh:
     return mesh
 
 
-def interpolate_elevations(mesh: Mesh, dem_path: Path, *, decimals: int = 4) -> Mesh:
+def interpolate_elevations(mesh: Mesh, dem_path: Path, *, decimals: int = 4,
+                           cfg: Config | None = None) -> Mesh:
     """Interpolate DEM elevations onto the mesh nodes (in place) and return it.
 
     Elevations are rounded to *decimals* digits after the decimal point (4 by
     default). NaNs (nodata / just outside the grid) are nearest-neighbour filled.
+
+    With *cfg*, the case's structures (:mod:`hydromate.core.structures`) are burnt
+    into the bed afterwards. A **depth-averaged model has no vertical wall to remove**,
+    so both structure modes end up as terrain here: an ``overflow`` structure raises
+    the bed to its crest, and a ``solid`` one raises it to the crest plus
+    ``structures.solid_freeboard_2d`` so it cannot be overtopped. That is the standard
+    way a floodwall is represented in TELEMAC, and it is the one place where the two
+    solvers necessarily differ - OpenFOAM removes the footprint and gets a real
+    vertical face, which is reported in the build notes rather than left implicit.
     """
-    z = _interpolate_bottom(Path(dem_path), mesh.x, mesh.y)
+    z = sample_raster_at(Path(dem_path), mesh.x, mesh.y)
+    if cfg is not None:
+        z = _burn_structures(cfg, mesh, z)
     mesh.bottom = np.round(z, decimals) if decimals is not None else z
     return mesh
 
 
+def _burn_structures(cfg: Config, mesh: Mesh, z: np.ndarray) -> np.ndarray:
+    """Raise the bed for this case's structures (see :func:`interpolate_elevations`)."""
+    from hydromate.core.structures import (
+        OVERFLOW, SOLID, Structure, apply_to_bed, load_structures,
+    )
+
+    structures = load_structures(cfg)
+    if not structures:
+        return z
+    xy = np.column_stack([mesh.x, mesh.y])
+    # a 2D mesh cannot delete a footprint, so a solid structure becomes an
+    # un-overtoppable ridge: crest + freeboard, as terrain
+    freeboard = float(cfg.structures.solid_freeboard_2d)
+    as_terrain = [
+        s if s.mode == OVERFLOW else Structure(
+            name=f"{s.name} (solid -> terrain +{freeboard:g} m)", mode=OVERFLOW,
+            polygon=s.polygon,
+            crest=None if s.crest is None else s.crest + freeboard,
+            height=None if s.height is None else s.height + freeboard)
+        for s in structures
+    ]
+    if any(s.mode == SOLID for s in structures):
+        log.info("  solid structures raised to crest + %.2f m freeboard: a 2D mesh "
+                 "has no vertical wall to remove", freeboard)
+    z, _ = apply_to_bed(as_terrain, xy, z)
+    return z
+
+
 def read_roughness_table(path: Path) -> dict[int, float]:
     """Read the zone-roughness CSV -> ``{zone_id: roughness}``.
-
-    The first column is the integer zone id, the second the roughness value (e.g.
-    a Nikuradse k_s) that HydroBayesCal later adjusts. A header row is detected
-    and skipped; any further columns are ignored.
-    """
-    import pandas as pd
-
-    df = pd.read_csv(Path(path), header=None)
-    first = df.iloc[0]
-    if pd.to_numeric(first.iloc[:2], errors="coerce").isna().any():
-        df = df.iloc[1:]                         # the first row was a header
-    ids = pd.to_numeric(df.iloc[:, 0], errors="coerce")
-    vals = pd.to_numeric(df.iloc[:, 1], errors="coerce")
-    return {int(i): float(v) for i, v in zip(ids, vals) if not (np.isnan(i) or np.isnan(v))}
+    See :func:`hydromate.core.geodata.read_roughness_table`."""
+    return geodata.read_roughness_table(path)
 
 
 def interpolate_roughness(cfg: Config, mesh: Mesh) -> Mesh:
@@ -933,7 +833,7 @@ def interpolate_roughness(cfg: Config, mesh: Mesh) -> Mesh:
                          "and geodata.roughness_table to be set")
     table = read_roughness_table(Path(cfg.geodata.roughness_table))
 
-    zones = gpd.read_file(cfg.geodata.roughness_zones)
+    zones = dataset(cfg).roughness_zones()
     if zones.crs and zones.crs.to_epsg() != cfg.crs_epsg:
         zones = zones.to_crs(epsg=cfg.crs_epsg)
     field = next((c for c in zones.columns
@@ -1010,3 +910,9 @@ def run(cfg: Config, dem_initial_roi: Path) -> tuple[Mesh, Path]:
     slf_path = write_mesh(mesh, cfg.model_path(cfg.geometry_slf),
                           title=f"{cfg.name} geometry")
     return mesh, slf_path
+
+
+# Public since the OpenFOAM extension samples the same DEM and the same ROI onto its
+# own lattice; the underscore spellings stay as aliases for existing callers.
+_boundary_polygon = roi_polygon
+_interpolate_bottom = sample_raster_at

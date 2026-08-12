@@ -130,6 +130,45 @@ warnings and errors.
 ------------------------------------------------------------------------------
   README.md                 overview, pipeline stages, case layout, CLI
   docs/installation.rst     environment + TELEMAC setup
+  OPTIONAL OpenFOAM free-surface (VOF) extension - after step 1b, and
+  independent of the TELEMAC-3D one. For when the vertical structure matters
+  AND the water surface has a gradient (which rules out simpleFoam):
+
+    hydromate openfoam case-config.yml --check   # cell count, no build
+    python openfoam_preprocessing.py             # build the interFoam case
+    python openfoam_run.py                       # spin-up, run, discharge report
+
+  Needs an `openfoam:` block in case-config.yml (commented out in the template)
+  with `bashrc` pointing at your OpenFOAM etc/bashrc. The mesh is a structured,
+  terrain-following, all-hexahedral grid written directly to constant/polyMesh -
+  no snappyHexMesh - and the fields are seeded from the converged r2d.slf.
+
+  STRUCTURES (dams, weirs, walls, buildings) - optional, shared by both solvers
+
+    Draw them in QGIS as an ordinary vector layer. NO STL, no CAD: a polygon is
+    the footprint, or a line + a Width (m) is buffered into one. Give each a
+    Crest (m) for a level crest (dam, weir, floodwall) or a Height (m) to follow
+    the terrain (embankment, levee).
+
+      overflow  dam/weir/levee    -> the BED IS RAISED to the crest (both solvers)
+      solid     wall/building     -> OpenFOAM REMOVES the footprint (real vertical
+                                     walls); TELEMAC raises the bed to crest +
+                                     solid_freeboard_2d instead
+
+    Point geodata.structures at the layer and uncomment the structures: block in
+    case-config.yml.
+
+  WHAT CAN THIS CASE DO?
+
+    hydromate status case-config.yml          # summary, refreshes the markers
+    hydromate status case-config.yml --full   # the full capability table
+
+  Each solver gets a MODEL=<SOLVER>_<ENABLED|DISABLED> file here. The NAME says
+  whether this case declares that solver; the BODY reports every capability on
+  three axes - implemented (does hydromate support it for that solver at all),
+  configured (does this case ask for it), and built/run (do the artifacts exist).
+  The files are generated on every build, so do not edit them.
+
   docs/usage.rst            CLI, GUI editor, example scripts, inputs
   CLAUDE.md                 in-depth design notes (meshing, boundaries,
                             friction, ground truth, conventions)

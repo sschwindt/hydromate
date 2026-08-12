@@ -118,6 +118,8 @@ cases/example-Inn/
   run_Bayes_cal.py            # step 3: HydroBayesCal calibration (velocity ground truth) (tracked)
   add3d.py                    # optional (after 2D): the three 3D cases, hotstart from 2D (tracked)
   vertical_convergence_3d.py  # optional (after 3D): vertical-layer (dz) convergence study (tracked)
+  openfoam_preprocessing.py   # optional (after 1b): build the OpenFOAM interFoam case (tracked)
+  openfoam_run.py             # optional: two-stage interFoam run + discharge report (tracked)
   user-sources/        # your large source data - DEMs, GeoPackages, ground truth (gitignored)
   hydromate-case/       # produced artifacts, by workflow phase (gitignored):
     preprocessing/         # DEM clips, meshes, ground-truth table + its hydromate.log
@@ -126,6 +128,7 @@ cases/example-Inn/
     mesh-convergence/      # convergence study: mesh-convergence.xlsx/.txt, per-mesh runs, log
     vertical-convergence/  # 3D vertical-layer (dz) study: vertical-convergence.xlsx/.txt, per-level runs
     calibration-validation/  # HydroBayesCal artifacts (measurements-calibration.csv, config_Telemac.py)
+    openfoam/              # optional OpenFOAM case: 0/ constant/polyMesh/ system/ + discharge-convergence.csv/.png
 ```
 
 Config paths resolve relative to `case-config.yml`, so `user-sources/...` points at your data and the build writes into `hydromate-case/`. Each script logs into its own output folder (`preprocessing/`, `simulation/`, `postprocessing/`). Only the config, scripts and docs are version-controlled; `user-sources/` and `hydromate-case/` stay out of git (they run to gigabytes - see the 20 MB CI guard in `.github/workflows/`).
@@ -172,6 +175,34 @@ python cases/example-Inn/add3d.py                    # --run [hydrostatic|hydrod
 python cases/example-Inn/vertical_convergence_3d.py
 ```
 
+Optional **OpenFOAM free-surface (VOF)** extension - also after step 1b, and independent
+of the TELEMAC-3D one. Use it when the vertical structure matters *and* the water
+surface has a gradient, which rules out `simpleFoam`. Point `openfoam.bashrc` at your
+OpenFOAM `etc/bashrc` and add an `openfoam:` block (see `cases/case-template/case-config.yml`):
+
+```bash
+# how many cells would the current settings give? (no build)
+hydromate openfoam cases/example-Inn/case-config.yml --check
+# build the case: a terrain-following ALL-HEXAHEDRAL mesh written straight to
+# constant/polyMesh (no snappyHexMesh), fields seeded from the converged r2d.slf
+python cases/example-Inn/openfoam_preprocessing.py
+# checkMesh -> decomposePar -> interFoam (spin-up, then production) -> reconstructPar
+# -> inlet/outlet water-discharge convergence report
+python cases/example-Inn/openfoam_run.py
+```
+
+The air phase is the usual reason these runs fail, so three things address it directly:
+the **lid follows the 2D free surface** at a fixed `freeboard`, so most air cells never
+exist; **semi-implicit MULES** (`MULESCorr`) lets the Courant target run at ~0.9 instead
+of the tutorials' 0.2; and a **`limitVelocity` constraint** caps `|U|` at several times
+the reach's own water speed, which water never reaches but a runaway air jet does. Watch
+`Co` and `dt` on the progress bar: a healthy run holds `dt` near the Courant target.
+
+One caveat the build reports for you: OpenFOAM's rough wall function needs the first cell
+centre *above* the roughness crests, and on a gravel bed `ks` can be a large fraction of
+the depth. Where it is not satisfied the solver does not fail - it clamps and carries on -
+so read such a result as bulk flow, not as a resolved bed boundary layer.
+
    (A one-shot build without the scripts: `hydromate cases/example-Inn/case-config.yml` - or `--check` to validate, `--dry-run` to also run the solver once.)
 7. **Step 3 - calibrate** (in the HydroBayesCal clone, with its env):
 
@@ -179,6 +210,103 @@ python cases/example-Inn/vertical_convergence_3d.py
 cd cases/example-Inn/hydromate-case/calibration-validation
 python /home/schwindt/github/hydrobayescal/bal_telemac.py --config config_Telemac.py
 ```
+
+## One case, two solvers
+
+hydromate describes a reach **once** - ROI, liquid boundaries, mesh zones and
+centerline, roughness zones, structures, discharge, ground truth - and builds either
+or both simulation backends from it. Each solver adds only the knobs that are
+genuinely its own.
+
+|  | **TELEMAC-2D/3D (+GAIA)** | **OpenFOAM `interFoam`** |
+|---|---|---|
+| answers | depth-averaged flow, morphodynamics, calibration | the vertical structure of the flow |
+| mesh | anisotropic flow-aligned triangles → `geometry.slf` | terrain-following all-hex lattice → `constant/polyMesh` |
+| free surface | a state variable of the shallow-water equations | a resolved two-phase (VOF) interface |
+| cost | hours | hours to days (the build prints a cost report) |
+| run it | always - it is also the 3D run's hotstart | after the 2D run has converged |
+
+```bash
+# shared: describe the reach, then see what is set up
+hydromate status cases/example-Inn/case-config.yml
+
+# TELEMAC
+python cases/example-Inn/preprocessing.py            # build
+python cases/example-Inn/initial_run.py              # test-run + hotstart convergence
+python cases/example-Inn/mesh_convergence_study.py   # grid independence
+python cases/example-Inn/run_Bayes_cal.py            # Bayesian calibration
+
+# OpenFOAM (after the 2D run has converged)
+hydromate openfoam cases/example-Inn/case-config.yml --check   # cell count, no build
+python cases/example-Inn/openfoam_preprocessing.py             # build
+python cases/example-Inn/openfoam_run.py                       # spin-up, run, report
+```
+
+## Structures: dams, weirs, walls and buildings
+
+A structure is an **ordinary QGIS vector layer**, not a triangulated surface. STL is a
+`snappyHexMesh` requirement; hydromate writes its own mesh, so a structure only has to
+say **where its footprint is** and **how high it stands**. No CAD step, nothing QGIS
+cannot author.
+
+Draw it either way, and say how high it stands in one of two ways:
+
+| you draw | you get |
+|---|---|
+| a **polygon** | the footprint directly (building, dam body, pier) |
+| a **line** + `Width (m)` | buffered to a footprint - trace the crest, say how thick |
+| `Crest (m)` | a **level** crest: dam, weir, floodwall |
+| `Height (m)` | a crest that **follows the terrain**: embankment, levee |
+
+Two modes, chosen from the `Type` text (or an explicit `Mode` column):
+
+| mode | what it is | what the mesh does |
+|---|---|---|
+| `overflow` | dam, weir, levee, block ramp - water passes over | the **bed is raised to the crest**; identical in both solvers |
+| `solid` | wall, floodwall, building, pier - never overtopped | OpenFOAM **removes the footprint** (no-slip walls bed to lid); TELEMAC raises the bed to crest + `solid_freeboard_2d`, the standard 2D practice |
+
+Anything unrecognised is `overflow` - raising the bed keeps the domain connected and
+lets water pass, whereas wrongly blanking a footprint would silently wall off part of
+the reach. A solid structure that cuts the domain in two is reported, not applied
+silently.
+
+```yaml
+geodata:
+  structures: user-sources/geodata/structures.gpkg
+structures:
+  crest_field: "Crest (m)"      # or height_field: "Height (m)"
+  default_width: 1.0            # for lines with no Width
+  solid_freeboard_2d: 2.0       # TELEMAC only
+```
+
+## What a case can do
+
+Every case carries one marker file per solver at its top level, refreshed by any build
+and by `hydromate status`:
+
+```bash
+hydromate status cases/example-Inn/case-config.yml          # summary + refresh markers
+hydromate status cases/example-Inn/case-config.yml --full   # the whole table
+hydromate status cases/example-Inn/case-config.yml --check-env   # also probe the solvers
+```
+
+```
+cases/example-Inn/
+  MODEL=TELEMAC_ENABLED     # the name says whether the CASE declares this solver
+  MODEL=OPENFOAM_DISABLED   # (so it means the same on any machine)
+```
+
+The body reports each capability on three axes, which answer three different questions:
+
+| axis | question | example |
+|---|---|---|
+| `implemented` | does hydromate support this **for this solver**? | `yes` / `no` (not yet) / `n/a` (never - OpenFOAM has no depth-averaged mode) |
+| `configured` | does **this case** ask for it? | a varying inflow series implies `unsteady2d` |
+| `built` / `run` | do the **artifacts** exist? | `steady2d.cas` written, `r2d.slf` produced |
+
+The files are generated, so they are gitignored - they describe the *currently available*
+setup, which is local state like `hydromate-case/`. `cases/case-template/` keeps a
+committed example.
 
 ## Configuration reference
 

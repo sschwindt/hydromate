@@ -1,11 +1,16 @@
-"""Bridge to the TELEMAC runtime environment.
+"""Bridge to an external solver's runtime environment.
 
 The hydromate pipeline runs in its own (``hydromate-env``) Python environment and
-does *not* import TELEMAC's Python directly. Instead, whenever a TELEMAC tool or
-TELEMAC's SELAFIN API is needed, we spawn a subshell that first *sources* the
-user-configured ``pysource.*.sh`` (exporting HOMETEL + PYTHONPATH + the right
-``python``) and then runs the requested command. This keeps the geospatial stack
-(gmsh, rasterio, geopandas) cleanly decoupled from TELEMAC's interpreter.
+does *not* import a solver's Python directly. Instead, whenever a solver tool is
+needed, we spawn a subshell that first *sources* that solver's environment script -
+TELEMAC's ``pysource.*.sh`` (exporting HOMETEL + PYTHONPATH + the right ``python``)
+or OpenFOAM's ``etc/bashrc`` - and then runs the requested command. This keeps the
+geospatial stack (gmsh, rasterio, geopandas) cleanly decoupled from either solver's
+interpreter, and means neither solver's environment can leak into the other's.
+
+:class:`ShellRuntime` is that mechanism on its own; :class:`TelemacRuntime` adds the
+TELEMAC-specific launchers, and :class:`hydromate.openfoam.runtime.OpenFoamRuntime`
+the OpenFOAM ones.
 """
 
 from __future__ import annotations
@@ -20,21 +25,22 @@ from typing import Callable
 from hydromate.config import TelemacEnv
 
 
-class TelemacRuntime:
-    def __init__(self, env: TelemacEnv):
-        self.env = env
-        self.pysource = Path(env.pysource)
+class ShellRuntime:
+    """Run commands in a subshell that has first sourced *env_script*."""
+
+    def __init__(self, env_script: str | Path):
+        self.env_script = Path(env_script)
 
     def _wrap(self, command: str) -> list[str]:
-        """Wrap *command* so it runs after sourcing the pysource script."""
+        """Wrap *command* so it runs after sourcing the environment script."""
         # `set -e` so a failing source aborts before the command runs.
-        script = f"set -e; source {shlex.quote(str(self.pysource))}; {command}"
+        script = f"set -e; source {shlex.quote(str(self.env_script))}; {command}"
         return ["bash", "-lc", script]
 
     def run(self, command: str, cwd: str | Path | None = None,
             check: bool = True,
             on_line: Callable[[str], None] | None = None) -> subprocess.CompletedProcess:
-        """Run *command* inside the sourced TELEMAC environment.
+        """Run *command* inside the sourced environment.
 
         With *on_line* the command's combined stdout+stderr is streamed line by
         line (each passed to the callback as it arrives, so a long solver run is
@@ -67,6 +73,17 @@ class TelemacRuntime:
                 returncode, args, output=result.stdout,
             )
         return result
+
+
+class TelemacRuntime(ShellRuntime):
+    def __init__(self, env: TelemacEnv):
+        super().__init__(env.pysource)
+        self.env = env
+
+    @property
+    def pysource(self) -> Path:
+        """The sourced ``pysource.*.sh`` (kept as its own name for readability)."""
+        return self.env_script
 
     def python(self, code: str, cwd: str | Path | None = None,
                check: bool = True) -> subprocess.CompletedProcess:

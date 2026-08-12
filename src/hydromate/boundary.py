@@ -184,19 +184,18 @@ def _internal_sign(name: str) -> float:
     return -1.0 if "out" in s else 1.0   # surface sense: internal OUTflow loses
 
 
-def _load_liquid_lines(cfg: Config):
+def liquid_lines(cfg: Config):
     """Return dict kind -> shapely geometry (union of that kind's contour lines).
 
     Internal source/sink lines (type tag starting 'int', handled by
     :func:`load_internal_source_regions`) are skipped so they never pull a contour
     node into an inflow/outflow classification.
     """
-    import geopandas as gpd
     from shapely.ops import unary_union
 
-    gdf = gpd.read_file(cfg.boundaries.liquid_boundaries)
-    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
+    from hydromate.core.geodata import dataset
+
+    gdf = dataset(cfg).liquid_boundaries()
     type_col = _type_column(gdf)
     out: dict[str, list] = {}
     if type_col is None:
@@ -219,16 +218,14 @@ def _load_liquid_lines(cfg: Config):
     return {k: unary_union(v) for k, v in out.items()}
 
 
-def _boundary_line_details(cfg: Config) -> list[dict] | None:
+def liquid_line_details(cfg: Config) -> list[dict] | None:
     """Per non-internal liquid line: ``{kind, discharge, geom}`` (discharge from the
     flow column, else None). Returns None when the layer has no flow column at all -
     the signal to fall back to node-share discharge splitting.
     """
-    import geopandas as gpd
+    from hydromate.core.geodata import dataset
 
-    gdf = gpd.read_file(cfg.boundaries.liquid_boundaries)
-    if gdf.crs and gdf.crs.to_epsg() != cfg.crs_epsg:
-        gdf = gdf.to_crs(epsg=cfg.crs_epsg)
+    gdf = dataset(cfg).liquid_boundaries()
     type_col = _type_column(gdf)
     flow_col = _flow_column(gdf)
     if type_col is None or flow_col is None:
@@ -576,7 +573,7 @@ def _assign_line_discharges(cfg: Config, mesh: Mesh, liquids: list[LiquidBoundar
     import numpy as np
     from shapely.geometry import Point
 
-    details = _boundary_line_details(cfg)
+    details = liquid_line_details(cfg)
     if details is None:
         return
     inflow_lines = [d for d in details
@@ -617,7 +614,7 @@ def classify_nodes(cfg: Config, mesh: Mesh) -> tuple[list[str], list[LiquidBound
     """
     from shapely.geometry import Point
 
-    lines = _load_liquid_lines(cfg)
+    lines = liquid_lines(cfg)
     tol = _match_tolerance(cfg)
 
     kinds: list[str] = []
@@ -658,3 +655,9 @@ def write_cli(cfg: Config, mesh: Mesh) -> tuple[Path, list[LiquidBoundary]]:
     path = cfg.model_path(cfg.boundary_cli)
     path.write_text("\n".join(rows) + "\n")
     return path, liquids
+
+
+# Public since the OpenFOAM extension classifies its lateral faces against the very
+# same lines that drive the .cli; the underscore spellings stay as aliases.
+_load_liquid_lines = liquid_lines
+_boundary_line_details = liquid_line_details
