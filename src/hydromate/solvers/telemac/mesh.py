@@ -182,24 +182,10 @@ def _channel_union(cfg: Config):
 
 def nominal_channel_size(cfg: Config) -> float:
     """Effective (scaled) target channel edge length [m].
+    See :func:`hydromate.core.geodata.nominal_channel_size` - it moved to the core
+    because it reads the shared mesh zones, and both meshers size themselves by it."""
+    return geodata.nominal_channel_size(cfg)
 
-    The smallest channel-zone ``_edge_length`` from the mesh-zones gpkg when
-    configured (per-zone ``Max Edge Length (m)`` values override the ``*_size``
-    fallbacks, so ``channel_size`` alone can misstate the built resolution), else
-    ``channel_size * size_scale``. Both already include ``mesh.size_scale``.
-    """
-    fallback = float(cfg.mesh.channel_size * cfg.mesh.size_scale)
-    if cfg.geodata.mesh_zones is None:
-        return fallback
-    try:
-        zones = _read_mesh_zones(cfg)
-        channel = zones[zones["_zone_type"] == "channel"]
-        if channel.empty:
-            return fallback
-        return float(channel["_edge_length"].min())
-    except Exception as exc:  # pragma: no cover - geodata unavailable
-        log.debug("nominal_channel_size fell back to config sizes: %s", exc)
-        return fallback
 
 
 def _centerline_tangents(cfg: Config, spacing: float):

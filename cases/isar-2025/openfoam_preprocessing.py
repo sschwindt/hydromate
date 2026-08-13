@@ -44,6 +44,7 @@ from pathlib import Path
 
 from hydromate import setup_logging
 from hydromate.config import load_config
+from hydromate.prerun import ensure_seed
 from hydromate.solvers.openfoam import build_case, estimate_cells, load_hotstart, summarise
 
 # optional CLI arg selects the scenario config, e.g.
@@ -57,6 +58,14 @@ cfg = load_config(CONFIG)
 # halve cell_size and discover the cost only once the solver is running.
 CELL_BUDGET = 4_000_000
 
+# Uncheck the TELEMAC pre-run for this run only, without editing the config.
+#   None  - follow openfoam.pre_run.enabled in case-config.yml (normally True)
+#   False - never start TELEMAC: seed from an existing r2d.slf if there is one,
+#           otherwise build COLD under a flat lid (many times more air cells, plus
+#           the whole filling transient to pay for in the slowest solver you have)
+#   True  - force it on even if the config disables it
+PRE_RUN: bool | None = None
+
 
 def main() -> None:
     case_dir = cfg.openfoam_case_dir
@@ -64,12 +73,17 @@ def main() -> None:
     setup_logging(case_dir / cfg.log_file)
     print(f"case '{cfg.name}' -> building the OpenFOAM case into {case_dir}")
 
-    state = load_hotstart(cfg)
-    if state is None:
-        print("\nNo converged 2D result was found. The case can still be built, but "
-              "it will start cold under a flat lid - many times more air cells and "
-              "the whole filling transient to pay for. Run initial_run.py first.\n")
-    else:
+    # TELEMAC first: it answers in minutes what OpenFOAM would otherwise spend hours
+    # discovering - where the water is, how deep it is and roughly where its surface
+    # sits. Reuses the case's own converged r2d.slf when there is one, else runs a
+    # coarse pre-run of its own. The 3D surface is still solved and free to leave it.
+    seed = ensure_seed(cfg, enabled=PRE_RUN)
+    for line in seed.summary():
+        print(line)
+
+    state = load_hotstart(cfg, seed.path) if seed.ok else None
+    if state is not None:
+        print()
         for line in state.summary():
             print(line)
 

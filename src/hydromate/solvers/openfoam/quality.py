@@ -62,6 +62,7 @@ class MeshReport:
     n_non_ortho_severe: int = 0
     max_skewness: float = 0.0
     n_skew: int = 0
+    n_bad_pyramid: int = 0
     max_aspect_ratio: float = 0.0
     n_bad_volume: int = 0
 
@@ -90,7 +91,8 @@ class MeshReport:
         run is a cell with no volume or an unclosed cell, and those are what this
         reports.
         """
-        return self.min_volume > 0.0 and self.n_bad_volume == 0
+        return (self.min_volume > 0.0 and self.n_bad_volume == 0
+                and self.n_bad_pyramid == 0)
 
     @property
     def ok(self) -> bool:
@@ -118,6 +120,7 @@ class MeshReport:
             f"  skewness     : max {self.max_skewness:.2f} "
             f"({self.n_skew:,} faces over {MAX_SKEWNESS:g})",
             f"  aspect ratio : max {self.max_aspect_ratio:.1f}",
+            f"  face pyramids: {self.n_bad_pyramid:,} incorrectly oriented",
         ]
         if self.n_bed_faces:
             out.append(f"  bed layer    : min {self.bed_layer_min:.3f} m, "
@@ -197,6 +200,27 @@ def cell_geometry(mesh, face_centres: np.ndarray,
     accumulate(mesh.neighbour, -1.0, slice(0, ni))
     safe = np.where(np.abs(volumes) > 1e-300, volumes, 1.0)
     return centres / safe[:, None], volumes / 3.0
+
+
+def bad_face_pyramids(mesh, face_centres: np.ndarray,
+                      face_normals: np.ndarray,
+                      cell_centres: np.ndarray) -> np.ndarray:
+    """Faces whose pyramid to their cell centre has non-positive volume.
+
+    checkMesh calls these "incorrectly oriented" and treats them as fatal, and rightly:
+    the cell is folded even though its total volume can still come out positive - which
+    is exactly how a first version of this report passed a mesh checkMesh rejected.
+    A rigid-lid mesh produces them at the waterline, where the water column thins to
+    nothing and the cells collapse.
+    """
+    ni = mesh.n_internal_faces
+    owner_pyr = np.einsum("ij,ij->i", face_normals,
+                          face_centres - cell_centres[mesh.owner])
+    bad = owner_pyr <= 0
+    neigh_pyr = np.einsum("ij,ij->i", -face_normals[:ni],
+                          face_centres[:ni] - cell_centres[mesh.neighbour])
+    bad[:ni] |= neigh_pyr <= 0
+    return bad
 
 
 def non_orthogonality(mesh, face_normals: np.ndarray,
@@ -302,6 +326,7 @@ def assess(of_mesh, *, state=None, roughness_constant: float = 0.5) -> MeshRepor
     cc, vol = cell_geometry(mesh, fc, fn)
 
     nonortho, nonortho_mean = non_orthogonality(mesh, fn, cc)
+    bad_pyr = bad_face_pyramids(mesh, fc, fn, cc)
     skew = skewness(mesh, fc, fn, cc)
     ar = aspect_ratios(mesh, fn, vol)
 
@@ -317,9 +342,17 @@ def assess(of_mesh, *, state=None, roughness_constant: float = 0.5) -> MeshRepor
         max_skewness=float(skew.max(initial=0.0)),
         n_skew=int((skew > MAX_SKEWNESS).sum()),
         n_bad_volume=int((vol <= 0).sum()),
+        n_bad_pyramid=int(bad_pyr.sum()),
         max_aspect_ratio=float(np.nanmax(ar)) if ar.size else 0.0,
     )
 
+    if report.n_bad_pyramid:
+        report.warnings.append(
+            f"{report.n_bad_pyramid} face(s) are incorrectly oriented (a pyramid to "
+            "the cell centre has non-positive volume). checkMesh treats this as fatal. "
+            "On a rigid-lid mesh it comes from the waterline, where the water column "
+            "thins to nothing - raise openfoam.min_column_height so those columns are "
+            "left out.")
     if report.min_volume <= 0:
         report.warnings.append(
             f"{int((vol <= 0).sum())} cells have zero or negative volume - the mesh "

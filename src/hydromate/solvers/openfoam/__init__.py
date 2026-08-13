@@ -39,7 +39,8 @@ _EXPORTS: dict[str, tuple[str, ...]] = {
              "sigma_levels"),
     "quality": ("MeshReport", "assess"),
     "case": ("OpenFoamArtifacts", "build_case", "estimate_cells", "summarise"),
-    "report": ("DischargeHistory", "analyse", "write_report"),
+    "report": ("DischargeHistory", "SurfaceFreedom", "analyse", "surface_freedom",
+               "write_report"),
     "runtime": ("OpenFoamProgress", "OpenFoamRuntime"),
 }
 _SUBMODULES = ("case", "dicts", "fields", "hotstart", "mesh", "polymesh", "quality",
@@ -52,9 +53,9 @@ _NAME_TO_MODULE = {name: module
 __all__ = [
     "DischargeHistory", "MeshReport", "OpenFoamArtifacts", "OpenFoamMesh",
     "OpenFoamProgress", "OpenFoamRuntime", "Patch", "PlanGrid", "PolyMesh",
-    "State2D", "analyse", "assess", "build_case", "build_mesh", "build_plan_grid",
-    "estimate_cells", "load_hotstart", "sigma_levels", "summarise", "write_polymesh",
-    "write_report", *_SUBMODULES,
+    "State2D", "SurfaceFreedom", "analyse", "assess", "build_case", "build_mesh",
+    "build_plan_grid", "estimate_cells", "load_hotstart", "sigma_levels",
+    "summarise", "surface_freedom", "write_polymesh", "write_report", *_SUBMODULES,
 ]
 
 

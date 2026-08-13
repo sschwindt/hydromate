@@ -1096,6 +1096,66 @@ class Calibration:
 
 
 @dataclass
+class PreRun:
+    """Run TELEMAC first, and seed the OpenFOAM case from its result.
+
+    OpenFOAM is the expensive model in the chain and TELEMAC is cheap, so the water
+    surface should be approximately known before ``interFoam`` starts. That seed does
+    four jobs at once (see :mod:`hydromate.solvers.openfoam.hotstart`): it puts the
+    wetted cells of the 3D mesh into water at t=0, it clamps the lid a freeboard above
+    the surface so most air cells never exist, it trims the plan footprint to the
+    wetted corridor, and it gives every column a starting velocity.
+
+    Without it a case is built cold under a flat lid - many times more air cells plus
+    the whole filling transient, paid for in the slowest solver available.
+
+    The seed is an approximation and is treated as one: the 3D free surface is still
+    solved and free to leave it (that is what ``freeboard`` and ``wet_margin`` are
+    room for, and :func:`hydromate.solvers.openfoam.report.surface_freedom` checks
+    afterwards whether it needed more). Under ``openfoam.mode: rigid-lid`` the surface
+    is genuinely prescribed by the seed, which is the trade that mode exists to make.
+    """
+
+    # THE TOGGLE. False: use an existing r2d.slf if there happens to be one, never
+    # start a solver. A user who has their own 2D result, or who wants the cold-start
+    # behaviour, unchecks this.
+    enabled: bool = True
+    # A converged result from the real 2D study beats anything this block produces, so
+    # it is used when present. False forces the dedicated coarse pre-run every time.
+    reuse: bool = True
+    dimension: str = "2d"           # 2d | 3d (3d also seeds the velocity profile)
+
+    # ---- the dedicated coarse pre-run --------------------------------------
+    # Multiplier on mesh.size_scale. This scales the WHOLE sizing field, including the
+    # per-zone `Max Edge Length (m)` values carried in the mesh-zones gpkg - scaling
+    # only channel_size/floodplain_size does nothing when the gpkg sets that field.
+    size_scale: float = 2.0
+    # The pre-run is pre-wetted, so it can march faster than the production dry start
+    # (whose 0.30 default is sized for a wetting front advancing over a dry bed).
+    courant: float = 0.6
+    prewet_depth: float = 0.5       # [m] hotstart the channel mesh-zone
+    duration: float | None = None   # [s] else hydrodynamics.duration
+    n_processors: int | None = None  # else telemac.n_processors
+    directory: str = "pre-run"      # under model_dir
+    # What to do when the pre-run does not reach flux balance. A seed that is merely
+    # close is still far better than a cold start, so `warn` is the default; `error`
+    # is for a workflow that must not build on an unconverged surface.
+    require: str = "warn"           # warn | error
+
+    def validate(self) -> None:
+        if self.dimension not in ("2d", "3d"):
+            raise ValueError(
+                f"openfoam.pre_run.dimension must be '2d' or '3d', "
+                f"got {self.dimension!r}")
+        if self.require not in ("warn", "error"):
+            raise ValueError(
+                f"openfoam.pre_run.require must be 'warn' or 'error', "
+                f"got {self.require!r}")
+        if self.size_scale <= 0:
+            raise ValueError("openfoam.pre_run.size_scale must be > 0")
+
+
+@dataclass
 class OpenFoam:
     """The optional OpenFOAM free-surface (interFoam) extension.
 
@@ -1126,14 +1186,41 @@ class OpenFoam:
     n_processors: int = 1
     solver: str = "interFoam"
 
+    # ---- the TELEMAC pre-run that seeds this case ---------------------------
+    pre_run: PreRun = field(default_factory=PreRun)
+
+    # ---- what is actually solved --------------------------------------------
+    # vof        two-phase interFoam: a resolved air-water interface. The surface can
+    #            move, overtop a dam and wet a dry bar - and ~90% of the cells are air,
+    #            which is what makes it slow.
+    # rigid-lid  the lid sits ON the 2D free surface as a slip wall and the domain is
+    #            water only. The air phase is removed by construction rather than
+    #            approximated, so there is no interface, no air Courant limit and no
+    #            air cells. The surface is then an INPUT (from the converged 2D run),
+    #            not a result - which is the right trade when what you want is the
+    #            vertical velocity structure, and the wrong one if you need the surface
+    #            to respond. See hydromate.solvers.openfoam.mesh.
+    mode: str = "vof"
+
     # ---- mesh ---------------------------------------------------------------
     cell_size: float = 0.5          # plan lattice spacing dx [m]
+    # Alternative to cell_size, expressed relative to the TELEMAC channel resolution:
+    # 3.0 means "three times coarser than the 2D mesh". Self-adjusting across cases,
+    # and the natural way to ask for a cheap test run.
+    cell_size_factor: float | None = None
     n_layers: int = 14              # sigma layers per column
     domain: str = "wetted"          # wetted | roi
     wet_margin: float = 5.0         # [m] buffer around the 2D wetted extent
     lid: str = "follow"             # follow (the 2D free surface) | flat
     lid_elevation: float | None = None      # pin the lid to this level [m a.s.l.]
     freeboard: float = 0.5          # [m] air layer kept above the free surface
+    # How freeboard / wet_margin are chosen. `auto` sizes both from the pre-run's own
+    # flow (velocity head + a depth allowance; see State2D.headroom) and treats the
+    # values above as FLOORS, so the surface keeps room to disagree with the 2D seed
+    # on a fast reach without paying for air on a slow one. `fixed` uses them as
+    # written. Ignored under mode: rigid-lid, where the lid IS the surface.
+    headroom_mode: str = "auto"     # auto | fixed
+    bank_slope: float = 0.1         # [-] used to turn a surface rise into wet_margin
     lid_smoothing: int = 2          # averaging passes over the lid
     # Running-max radius (in cells) applied before smoothing. 2, not 1: on the isar
     # reach a 1-cell dilation left one severely non-orthogonal face (70.16 deg, which
@@ -1144,7 +1231,19 @@ class OpenFoam:
     min_column_height: float = 0.10  # [m] floor on lid - bed
     layer_expansion: float = 1.0    # top/bed layer thickness ratio
     bed_layer_height: float | None = None   # explicit bed-layer thickness [m]
-    auto_bed_layer: bool = True     # else derive it from the roughness zones
+    # Pin the bed layer to ~2x ks so the rough wall function is admissible. None means
+    # "decide from the mode": on for the two-phase case, OFF under a rigid lid. Pinning
+    # costs mesh quality - in a 0.13 m water column it consumes half the column and
+    # leaves slivers above - and under a rigid lid on a shallow reach the wall function
+    # is inadmissible at those depths anyway, so it would be paying for nothing.
+    # Measured on isar at 5x coarsening: pinning gave 48 incorrectly oriented face
+    # pyramids and 84 deg non-orthogonality; without it, 20 and 46 deg.
+    auto_bed_layer: bool | None = None
+    # rigid-lid only: the shallowest water column that is meshed at all, and the floor
+    # on column height. A column thinner than this cannot be divided into n_layers
+    # cells without collapsing into slivers that checkMesh rejects. 0.20 m took the
+    # isar 5x test mesh to zero bad faces.
+    min_water_depth: float = 0.20
     boundary_tolerance: float | None = None  # [m] liquid-line match (default 1.5*dx)
     max_plan_columns: int = 4_000_000
 
@@ -1172,9 +1271,18 @@ class OpenFoam:
     air_velocity_cap: float | None = None
 
     def validate(self) -> None:
+        self.pre_run.validate()
+        if self.mode not in ("vof", "rigid-lid"):
+            raise ValueError(
+                f"openfoam.mode must be 'vof' or 'rigid-lid', got {self.mode!r}")
+        if self.cell_size_factor is not None and self.cell_size_factor <= 0:
+            raise ValueError("openfoam.cell_size_factor must be > 0")
         if self.domain not in ("wetted", "roi"):
             raise ValueError(
                 f"openfoam.domain must be 'wetted' or 'roi', got {self.domain!r}")
+        if self.headroom_mode not in ("auto", "fixed"):
+            raise ValueError("openfoam.headroom_mode must be 'auto' or 'fixed', "
+                             f"got {self.headroom_mode!r}")
         if self.lid not in ("follow", "flat"):
             raise ValueError(f"openfoam.lid must be 'follow' or 'flat', got {self.lid!r}")
         if self.turbulence not in ("kOmegaSST", "kEpsilon", "laminar"):
@@ -1288,6 +1396,11 @@ class Config:
 
     def calibration_path(self, filename: str) -> Path:
         return Path(self.calibration_dir) / filename
+
+    @property
+    def rigid_lid(self) -> bool:
+        """Convenience: is the OpenFOAM case single-phase under a fixed lid?"""
+        return self.openfoam.mode == "rigid-lid"
 
     @property
     def openfoam_case_dir(self) -> Path:
@@ -1517,6 +1630,7 @@ def load_config(path: str | os.PathLike) -> Config:
     if "bashrc" in ofdict and ofdict["bashrc"] is not None:
         ofdict["bashrc"] = _resolve(cfg_dir, ofdict["bashrc"])
     ofdict["environment"] = _load_environment(ofdict.get("environment"), cfg_dir)
+    ofdict["pre_run"] = PreRun(**_only_known(PreRun, dict(ofdict.get("pre_run") or {})))
     openfoam = OpenFoam(**_only_known(OpenFoam, ofdict))
     openfoam_dir = _resolve(cfg_dir, project.get("openfoam_dir")) if \
         project.get("openfoam_dir") else None

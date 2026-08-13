@@ -43,6 +43,9 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+from hydromate.solvers.openfoam.mesh import (
+    ATMOSPHERE_PATCH, BANKS_PATCH, LID_PATCH,
+)
 from hydromate.solvers.openfoam.polymesh import foam_footer, foam_header
 
 log = logging.getLogger("hydromate")
@@ -68,6 +71,17 @@ class Stage:
 
 def stages(cfg) -> list[Stage]:
     of = cfg.openfoam
+    if of.mode == "rigid-lid":
+        # No interface and no air, so the two-stage split has nothing to settle: the
+        # spin-up exists to let a depth-averaged hotstart grow a vertical profile
+        # without the interface sharpening into an instability, and here there is no
+        # interface. One stage, at the full Courant number.
+        return [Stage(name="run", start_from="startTime", end_time=of.end_time,
+                      max_courant=of.max_courant,
+                      alpha_scheme="Gauss interfaceCompression vanLeer 1",
+                      velocity_scheme="Gauss limitedLinearV 1",
+                      n_outer_correctors=2,
+                      purpose="single-phase run under a rigid lid")]
     return [
         Stage(name="spinup", start_from="startTime", end_time=of.spinup_time,
               max_courant=of.spinup_courant,
@@ -154,7 +168,8 @@ def gravity() -> str:
 # --------------------------------------------------------------------------- #
 
 
-def control_dict(cfg, stage: Stage, *, patches: list[str]) -> str:
+def control_dict(cfg, stage: Stage, *, patches: list[str],
+                 boundary_patches: tuple[str, str] | None = None) -> str:
     of = cfg.openfoam
     body = f"""application     {of.solver};
 
@@ -193,16 +208,77 @@ adjustTimeStep  yes;
 // with MULESCorr the alpha equation is no longer explicitly Courant-limited, so
 // maxAlphaCo can match maxCo instead of the tutorials' 0.2
 maxCo           {stage.max_courant:g};
-maxAlphaCo      {stage.max_courant:g};
+maxAlphaCo      {_max_alpha_courant(of, stage):g};
 
 maxDeltaT       {of.max_time_step:g};
 
 functions
 {{
 {_flux_functions(patches, monitor_interval(of))}
+
+{_freedom_functions(cfg, boundary_patches, monitor_interval(of))}
 }}
 """
     return _dict_file("controlDict", body, location="system")
+
+
+def _freedom_functions(cfg, boundary_patches, interval: float) -> str:
+    """Monitors that say whether the run was ever *boxed in* by the 2D seed.
+
+    The seed decides two things the flow does not get a vote on: how high the lid
+    stands, and how far the plan footprint reaches. Both are sized from a TELEMAC
+    result, and TELEMAC can be wrong - so if the 3D surface rises into the lid, or
+    reaches the lateral wall, the answer is being set by a mesh decision rather than
+    by the hydraulics, and the result still looks perfectly plausible.
+
+    Rather than parse the run's binary fields, this asks OpenFOAM for the water area
+    on each of those two patches, through the same ``surfaceFieldValue`` machinery
+    that already reports the discharge - so
+    :func:`hydromate.solvers.openfoam.report.surface_freedom` reads it back with the
+    existing reader. Zero throughout is the answer you want.
+
+    Emitted only for a two-phase run: under a rigid lid the surface is prescribed by
+    construction, so "did it touch the lid" is not a question with an answer.
+    """
+    if cfg.openfoam.mode == "rigid-lid" or not boundary_patches:
+        return "    // rigid lid: the free surface is prescribed, not solved"
+    top, walls = boundary_patches
+    blocks = []
+    for label, patch in (("lidContact", top), ("wallContact", walls)):
+        blocks.append(f"""    {label}
+    {{
+        type            surfaceFieldValue;
+        libs            ("libfieldFunctionObjects.so");
+        writeControl    runTime;
+        writeInterval   {interval:g};
+        log             no;
+        writeFields     no;
+        regionType      patch;
+        name            {patch};
+        operation       areaIntegrate;
+        fields          (alpha.water);
+    }}""")
+    return "\n\n".join(blocks)
+
+
+def _boundary_patches(of_mesh) -> tuple[str, str] | None:
+    """``(top, walls)`` for the surface-freedom monitors, or ``None``.
+
+    ``getattr`` rather than attribute access: the monitors are a diagnostic, and a
+    mesh object that cannot say which patch is its top simply does not get them.
+    """
+    top = getattr(of_mesh, "top_patch", None)
+    return (top, BANKS_PATCH) if top else None
+
+
+def _max_alpha_courant(of, stage: Stage) -> float:
+    """Interface Courant limit.
+
+    Under a rigid lid ``alpha`` is identically 1, so there is no interface to
+    resolve and the limit would only hold the time step back for nothing - it is
+    relaxed far above ``maxCo`` so the flow Courant number alone drives ``dt``.
+    """
+    return 10.0 if of.mode == "rigid-lid" else stage.max_courant
 
 
 def monitor_interval(of) -> float:
@@ -300,7 +376,32 @@ wallDist
     return _dict_file("fvSchemes", body, location="system")
 
 
+def _alpha_mules(cfg, stage: Stage) -> str:
+    """Whether the alpha equation is solved implicitly (MULESCorr) or explicitly.
+
+    For the two-phase case ``yes`` is the whole reason the time step is usable: it
+    decouples dt from the interface Courant number.
+
+    Under a rigid lid it is the opposite. ``alpha`` is identically 1 - there is no
+    interface, and nothing to advect - so the implicit correction solves a linear
+    system whose answer is already known. Measured on isar-2025 (5x coarse,
+    14,632 cells): 60 s of river took **88 s** with MULESCorr and **21 s** without,
+    for the same time step (0.363 vs 0.369 s) and the same ``alpha`` (1 to 8
+    significant figures). Four fifths of the cost was a correction with nothing to
+    correct.
+    """
+    if cfg.openfoam.mode == "rigid-lid":
+        return ("// alpha is identically 1 under the rigid lid: nothing to advect, so\n"
+                "        // the implicit correction is pure overhead (measured 4x)\n"
+                "        MULESCorr       no;")
+    return ("// semi-implicit MULES: this is what decouples the time step from the\n"
+            f"        // interface Courant number and lets maxAlphaCo run at "
+            f"{stage.max_courant:g}\n"
+            "        MULESCorr       yes;")
+
+
 def fv_solution(cfg, stage: Stage) -> str:
+    alpha_mules = _alpha_mules(cfg, stage)
     body = f"""solvers
 {{
     "alpha.water.*"
@@ -308,9 +409,7 @@ def fv_solution(cfg, stage: Stage) -> str:
         nAlphaCorr      2;
         nAlphaSubCycles 1;
 
-        // semi-implicit MULES: this is what decouples the time step from the
-        // interface Courant number and lets maxAlphaCo run at {stage.max_courant:g}
-        MULESCorr       yes;
+        {alpha_mules}
         nLimiterIter    5;
         alphaApplyPrevCorr yes;
 
@@ -386,8 +485,9 @@ relaxationFactors
 
 
 def fv_constraints(cfg, velocity_cap: float) -> str:
-    body = f"""// Cap on the velocity magnitude, the single most effective stop on the AIR phase
-// destroying the time step. Air is ~1000x lighter than water, so a small pressure
+    body = f"""// Cap on the velocity magnitude. In the two-phase case this is the single most
+// effective stop on the AIR phase destroying the time step; under a rigid lid there
+// is no air, and it remains only as a cheap divergence guard. Air is ~1000x lighter than water, so a small pressure
 // error accelerates it enormously; the resulting jet then sets the Courant number
 // and the step collapses on a phase this model does not care about.
 //
@@ -447,12 +547,16 @@ def write_dicts(of_mesh, cfg, case_dir: str | Path, *,
         stage_dir = system / STAGE_DIRS[stage.name]
         stage_dir.mkdir(parents=True, exist_ok=True)
         written.append(_write(stage_dir / "controlDict",
-                              control_dict(cfg, stage, patches=patches)))
+                              control_dict(cfg, stage, patches=patches,
+                                           boundary_patches=_boundary_patches(
+                                               of_mesh))))
         written.append(_write(stage_dir / "fvSchemes", fv_schemes(cfg, stage)))
         written.append(_write(stage_dir / "fvSolution", fv_solution(cfg, stage)))
 
-    # start on stage 1 so the case is runnable straight out of the build
-    activate(case_dir, "spinup")
+    # activate the first stage so the case is runnable straight out of the build.
+    # Named rather than hardcoded: a rigid-lid case has one stage ("run"), because
+    # with no interface there is nothing for a spin-up to settle.
+    activate(case_dir, stages(cfg)[0].name)
     return written
 
 
@@ -486,7 +590,11 @@ def activate(case_dir: str | Path, stage: str, cfg=None) -> None:
         patches = [p for p in read_patch_names(case_dir)
                    if p.startswith(("inlet", "outlet"))]
         src.mkdir(parents=True, exist_ok=True)
-        (src / "controlDict").write_text(control_dict(cfg, target, patches=patches))
+        names = read_patch_names(case_dir)
+        top = next((n for n in names if n in (ATMOSPHERE_PATCH, LID_PATCH)), None)
+        bounds = (top, BANKS_PATCH) if top and BANKS_PATCH in names else None
+        (src / "controlDict").write_text(
+            control_dict(cfg, target, patches=patches, boundary_patches=bounds))
         (src / "fvSchemes").write_text(fv_schemes(cfg, target))
         (src / "fvSolution").write_text(fv_solution(cfg, target))
 

@@ -438,6 +438,27 @@ dem_of_difference:
 #   bashrc: /opt/openfoam9/etc/bashrc   # [REQUIRED to run] your OpenFOAM etc/bashrc
 #   n_processors: 8
 #
+#   # ---- the TELEMAC pre-run that seeds this case -------------------------
+#   # OpenFOAM is the expensive model in the chain; TELEMAC answers in minutes
+#   # what it would otherwise spend hours discovering - where the water is, how
+#   # deep it is, roughly where its surface sits. That seed puts the wetted cells
+#   # in water at t=0, clamps the lid just above the surface so most air cells
+#   # never exist, and trims the footprint to the wetted corridor. Without it the
+#   # case is built COLD under a flat lid: many times more air cells, plus the
+#   # whole filling transient, in the slowest solver you have.
+#   #
+#   # The seed is an approximation and is treated as one - the 3D surface is still
+#   # SOLVED and free to leave it, and the run reports whether it ever needed more
+#   # room than freeboard/wet_margin gave it.
+#   pre_run:
+#     enabled: true         # uncheck to never start TELEMAC (also: --no-pre-run)
+#     reuse: true           # a converged r2d.slf beats a fresh coarse run
+#     dimension: 2d         # 3d also seeds a vertical velocity PROFILE per column
+#     size_scale: 2.0       # how much coarser the DEDICATED pre-run is meshed
+#     courant: 0.6          # pre-wetted, so it can march faster than a dry start
+#     prewet_depth: 0.5     # [m] hotstart the channel zone
+#     require: warn         # warn | error, if it misses flux balance
+#
 #   # ---- mesh -------------------------------------------------------------
 #   # A structured, terrain-following, ALL-HEXAHEDRAL lattice written straight to
 #   # constant/polyMesh. NOT snappyHexMesh: a river bed is a single-valued height
@@ -447,6 +468,26 @@ dem_of_difference:
 #   n_layers: 14            # sigma layers per column
 #   # Check the cost before building:
 #   #   hydromate openfoam case-config.yml --check
+#
+#   # ---- what is actually solved: vof | rigid-lid --------------------------
+#   # `vof` (default) is the real two-phase model: the free surface is FOUND. That
+#   # is the answer you came for, and it is expensive.
+#   #
+#   # `rigid-lid` is for getting there. It puts the lid ON the 2D free surface as a
+#   # slip wall, so the domain holds water only and alpha is identically 1 -
+#   # interFoam degenerates to single-phase while p_rgh and gravity stay intact. No
+#   # interface Courant limit, no air jets, no spin-up stage, and the ~90% of cells
+#   # that were air are simply absent. Use it to shake out the mesh, the boundaries
+#   # and the roughness in minutes, then switch to `vof`.
+#   #
+#   # WHAT YOU GIVE UP is the free surface: it can no longer move, so this mode
+#   # cannot show a hydraulic jump, a standing wave, or superelevation in a bend.
+#   # mode: rigid-lid
+#   # cell_size_factor: 5.0   # coarsen x5 vs the 2D channel size; overrides cell_size
+#   # min_water_depth: 0.20   # [m] rigid-lid only: skip shallower columns. Raising it
+#   #                         # can trim away a shallow INLET section - check the
+#   #                         # patch list. n_layers is then fitted to it, since cells
+#   #                         # thinner than the bed grains are meaningless.
 #   domain: wetted          # wetted (the 2D wetted corridor) | roi (the whole ROI)
 #   wet_margin: 5.0         # [m] buffer, so the bank walls stand on DRY ground
 #   align_to_flow: true     # rotate the lattice onto the reach's principal axis
@@ -459,6 +500,13 @@ dem_of_difference:
 #   # 3D run can produce, or the flow hits the lid.
 #   lid: follow             # follow | flat
 #   freeboard: 0.5          # [m]
+#   # `auto` sizes freeboard AND wet_margin from the seed's own flow - the velocity
+#   # head V2/2g the water could convert at a stagnation point or a bend, plus a
+#   # quarter of the depth for what a depth-averaged model cannot see at all - and
+#   # treats the values here as FLOORS, never caps. So a slow reach keeps the air it
+#   # asked for and a fast one gets the room it needs to disagree with the 2D seed.
+#   headroom_mode: auto     # auto | fixed
+#   bank_slope: 0.1         # [-] turns a surface rise into the wet_margin it needs
 #   # |U| cap enforced by the limitVelocity fvConstraint. Unset -> 5x the reach's
 #   # p95 water speed. Water never reaches it; a runaway air jet does, and that is
 #   # what collapses the time step.
@@ -471,6 +519,8 @@ dem_of_difference:
 #   # reports the share of wetted bed faces that fail, and OpenFOAM will NOT error
 #   # there - it clamps and carries on. Read such a result as bulk flow, not as a
 #   # resolved bed boundary layer. Refining towards the bed makes it worse.
+#   # Defaults OFF under a rigid lid: pinning a thick bed layer into a shallow
+#   # column leaves the layers above it thin enough to fold, which checkMesh rejects.
 #   auto_bed_layer: true
 #   # bed_layer_height: 0.2   # explicit override [m]
 #   turbulence: kOmegaSST   # kOmegaSST | kEpsilon | laminar

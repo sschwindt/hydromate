@@ -72,6 +72,10 @@ WET = 0.05               # [m] depth above which a node counts as wetted
 
 # the three steering files add3d.py emits (see build_3d_cases)
 HYDROSTATIC_CAS = "hotstart3d_hydrostatic.cas"
+# The hydrostatic run's own results. Named rather than inlined because the seed
+# orchestration (hydromate.prerun) has to find them without re-deriving the string.
+HYDROSTATIC_RESULT_3D = "r3d-hydrostatic.slf"
+HYDROSTATIC_RESULT_2D = "r3d-2d-hydrostatic.slf"
 HYDRODYN_CAS = "hotstart3d_hydrodyn.cas"
 UNSTEADY3D_CAS = "unsteady3d.cas"
 HYDROSTATIC_N_STEPS = 30_000       # fixed step count of the flux-convergence run
@@ -567,8 +571,8 @@ def build_3d_cases(cfg: Config,
             n_time_steps=hydrostatic_steps or HYDROSTATIC_N_STEPS,
             listing_period=hydrostatic_listing or HYDROSTATIC_LISTING_PERIOD,
             out_name=HYDROSTATIC_CAS,
-            results3d_name="r3d-hydrostatic.slf",
-            results2d_name="r3d-2d-hydrostatic.slf"),
+            results3d_name=HYDROSTATIC_RESULT_3D,
+            results2d_name=HYDROSTATIC_RESULT_2D),
         "hydrodyn": build_3d_cas(cfg, data=data, out_name=HYDRODYN_CAS),
     }
     try:

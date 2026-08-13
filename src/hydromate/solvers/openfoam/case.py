@@ -140,7 +140,7 @@ def build_case(cfg: Config, *, state: State2D | None = None,
     of_mesh = ofmesh.build_mesh(cfg, state=state)
     notes = list(of_mesh.notes)
     if state is not None:
-        warning = state.resolution_check(of.cell_size)
+        warning = state.resolution_check(ofmesh.plan_spacing(cfg))
         if warning:
             notes.append(warning)
 
@@ -192,6 +192,25 @@ def build_case(cfg: Config, *, state: State2D | None = None,
     return art
 
 
+def limiting_velocity(of_mesh, cfg: Config, velocity_cap: float, state=None) -> float:
+    """The velocity that actually sets the Courant number.
+
+    In the two-phase case that is the ``limitVelocity`` cap: the fastest cells in the
+    domain are air, and they sit at the cap by construction. **Under a rigid lid there
+    is no air**, so the limit is the water's own speed - using the cap there would
+    over-state the cost several-fold and make the mode look worse than it is.
+    """
+    if not getattr(of_mesh, "rigid_lid", False):
+        return velocity_cap
+    if state is not None:
+        return max(state.velocity_scale(), 1e-3)
+    if getattr(of_mesh, "column_uv", None) is not None:
+        speed = np.hypot(of_mesh.column_uv[:, 0], of_mesh.column_uv[:, 1])
+        if speed.size:
+            return max(float(np.percentile(speed, 95)), 1e-3)
+    return float(cfg.hydrodynamics.initial_velocity_guess)
+
+
 def estimate_time_step(of_mesh, cfg: Config, velocity_cap: float, *,
                        courant: float | None = None) -> float:
     """Time step [s] the Courant target will settle on.
@@ -207,10 +226,44 @@ def estimate_time_step(of_mesh, cfg: Config, velocity_cap: float, *,
       water speed. The Courant number is set by the fastest cells in the domain, and
       those are air cells sitting at the cap - which is exactly why the cap is worth
       setting, and why it also sets the cost.
+
+    Neither holds under a **rigid lid**, and taking them across gave an estimate
+    nineteen times too pessimistic (0.019 s against a measured 0.369 s). There the
+    water moves horizontally across the full plan spacing, and only its *vertical*
+    component - which a terrain-following mesh gets from the bed slope, w ~ u.S -
+    crosses a thin layer. So the two directions are summed on their own terms
+    instead of the worst one being applied to both.
     """
     courant = courant if courant is not None else cfg.openfoam.max_courant
-    length = min(of_mesh.min_layer_height, cfg.openfoam.cell_size)
-    return courant * length / (COURANT_FACE_SUM_FACTOR * max(velocity_cap, 1e-3))
+    from hydromate.solvers.openfoam.mesh import plan_spacing
+
+    dx = plan_spacing(cfg)
+    speed = limiting_velocity(of_mesh, cfg, velocity_cap)
+    if getattr(of_mesh, "rigid_lid", False):
+        slope = terrain_slope(of_mesh)
+        rate = speed / dx + speed * slope / max(of_mesh.min_layer_height, 1e-3)
+        return courant / max(rate, 1e-6)
+    length = min(of_mesh.min_layer_height, dx)
+    return courant * length / (COURANT_FACE_SUM_FACTOR * max(speed, 1e-3))
+
+
+def terrain_slope(of_mesh) -> float:
+    """Median bed slope [-] across one plan cell, over the meshed columns.
+
+    On a terrain-following mesh this is what turns horizontal flow into vertical
+    flux: water running along a bed that falls by ``S`` per cell crosses the layers
+    at roughly ``u.S``. It is read off the structured lattice rather than assumed,
+    because it varies by an order of magnitude between a smooth sand reach and the
+    bar-and-pool bed here (isar-2025: ~0.08).
+    """
+    grid = of_mesh.grid
+    bed = np.full(grid.col_id.shape, np.nan)
+    inside = grid.col_id >= 0
+    bed[inside] = of_mesh.column_bed[grid.col_id[inside]]
+    dj, di = np.gradient(bed, grid.dx)
+    slope = np.hypot(di, dj)[inside]
+    slope = slope[np.isfinite(slope)]
+    return float(np.median(slope)) if slope.size else 0.0
 
 
 def reach_flush_time(of_mesh, state) -> float:
@@ -241,9 +294,18 @@ def cost_lines(of_mesh, state, cfg: Config, velocity_cap: float) -> list[str]:
     dt = estimate_time_step(of_mesh, cfg, velocity_cap)
     steps = of.end_time / dt if dt > 0 else float("inf")
     flush = reach_flush_time(of_mesh, state)
-    out = [f"  time step   : ~{dt:.2e} s at Courant {of.max_courant:g} "
-           f"(set by the thinnest {of_mesh.min_layer_height:.3f} m layer at the "
-           f"{velocity_cap:.1f} m/s velocity cap, not by cell_size)",
+    speed = limiting_velocity(of_mesh, cfg, velocity_cap)
+    from hydromate.solvers.openfoam.mesh import plan_spacing
+
+    if getattr(of_mesh, "rigid_lid", False):
+        basis = (f"({speed:.2f} m/s - the water's own speed, there is no air phase - "
+                 f"across {plan_spacing(cfg):.2f} m cells, dropping through the "
+                 f"thinnest {of_mesh.min_layer_height:.3f} m layer on a "
+                 f"{terrain_slope(of_mesh):.1%} bed slope)")
+    else:
+        basis = (f"(set by the thinnest {of_mesh.min_layer_height:.3f} m layer at "
+                 f"{speed:.2f} m/s - the velocity cap, i.e. the air)")
+    out = [f"  time step   : ~{dt:.2e} s at Courant {of.max_courant:g} {basis}",
            f"  run length  : {of.end_time:g} s needs ~{steps:,.0f} time steps "
            f"on {of_mesh.n_cells:,} cells"]
     if flush:

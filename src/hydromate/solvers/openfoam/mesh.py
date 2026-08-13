@@ -34,6 +34,7 @@ from pathlib import Path
 import numpy as np
 
 from hydromate.config import Config
+from hydromate.core import geodata
 from hydromate.core.geodata import dataset
 from hydromate.core.raster import sample_raster_at
 from hydromate.core.structures import (
@@ -45,6 +46,7 @@ log = logging.getLogger("hydromate")
 
 BED_PATCH = "bed"
 ATMOSPHERE_PATCH = "atmosphere"
+LID_PATCH = "lid"      # rigid-lid mode: the free surface, as a slip wall
 BANKS_PATCH = "banks"
 INLET_PREFIX = "inlet"
 OUTLET_PREFIX = "outlet"
@@ -277,6 +279,7 @@ class OpenFoamMesh:
     column_depth: np.ndarray | None = None    # (n_columns,) hotstart water depth
     column_uv: np.ndarray | None = None       # (n_columns, 2) hotstart depth-averaged U
     bed_ks: np.ndarray | None = None          # (n bed faces,) Nikuradse ks per bed face
+    rigid_lid: bool = False                   # water-only domain under a slip lid
     inlet_patches: list[str] = field(default_factory=list)
     outlet_patches: list[str] = field(default_factory=list)
     inlet_discharge: dict[str, float] = field(default_factory=dict)
@@ -285,6 +288,11 @@ class OpenFoamMesh:
     @property
     def n_cells(self) -> int:
         return self.polymesh.n_cells
+
+    @property
+    def top_patch(self) -> str:
+        """``lid`` under a rigid lid, ``atmosphere`` for the two-phase case."""
+        return LID_PATCH if self.rigid_lid else ATMOSPHERE_PATCH
 
     @property
     def first_layer_height(self) -> np.ndarray:
@@ -585,6 +593,38 @@ def _smooth_lid(grid: PlanGrid, values: np.ndarray, *, passes: int,
     return field2d[used]
 
 
+def resolve_headroom(cfg: Config, state, *, notes: list[str] | None = None) -> float:
+    """The freeboard this build will use [m], derived or as configured.
+
+    Under ``headroom_mode: auto`` the configured ``freeboard`` is a floor and the
+    flow decides the rest (:meth:`State2D.headroom`) - so a reach fast enough to
+    convert real velocity head gets the air it needs to show it, and a slow one does
+    not pay for air it will never use. Under a rigid lid there is no freeboard at all.
+    """
+    of = cfg.openfoam
+    if state is None or of.headroom_mode != "auto" or of.mode == "rigid-lid":
+        return float(of.freeboard)
+    derived = state.headroom(of.freeboard)
+    if notes is not None and derived > of.freeboard + 1e-9:
+        notes.append(f"freeboard raised {of.freeboard:g} -> {derived:.2f} m: at "
+                     f"{state.velocity_scale():.2f} m/s the flow can convert "
+                     f"{state.velocity_scale() ** 2 / 19.62:.2f} m of velocity head, "
+                     "and the surface must be able to rise into it")
+    return float(derived)
+
+
+def resolve_margin(cfg: Config, state) -> float:
+    """The plan-footprint buffer past the 2D wetted edge [m], derived or configured.
+
+    A surface free to rise is also free to spread, and a footprint trimmed to the 2D
+    water line would stop it with a wall (see :meth:`State2D.lateral_margin`).
+    """
+    of = cfg.openfoam
+    if state is None or of.headroom_mode != "auto":
+        return float(of.wet_margin)
+    return float(state.lateral_margin(of.wet_margin, bank_slope=of.bank_slope))
+
+
 def _domain_polygon(cfg: Config, state, *, domain: str, wet_margin: float,
                     wet_depth: float):
     """The plan footprint the lattice covers: the ROI, or the wetted corridor."""
@@ -611,6 +651,19 @@ def _domain_polygon(cfg: Config, state, *, domain: str, wet_margin: float,
 # --------------------------------------------------------------------------- #
 
 
+def plan_spacing(cfg: Config) -> float:
+    """The plan lattice spacing [m], from ``cell_size`` or ``cell_size_factor``.
+
+    The factor form is relative to the **TELEMAC channel resolution**, so "three times
+    coarser than the 2D mesh" is a single number that keeps meaning across cases
+    instead of a metre value that has to be recomputed per reach.
+    """
+    factor = cfg.openfoam.cell_size_factor
+    if not factor:
+        return float(cfg.openfoam.cell_size)
+    return float(factor) * float(geodata.nominal_channel_size(cfg))
+
+
 def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> OpenFoamMesh:
     """Build the terrain-following hex mesh for *cfg*'s OpenFOAM case.
 
@@ -620,16 +673,46 @@ def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> Ope
     the footprint is the whole ROI - correct, but far more air.
     """
     of = cfg.openfoam
+    rigid = of.mode == "rigid-lid"
+    dx = plan_spacing(cfg)
     dem = Path(dem) if dem is not None else Path(cfg.geodata.dem_initial)
     notes: list[str] = []
+    if of.cell_size_factor:
+        notes.append(f"plan spacing {dx:.2f} m = {of.cell_size_factor:g}x the 2D "
+                     f"channel size ({geodata.nominal_channel_size(cfg):.2f} m)")
+    if rigid:
+        notes.append(
+            "RIGID LID: the domain is water only, the lid sits on the 2D free surface "
+            "as a slip wall, and there is no air phase. The free surface is an input, "
+            "not a result - it cannot rise, overtop or wet a dry bar.")
 
     polygon, how = _domain_polygon(cfg, state, domain=of.domain,
-                                   wet_margin=of.wet_margin,
+                                   wet_margin=resolve_margin(cfg, state),
                                    wet_depth=cfg.hydrodynamics.wet_depth)
     notes.append(f"footprint: {how}")
 
     structures = load_structures(cfg)
     blocked = solid_footprint(structures)
+    dry_footprint = None
+    if rigid and state is not None:
+        # Water only: a dry column has no water column to mesh, and keeping it would
+        # add a sliver of cells doing nothing. The wetted edge becomes a vertical wall
+        # at the waterline - the standard rigid-lid domain, and an approximation worth
+        # naming: the shoreline cannot move.
+        # The trim depth is the LAYER thickness, not the reporting wet_depth: a
+        # column 1 cm deep cannot be meshed into n_layers cells without collapsing
+        # into slivers, and checkMesh rejects those as incorrectly oriented face
+        # pyramids. One cell of dry ground beyond that line keeps the liquid-boundary
+        # lines (which sit at the water's edge) inside the domain.
+        trim_depth = max(cfg.hydrodynamics.wet_depth, of.min_water_depth)
+        dry_footprint = state.dry_footprint(wet_depth=trim_depth, margin=dx)
+        notes.append(f"columns shallower than {trim_depth:g} m left out: a water "
+                     "column thinner than one cell cannot be meshed")
+        if dry_footprint is not None and not dry_footprint.is_empty:
+            from shapely.ops import unary_union
+
+            blocked = (dry_footprint if blocked is None
+                       else unary_union([blocked, dry_footprint]))
     if blocked is not None:
         notes.append(f"{sum(1 for s in structures if s.mode == SOLID)} solid "
                      "structure(s) removed from the domain: their sides become "
@@ -638,8 +721,11 @@ def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> Ope
     angle = flow_angle(cfg) if of.align_to_flow else 0.0
     if of.align_to_flow:
         notes.append(f"lattice rotated {np.degrees(angle):+.1f} deg onto the reach axis")
-    grid = build_plan_grid(polygon, of.cell_size, angle=angle,
+    grid = build_plan_grid(polygon, dx, angle=angle,
                            max_columns=of.max_plan_columns, blocked=blocked)
+    if rigid:
+        notes.append("domain trimmed to the wetted body; the waterline is a vertical "
+                     "wall and cannot move")
 
     bed = sample_raster_at(dem, grid.vert_xy[:, 0], grid.vert_xy[:, 1])
     column_bed = sample_raster_at(dem, grid.cell_xy[:, 0], grid.cell_xy[:, 1])
@@ -659,27 +745,37 @@ def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> Ope
         column_wse, column_depth, column_uv = state.sample_columns(grid.cell_xy)
         wse_v = np.where(np.isfinite(wse_v), wse_v, bed)
         wse_v = np.maximum(wse_v, bed)
-        lid = wse_v + of.freeboard
+        freeboard = resolve_headroom(cfg, state, notes=notes)
+        lid = wse_v + freeboard
     else:
         base = float(np.nanmax(bed))
         lid = np.full_like(bed, base + of.freeboard)
         notes.append("no 2D hotstart: flat lid, so the domain carries the full air column")
-    if of.lid == "flat":
+    if rigid:
+        # The lid IS the free surface. No freeboard, because a freeboard would be air.
+        lid = np.where(np.isfinite(wse_v), wse_v, bed)
+        notes.append("lid placed on the 2D free surface (freeboard ignored)")
+    if of.lid == "flat" and not rigid:
         lid = np.full_like(lid, float(np.nanmax(lid)))
         notes.append(f"flat lid at {lid[0]:.3f} m a.s.l.")
     if of.lid_elevation is not None:
         lid = np.full_like(lid, float(of.lid_elevation))
         notes.append(f"lid pinned to the configured {of.lid_elevation:g} m a.s.l.")
-    lid = np.maximum(lid, bed + of.min_column_height)
-    if of.lid == "follow":
+    floor = of.min_water_depth if rigid else of.min_column_height
+    lid = np.maximum(lid, bed + floor)
+    if of.lid == "follow" and not rigid:
         lid = _smooth_lid(grid, lid, passes=of.lid_smoothing,
                           dilate=of.lid_dilation)
         lid = np.maximum(lid, bed + of.min_column_height)
+    # Under a rigid lid the lid IS the converged 2D free surface: already smooth, and
+    # smoothing it again only pushes it into the bed in steep places, where the
+    # re-clamp then leaves a kink that inverts cells.
 
     # ---- bed layer sized against the roughness ------------------------------
     bed_ks = _roughness_at(cfg, grid.cell_xy)
     bed_layer = of.bed_layer_height
-    if bed_layer is None and of.auto_bed_layer and bed_ks is not None:
+    pin_bed = of.auto_bed_layer if of.auto_bed_layer is not None else (not rigid)
+    if bed_layer is None and pin_bed and bed_ks is not None:
         # OpenFOAM's nutkRoughWallFunction places the first grid point on a log law
         # whose origin is displaced into the roughness; that is only meaningful with
         # the first cell CENTRE above the roughness crests, y1 > ks. The centre sits
@@ -709,10 +805,28 @@ def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> Ope
                 f"bed layer pinned to {bed_layer:.3f} m (2x the wetted median ks, so "
                 "the first cell centre clears the roughness crests)")
 
+    n_layers = of.n_layers
+    if rigid:
+        # Under a rigid lid the layers span the WATER only (isar: 0.2-1.0 m), not
+        # water plus freeboard (0.7-1.8 m), so the count carried over from a
+        # two-phase case gives cells three to four times thinner. Past a point they
+        # are thinner than the grains on the bed - meaningless, and thin enough that
+        # the bed's variation within one plan cell folds them, which checkMesh
+        # rejects as incorrectly oriented face pyramids.
+        thinnest = float(np.nanmedian(bed_ks)) if bed_ks is not None else 0.05
+        thinnest = max(thinnest, 0.05)
+        fit = max(2, int(of.min_water_depth / thinnest))
+        if fit < n_layers:
+            notes.append(
+                f"{n_layers} layers reduced to {fit}: the shallowest meshed column is "
+                f"{of.min_water_depth:g} m, and {n_layers} layers would make cells "
+                f"thinner than the bed roughness ({thinnest:.3f} m)")
+            n_layers = fit
+
     (points, internal, (bed_quads, bed_owner), (top_quads, top_owner), sides,
      z, cell_centres, cell_column, cell_layer) = extrude(
-        grid, bed, lid, of.n_layers, bed_layer=bed_layer,
-        expansion=of.layer_expansion, min_height=of.min_column_height)
+        grid, bed, lid, n_layers, bed_layer=bed_layer,
+        expansion=of.layer_expansion, min_height=floor)
 
     labels, liquid_names, discharges = classify_sides(
         cfg, sides["midpoint"], of.boundary_tolerance or 1.5 * of.cell_size)
@@ -723,7 +837,10 @@ def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> Ope
         boundary.append((name, "patch", sides["owner"][sel], sides["quads"][sel]))
     banks = labels == BANKS_PATCH
     boundary.append((BANKS_PATCH, "wall", sides["owner"][banks], sides["quads"][banks]))
-    boundary.append((ATMOSPHERE_PATCH, "patch", top_owner, top_quads))
+    top_name = LID_PATCH if rigid else ATMOSPHERE_PATCH
+    # a wall type, because a rigid lid IS a boundary the flow cannot cross; the slip
+    # condition on U is what keeps it shear-free, as an air-water interface is
+    boundary.append((top_name, "wall" if rigid else "patch", top_owner, top_quads))
 
     mesh = assemble(points, internal, boundary, cell_centres)
     problems = validate(mesh)
@@ -734,14 +851,15 @@ def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> Ope
                          + "; ".join(problems))
 
     result = OpenFoamMesh(
-        polymesh=mesh, grid=grid, n_layers=of.n_layers, z=z, bed=bed, lid=lid,
+        polymesh=mesh, grid=grid, n_layers=n_layers, z=z, bed=bed, lid=lid,
         cell_centres=cell_centres, cell_column=cell_column, cell_layer=cell_layer,
         column_bed=column_bed, column_wse=column_wse, column_depth=column_depth,
         column_uv=column_uv, bed_ks=bed_ks,
+        rigid_lid=rigid,
         inlet_patches=[n for n in liquid_names if n.startswith(INLET_PREFIX)],
         outlet_patches=[n for n in liquid_names if n.startswith(OUTLET_PREFIX)],
         inlet_discharge=discharges, notes=notes,
     )
     log.info("OpenFOAM mesh: %d cells (%d columns x %d layers), %d faces",
-             mesh.n_cells, grid.n_columns, of.n_layers, mesh.n_faces)
+             mesh.n_cells, grid.n_columns, n_layers, mesh.n_faces)
     return result

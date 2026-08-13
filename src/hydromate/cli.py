@@ -216,6 +216,12 @@ def _openfoam_parser() -> argparse.ArgumentParser:
                         "then exit without building")
     p.add_argument("--hotstart", type=Path, default=None,
                    help="2D result to seed from (default: the case's own r2d.slf)")
+    p.add_argument("--pre-run", dest="pre_run", action="store_true", default=None,
+                   help="run TELEMAC first to produce the seed (the default; see "
+                        "openfoam.pre_run)")
+    p.add_argument("--no-pre-run", dest="pre_run", action="store_false",
+                   help="never start TELEMAC: seed from an existing r2d.slf if there "
+                        "is one, else build cold under a flat lid")
     p.add_argument("--cell-size", type=float, default=None,
                    help="override openfoam.cell_size [m] for this build")
     p.add_argument("--layers", type=int, default=None,
@@ -236,7 +242,17 @@ def _run_openfoam(argv: list[str]) -> int:
             cfg.openfoam.cell_size = args.cell_size
         if args.layers is not None:
             cfg.openfoam.n_layers = args.layers
-        state = load_hotstart(cfg, args.hotstart)
+        # An explicit --hotstart is the user naming the seed, so no pre-run is run
+        # or needed; otherwise find or produce one.
+        seed = args.hotstart
+        if seed is None and not args.check:
+            from hydromate.prerun import ensure_seed
+
+            result = ensure_seed(cfg, enabled=args.pre_run)
+            for line in result.summary():
+                log.info("%s", line)
+            seed = result.path
+        state = load_hotstart(cfg, seed)
         if args.check:
             n = estimate_cells(cfg, state=state)
             log.info("a %g m lattice with %d layers gives about %s cells",

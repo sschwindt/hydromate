@@ -179,6 +179,141 @@ def _find_steady(history: DischargeHistory) -> None:
         history.steady_time = float(history.time[hits[0]])
 
 
+# --------------------------------------------------------------------------- #
+# did the 2D seed box the run in?
+# --------------------------------------------------------------------------- #
+
+# How much contact is not a finding. The lid stands clear of the water everywhere by
+# construction, so anything but numerical noise there is real. The lateral wall is
+# different: the domain ends somewhere, and at the inflow and outflow the channel
+# necessarily runs into that edge - so a small share of the banks patch is wet in every
+# healthy run, and a threshold of zero would cry wolf on all of them.
+LID_CONTACT_TOLERANCE = 0.001    # of the lid patch area
+WALL_CONTACT_TOLERANCE = 0.02    # of the banks patch area
+
+
+@dataclass
+class SurfaceFreedom:
+    """Whether the free surface was ever stopped by the mesh rather than the flow."""
+
+    lid_area: float = 0.0        # peak water area on the top patch [m2]
+    wall_area: float = 0.0       # peak water area on the lateral wall [m2]
+    lid_total: float = 0.0       # the top patch's own area [m2]
+    wall_total: float = 0.0      # the banks patch's own area [m2]
+    prescribed: bool = False     # rigid lid: the surface never had freedom to lose
+    measured: bool = False       # were the monitors there to read at all?
+
+    @property
+    def lid_fraction(self) -> float:
+        return self.lid_area / self.lid_total if self.lid_total > 0 else 0.0
+
+    @property
+    def wall_fraction(self) -> float:
+        return self.wall_area / self.wall_total if self.wall_total > 0 else 0.0
+
+    @property
+    def hit_lid(self) -> bool:
+        return self.lid_fraction > LID_CONTACT_TOLERANCE
+
+    @property
+    def hit_wall(self) -> bool:
+        return self.wall_fraction > WALL_CONTACT_TOLERANCE
+
+    @property
+    def free(self) -> bool:
+        return not self.hit_lid and not self.hit_wall
+
+    def lines(self, cfg) -> list[str]:
+        if self.prescribed:
+            return ["surface   : prescribed by the 2D seed (mode: rigid-lid), not "
+                    "solved - this run cannot show a jump, a standing wave or "
+                    "superelevation"]
+        if not self.measured:
+            return []
+        of = cfg.openfoam
+        if self.free:
+            return [f"surface   : free - it stayed clear of the lid "
+                    f"({self.lid_fraction:.2%} of that patch ever wet) and of the "
+                    f"lateral wall ({self.wall_fraction:.2%}), so the 2D seed bounded "
+                    "it without constraining it"]
+        out = ["surface   : ! CONSTRAINED by the mesh, not by the flow"]
+        if self.hit_lid:
+            out.append(f"  water reached the lid over up to {self.lid_area:,.1f} m2 "
+                       f"({self.lid_fraction:.1%} of it). The freeboard "
+                       f"({of.freeboard:g} m) was too small, so the surface could not "
+                       "rise as far as the hydraulics wanted. Raise openfoam.freeboard "
+                       "and rebuild - the result at that level is not physical.")
+        if self.hit_wall:
+            out.append(f"  water reached the lateral wall over up to "
+                       f"{self.wall_area:,.1f} m2 ({self.wall_fraction:.1%} of it, "
+                       f"past the {WALL_CONTACT_TOLERANCE:.0%} that inflow and outflow "
+                       "corners account for). The footprint (wet_margin "
+                       f"{of.wet_margin:g} m past the 2D water line) stopped the flow "
+                       "spreading. Raise openfoam.wet_margin, or set domain: roi.")
+        return out
+
+
+def surface_freedom(cfg, case_dir: str | Path | None = None) -> SurfaceFreedom:
+    """Read the ``lidContact`` / ``wallContact`` monitors into a verdict.
+
+    The seed fixes two things the flow has no say in - how high the lid stands and
+    how far the footprint reaches - and both are sized from a TELEMAC result that is
+    itself a model. If the 3D surface reached either, the answer was set by a meshing
+    decision rather than by the hydraulics, and nothing else in the output would say
+    so: the run converges, the discharge balances, the picture looks like a river.
+
+    Zero on both is the result you want. Reported per run rather than checked at
+    build time, because it is the only moment the question can actually be answered.
+    """
+    if cfg.openfoam.mode == "rigid-lid":
+        return SurfaceFreedom(prescribed=True, measured=True)
+    root = Path(case_dir) if case_dir else cfg.openfoam_case_dir
+    lid = _read_named_monitor(root, "lidContact")
+    wall = _read_named_monitor(root, "wallContact")
+    if lid is None and wall is None:
+        return SurfaceFreedom()
+    lid = lid or (np.zeros(0), 0.0)
+    wall = wall or (np.zeros(0), 0.0)
+    return SurfaceFreedom(
+        lid_area=float(np.max(lid[0])) if lid[0].size else 0.0,
+        wall_area=float(np.max(wall[0])) if wall[0].size else 0.0,
+        lid_total=lid[1], wall_total=wall[1], measured=True)
+
+
+def _read_named_monitor(root: Path, name: str) -> tuple[np.ndarray, float] | None:
+    """``(values, patch area)`` for one non-``Q_`` monitor, across restart folders.
+
+    The patch area comes out of the ``# Area :`` header OpenFOAM writes, which is what
+    turns a bare contact area into a fraction - and a fraction is the only form in
+    which "did the water touch this?" has a threshold that means the same thing on a
+    30 m side channel and a 300 m reach.
+    """
+    folder = root / "postProcessing" / name
+    if not folder.is_dir():
+        return None
+    chunks, area = [], 0.0
+    for start in sorted(folder.iterdir(), key=lambda p: _as_float(p.name)):
+        dat = start / "surfaceFieldValue.dat"
+        if dat.is_file():
+            chunks.append(_read_monitor(dat)[1])
+            area = max(area, _patch_area(dat))
+    return (np.concatenate(chunks) if chunks else np.zeros(0)), area
+
+
+def _patch_area(path: Path) -> float:
+    """The ``# Area :`` line of a surfaceFieldValue header, or 0 when absent."""
+    with open(path) as fh:
+        for line in fh:
+            if not line.startswith("#"):
+                break
+            if line.startswith("# Area"):
+                try:
+                    return float(line.split(":")[1])
+                except (IndexError, ValueError):
+                    return 0.0
+    return 0.0
+
+
 def write_report(cfg, case_dir: str | Path | None = None, *,
                  out_dir: str | Path | None = None,
                  target: float | None = None) -> tuple[DischargeHistory, list[Path]]:
@@ -194,6 +329,8 @@ def write_report(cfg, case_dir: str | Path | None = None, *,
     plot = _write_plot(history, out_dir / "discharge-convergence.png")
     if plot is not None:
         written.append(plot)
+    for line in surface_freedom(cfg, case_dir).lines(cfg):
+        log.info("%s", line)
     return history, written
 
 

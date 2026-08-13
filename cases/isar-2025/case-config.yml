@@ -307,6 +307,28 @@ openfoam:
   bashrc: /home/modelling/OpenFOAM/OpenFOAM-9/etc/bashrc
   n_processors: 16
 
+  # ---- the TELEMAC pre-run that seeds this case ---------------------------
+  # TELEMAC answers in minutes what OpenFOAM would otherwise spend hours
+  # discovering: where the water is, how deep it is, and roughly where its surface
+  # sits. That seed puts the wetted cells in water at t=0, clamps the lid just above
+  # the surface so most air cells never exist, and trims the footprint to the wetted
+  # corridor. Without it the case is built COLD under a flat lid.
+  #
+  # The seed is an approximation and is treated as one: the 3D surface is still
+  # solved and free to leave it (that is what freeboard and wet_margin are room for),
+  # and the run reports afterwards whether it ever needed more.
+  pre_run:
+    enabled: true          # uncheck to never start TELEMAC (also: --no-pre-run)
+    reuse: true            # this case's converged r2d.slf beats a fresh coarse run
+    dimension: 2d          # 3d also seeds a vertical velocity PROFILE per column
+    # Only used when there is no r2d.slf to reuse: how much coarser the dedicated
+    # pre-run is meshed. x4 on this reach builds AND runs in 54 s and gives a mesh
+    # within 3% of the one the full production result seeds.
+    size_scale: 2.0
+    courant: 0.6           # pre-wetted, so it can march faster than the dry start
+    prewet_depth: 0.5      # [m] hotstart the channel zone
+    require: warn          # warn | error, if the pre-run misses flux balance
+
   # ---- mesh ---------------------------------------------------------------
   # A terrain-following, all-hexahedral, structured lattice written straight to
   # constant/polyMesh. NOT snappyHexMesh: a river bed is a single-valued height
@@ -316,6 +338,29 @@ openfoam:
   n_layers: 14             # sigma layers per column
   # 0.5 m x 14 over the wetted corridor gives ~1.6 M cells (~28,200 m2 of footprint).
   # `hydromate openfoam case-config.yml --check` reports the count without building.
+
+  # ---- what is actually solved: vof | rigid-lid ---------------------------
+  # `vof` (default) is the real two-phase interFoam model: the free surface is found
+  # rather than prescribed, which is what you want for the answer.
+  #
+  # `rigid-lid` is for GETTING THERE. It puts the lid ON the 2D free surface as a
+  # slip wall, so the mesh holds water only and alpha is identically 1 - interFoam
+  # degenerates to a single-phase run while p_rgh and gravity stay intact. The air
+  # phase is gone by construction, not damped: no interface Courant limit, no air
+  # jets, no spin-up stage. The cost of that is the assumption, and it is a real one:
+  # the free surface can no longer move, so the run cannot tell you about a hydraulic
+  # jump, a standing wave, or superelevation in a bend. Use it to shake out the mesh,
+  # the boundaries and the roughness cheaply, then switch to `vof` for the answer.
+  #
+  # Measured on this case (5x coarse, 14,632 cells, one core):
+  #   vof        0.5 m  1,579,074 cells   dt 3.1e-3 s   ~97,600 steps for 300 s
+  #   rigid-lid  1.5 m     36,164 cells   dt 1.8e-1 s     ~1,700 steps, ~8 min
+  #   rigid-lid  2.5 m     14,632 cells   dt 3.7e-1 s        832 steps, 91 s wall
+  # mode: rigid-lid
+
+  # Coarsen relative to the 2D channel resolution instead of restating a dx. One
+  # number, so a test run cannot silently drift away from the mesh being tested.
+  # cell_size_factor: 5.0    # -> 2.5 m here; overrides cell_size when set
 
   domain: wetted           # mesh only the 2D wetted corridor, not the whole 66,000 m2 ROI
   wet_margin: 5.0          # [m] buffer, so the bank walls stand on dry ground
@@ -330,6 +375,14 @@ openfoam:
   # or the flow hits the lid - 0.5 m against a 0.22 m median depth is ample.
   lid: follow
   freeboard: 0.5           # [m]
+  # How freeboard and wet_margin are chosen. `auto` sizes both from the seed's own
+  # flow - the velocity head V2/2g the water could convert, plus a quarter of the
+  # depth for what a depth-averaged model cannot see at all - and treats the values
+  # here as FLOORS, never caps. On this slow reach (p95 0.90 m/s, 0.22 m deep) that
+  # comes to 0.10 m, so both stay at the values above; a 3 m/s reach 1 m deep would
+  # get 0.71 m instead. `fixed` uses them exactly as written.
+  headroom_mode: auto      # auto | fixed
+  bank_slope: 0.1          # [-] turns a surface rise into the wet_margin it needs
   # |U| cap enforced by the limitVelocity fvConstraint. Left unset it becomes 5x the
   # reach's own p95 water speed (~4.5 m/s here). Water never reaches it; a runaway
   # air jet does, and that is what collapses the time step.
@@ -342,11 +395,23 @@ openfoam:
   # 0.22 m), so ~40% of wetted bed faces fail that test even so - the build reports
   # the share. Refining towards the bed does not help; it makes it worse. Read the
   # result as bulk flow, not as a resolved bed boundary layer.
+  # Under a rigid lid this defaults OFF: pinning a thick bed layer into a 0.2 m
+  # column leaves the layers above it thin enough that the bed's variation within one
+  # plan cell folds them, and checkMesh rejects the result (48 incorrectly-oriented
+  # face pyramids, 84 deg non-orthogonality; 0 and 75 deg with it off).
   auto_bed_layer: true
   turbulence: kOmegaSST
 
+  # Shallower columns than this are left out of a rigid-lid mesh. It cannot be raised
+  # much on this reach: the inflow sections are themselves under 0.25 m, so 0.25 trims
+  # the inlet patches away entirely. The layer count is then fitted to it - cells
+  # thinner than the bed grains are meaningless, so 14 layers over 0.20 m is reduced
+  # to 4 and the build says so.
+  min_water_depth: 0.20    # [m], rigid-lid only
+
   # ---- run ----------------------------------------------------------------
-  spinup_time: 30.0        # stage 1: settle the interface from the depth-averaged 2D state
+  spinup_time: 30.0        # stage 1: settle the interface from the depth-averaged 2D
+                           # state. Not written under a rigid lid: no interface.
   end_time: 300.0          # stage 2 end
   spinup_courant: 0.3
   max_courant: 0.9         # semi-implicit MULES (MULESCorr) makes this affordable

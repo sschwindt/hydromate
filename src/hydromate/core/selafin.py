@@ -41,10 +41,20 @@ def read_slf(path: str | Path, *, frame: int = -1) -> dict:
     """Read a SERAFIN/SELAFIN file (our writer's output or a TELEMAC result).
 
     Returns a dict with ``x``, ``y`` (NPOIN floats), ``ikle`` (NELEM×NDP, 0-based),
-    ``ipobo``, ``var_names`` (list[str]), the selected frame ``time`` and its
-    per-variable node arrays in ``values`` (``{name: (NPOIN,) float}``). *frame*
-    indexes the time steps (default ``-1`` = last; a steady run's final state).
-    Single- and double-precision SERAFIN are both handled.
+    ``ipobo``, ``var_names`` (list[str]), ``nplan``, the selected frame ``time`` and
+    its per-variable node arrays in ``values``. *frame* indexes the time steps
+    (default ``-1`` = last; a steady run's final state). Single- and double-precision
+    SERAFIN are both handled.
+
+    **3D results** (``nplan > 1``, e.g. a TELEMAC-3D ``r3d.slf``) are unrolled rather
+    than left flat: SERAFIN stores a 3D field plane by plane over the same 2D mesh, so
+    ``x``/``y`` are cut back to the ``npoin2`` plan nodes and every variable comes back
+    shaped ``(nplan, npoin2)``. A 2D file is unchanged - ``nplan == 1`` and values stay
+    ``(NPOIN,)`` - so nothing that reads a 2D result has to know this exists.
+
+    ``ikle`` is left exactly as written (prisms, 6 nodes, indexing the flat 3D node
+    numbering). Callers that need plan connectivity should use a 2D file; the 3D path
+    exists to read *fields*, and hydromate samples those on a KD-tree over ``x``/``y``.
     """
     path = Path(path)
     with open(path, "rb") as f:
@@ -61,6 +71,7 @@ def read_slf(path: str | Path, *, frame: int = -1) -> dict:
             _read_record(f)  # DATE record
         dims = np.frombuffer(_read_record(f), dtype=_I4)
         nelem, ndp = int(dims[0]), int(dims[2])
+        nplan = int(dims[3]) if dims.size > 3 else 1
         ikle = np.frombuffer(_read_record(f), dtype=_I4).reshape(nelem, ndp) - 1
         ipobo = np.frombuffer(_read_record(f), dtype=_I4).copy()
         x = np.frombuffer(_read_record(f), dtype=fdtype).astype(float)
@@ -79,9 +90,16 @@ def read_slf(path: str | Path, *, frame: int = -1) -> dict:
             })
     if not frames:
         raise ValueError(f"{path.name}: no time frames in SELAFIN file")
+    values = frames[frame]
+    if nplan > 1:
+        npoin2 = x.size // nplan
+        x, y = x[:npoin2], y[:npoin2]
+        ipobo = ipobo[:npoin2]
+        values = {name: v.reshape(nplan, npoin2) for name, v in values.items()}
     return {
         "x": x, "y": y, "ikle": ikle, "ipobo": ipobo, "var_names": var_names,
-        "time": times[frame], "values": frames[frame], "n_times": len(frames),
+        "nplan": nplan, "time": times[frame], "values": values,
+        "n_times": len(frames),
     }
 
 

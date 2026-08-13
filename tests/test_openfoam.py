@@ -424,3 +424,352 @@ def test_alpha_is_the_submerged_fraction_of_each_cell():
     m.cell_bounds = ofmesh.OpenFoamMesh.cell_bounds.fget(m)
     alpha = initial_alpha(m)
     np.testing.assert_allclose(alpha, [1.0, 1.0, 0.5, 0.0])
+
+
+# --------------------------------------------------------------------------- #
+# rigid lid: the air phase removed by construction
+# --------------------------------------------------------------------------- #
+
+
+def _rigid_mesh(*, dx=1.5, slope=0.08, min_layer=0.040):
+    """A 4x4 lattice whose bed falls at a known slope, for the cost estimate."""
+
+    class _Grid:
+        pass
+
+    grid = _Grid()
+    grid.dx = dx
+    grid.col_id = np.arange(16).reshape(4, 4)
+    grid.cell_xy = np.array([[0.0, 0.0], [300.0, 400.0]])
+
+    class _M:
+        pass
+
+    m = _M()
+    m.grid = grid
+    m.rigid_lid = True
+    m.min_layer_height = min_layer
+    m.n_cells = 16
+    # bed falling along i at exactly `slope`
+    m.column_bed = (np.arange(16) % 4) * dx * slope
+    return m
+
+
+def test_rigid_lid_has_no_spin_up_stage():
+    """A spin-up exists to let an interface settle; a rigid lid has no interface."""
+    from hydromate.solvers.openfoam.dicts import stages
+
+    assert [s.name for s in stages(_Cfg(mode="rigid-lid"))] == ["run"]
+    assert [s.name for s in stages(_Cfg())] == ["spinup", "run"]
+
+
+def test_rigid_lid_solves_alpha_explicitly():
+    """alpha is identically 1, so the implicit MULES correction has nothing to
+    correct - and measured four fifths of the run time on isar-2025."""
+    from hydromate.solvers.openfoam.dicts import fv_solution, stages
+
+    cfg = _Cfg(mode="rigid-lid")
+    text = fv_solution(cfg, stages(cfg)[0])
+    assert "MULESCorr       no;" in text
+    # the two-phase case must keep it: there dt depends on it
+    vof = _Cfg()
+    assert "MULESCorr       yes;" in fv_solution(vof, stages(vof)[1])
+
+
+def test_rigid_lid_time_step_follows_the_terrain_slope():
+    """Measured on isar-2025 (5x coarse, rigid lid): interFoam settled on 0.369 s at
+    Courant 0.9. Carrying the two-phase model across - thinnest layer at the full
+    water speed - predicted 0.019 s, nineteen times too pessimistic, because only
+    the *vertical* component crosses a thin layer."""
+    from hydromate.solvers.openfoam.case import estimate_time_step, terrain_slope
+
+    m = _rigid_mesh()
+    assert terrain_slope(m) == pytest.approx(0.08, rel=0.05)
+    cfg = _Cfg(mode="rigid-lid", cell_size=1.5)
+    dt = estimate_time_step(m, cfg, 4.5, courant=0.9)
+    assert dt == pytest.approx(0.37, rel=0.35)       # measured 0.369
+
+
+def test_rigid_lid_cost_names_the_water_not_the_air():
+    from hydromate.solvers.openfoam.case import cost_lines
+
+    class _State:
+        def velocity_scale(self):
+            return 0.94
+
+    text = " ".join(cost_lines(_rigid_mesh(), _State(),
+                               _Cfg(mode="rigid-lid", cell_size=1.5), 4.5))
+    assert "there is no air phase" in text
+    assert "bed slope" in text
+
+
+def test_cell_size_factor_coarsens_relative_to_the_telemac_mesh(monkeypatch):
+    """The point of the factor is that one number coarsens a test run without
+    editing the resolution the TELEMAC case is meshed at."""
+    from hydromate.solvers.openfoam import mesh as m
+
+    cfg = _Cfg(cell_size=0.5)
+    cfg.mesh = None
+    monkeypatch.setattr("hydromate.core.geodata.nominal_channel_size",
+                        lambda _cfg: 0.5)
+    assert m.plan_spacing(cfg) == pytest.approx(0.5)
+    cfg.openfoam.cell_size_factor = 5.0
+    assert m.plan_spacing(cfg) == pytest.approx(2.5)
+
+
+# --------------------------------------------------------------------------- #
+# headroom: room to disagree with the 2D seed, and the check that it was enough
+# --------------------------------------------------------------------------- #
+
+
+class _State:
+    """A State2D stand-in carrying only the two scales headroom is built from.
+
+    The real methods are bound onto it, so this tests the shipped arithmetic rather
+    than a copy of it - and does so without a 900 MB SELAFIN.
+    """
+
+    def __init__(self, speed=1.0, depth=0.5):
+        from hydromate.solvers.openfoam.hotstart import State2D
+
+        self._speed, self._depth = speed, depth
+        self.headroom = State2D.headroom.__get__(self)
+        self.lateral_margin = State2D.lateral_margin.__get__(self)
+
+    def velocity_scale(self, wet_depth=0.01):
+        return self._speed
+
+    def depth_scale(self, wet_depth=0.01):
+        return self._depth
+
+
+def _state(speed=1.0, depth=0.5):
+    return _State(speed, depth)
+
+
+def test_headroom_is_the_velocity_head_plus_a_depth_allowance():
+    """The surface must be able to rise by what the flow could actually convert."""
+    fast = _state(speed=3.0, depth=1.0)
+    # 3^2/(2g) = 0.459 m of velocity head, + 0.25 x 1.0 m of depth allowance
+    assert fast.headroom(0.0) == pytest.approx(0.459 + 0.25, rel=0.02)
+
+
+def test_the_configured_freeboard_is_a_floor_not_a_ceiling():
+    """No case may end up with LESS air than it asked for - the derivation can only
+    give the surface more room, never take it away."""
+    slow = _state(speed=0.5, depth=0.2)
+    assert slow.headroom(0.0) < 0.5
+    assert slow.headroom(0.5) == pytest.approx(0.5)
+
+
+def test_lateral_margin_turns_a_surface_rise_into_plan_distance():
+    """A surface free to rise is free to spread; on a 10% bank a rise of h moves the
+    water line 10h, and a footprint trimmed to the 2D line would stop it with a wall."""
+    s = _state(speed=3.0, depth=1.0)
+    assert s.lateral_margin(0.0, bank_slope=0.1) == pytest.approx(
+        s.headroom(0.0) * 10, rel=1e-6)
+    assert s.lateral_margin(50.0, bank_slope=0.1) == pytest.approx(50.0)
+
+
+def test_fixed_mode_and_rigid_lid_bypass_the_derivation():
+    from hydromate.solvers.openfoam.mesh import resolve_headroom, resolve_margin
+
+    fast = _state(speed=3.0, depth=1.0)
+    auto = _Cfg(freeboard=0.5, wet_margin=5.0)
+    assert resolve_headroom(auto, fast) > 0.5          # derived
+    assert resolve_margin(auto, fast) > 5.0
+
+    fixed = _Cfg(freeboard=0.5, wet_margin=5.0, headroom_mode="fixed")
+    assert resolve_headroom(fixed, fast) == pytest.approx(0.5)
+    assert resolve_margin(fixed, fast) == pytest.approx(5.0)
+
+    rigid = _Cfg(freeboard=0.5, mode="rigid-lid")
+    assert resolve_headroom(rigid, fast) == pytest.approx(0.5)   # unused anyway
+    assert resolve_headroom(auto, None) == pytest.approx(0.5)    # cold build
+
+
+def test_surface_freedom_reads_the_monitors_and_names_the_knob(tmp_path):
+    """A run that pressed against the lid is constrained by a MESH decision, and
+    nothing else in the output would say so."""
+    from hydromate.solvers.openfoam.report import surface_freedom
+
+    def monitor(name, values, area=1000.0):
+        d = tmp_path / "postProcessing" / name / "0"
+        d.mkdir(parents=True)
+        (d / "surfaceFieldValue.dat").write_text(
+            f"# Region type : patch x\n# Area   : {area}\n"
+            "# Time areaIntegrate(alpha.water)\n"
+            + "".join(f"{i}\t{v}\n" for i, v in enumerate(values)))
+
+    monitor("lidContact", [0.0, 0.0, 12.5, 4.0])
+    monitor("wallContact", [0.0, 0.0, 0.0, 0.0])
+
+    verdict = surface_freedom(_Cfg(), tmp_path)
+    assert verdict.measured and not verdict.free
+    assert verdict.lid_area == pytest.approx(12.5)      # the PEAK, not the last
+    assert verdict.lid_fraction == pytest.approx(0.0125)
+    text = " ".join(verdict.lines(_Cfg()))
+    assert "freeboard" in text and "not physical" in text
+
+
+def test_the_wall_tolerance_absorbs_the_inflow_and_outflow_corners(tmp_path):
+    """The domain has to end somewhere, and at the inlet and outlet the channel runs
+    into that edge - so a threshold of zero would report every healthy run as boxed
+    in. Judged as a fraction, which also means the same thing on a side channel and
+    on a full reach."""
+    from hydromate.solvers.openfoam.report import surface_freedom
+
+    def monitor(name, peak, area):
+        d = tmp_path / "postProcessing" / name / "0"
+        d.mkdir(parents=True)
+        (d / "surfaceFieldValue.dat").write_text(
+            f"# Area   : {area}\n# Time\tvalue\n0\t0.0\n1\t{peak}\n")
+
+    monitor("lidContact", 0.0, 4000.0)
+    monitor("wallContact", 14.0, 1450.0)       # ~1% of the banks patch
+
+    verdict = surface_freedom(_Cfg(), tmp_path)
+    assert verdict.wall_area == pytest.approx(14.0)
+    assert not verdict.hit_wall and verdict.free
+    assert "free" in " ".join(verdict.lines(_Cfg()))
+
+
+def test_surface_freedom_is_honest_about_the_rigid_lid(tmp_path):
+    """There the surface never had freedom to lose, so 'free' would be a lie."""
+    from hydromate.solvers.openfoam.report import surface_freedom
+
+    verdict = surface_freedom(_Cfg(mode="rigid-lid"), tmp_path)
+    assert verdict.prescribed
+    assert "prescribed" in " ".join(verdict.lines(_Cfg(mode="rigid-lid")))
+
+
+def test_no_monitors_reports_nothing_rather_than_a_clean_bill(tmp_path):
+    """An unrun case must not read as 'the surface was free'."""
+    from hydromate.solvers.openfoam.report import surface_freedom
+
+    verdict = surface_freedom(_Cfg(), tmp_path)
+    assert not verdict.measured
+    assert verdict.lines(_Cfg()) == []
+
+
+def test_the_monitors_are_written_for_vof_and_skipped_under_a_rigid_lid():
+    from hydromate.solvers.openfoam.dicts import control_dict, stages
+
+    cfg = _Cfg()
+    text = control_dict(cfg, stages(cfg)[1], patches=["inlet-1"],
+                        boundary_patches=("atmosphere", "banks"))
+    assert "lidContact" in text and "wallContact" in text
+    assert "areaIntegrate" in text
+
+    rigid = _Cfg(mode="rigid-lid")
+    text = control_dict(rigid, stages(rigid)[0], patches=["inlet-1"],
+                        boundary_patches=("lid", "banks"))
+    assert "lidContact" not in text
+
+
+# --------------------------------------------------------------------------- #
+# the 3D seed: a velocity profile instead of one number per column
+# --------------------------------------------------------------------------- #
+
+
+def _write_3d_slf(path, *, nplan=3, npoin2=4):
+    """A minimal 3D SERAFIN: same plan mesh on `nplan` sigma levels."""
+    import struct
+
+    def record(payload: bytes) -> bytes:
+        return struct.pack(">i", len(payload)) + payload + struct.pack(">i",
+                                                                      len(payload))
+
+    names = ["ELEVATION Z", "VELOCITY U", "VELOCITY V"]
+    npoin = npoin2 * nplan
+    x = np.tile(np.arange(npoin2, dtype=float), nplan)
+    y = np.zeros(npoin)
+    # levels 0, 1, 2 m; velocity growing with height (a sheared column)
+    z = np.repeat(np.arange(nplan, dtype=float), npoin2)
+    u = np.repeat(np.arange(nplan, dtype=float) + 1.0, npoin2)   # 1, 2, 3 m/s
+    v = np.zeros(npoin)
+
+    with open(path, "wb") as f:
+        f.write(record(f"{'test 3d':<72}".encode() + b"SERAFIND"))
+        f.write(record(np.array([len(names), 0], dtype=">i4").tobytes()))
+        for name in names:
+            f.write(record(f"{name:<16}{'M':<16}".encode()))
+        iparam = np.zeros(10, dtype=">i4")
+        iparam[6] = nplan
+        iparam[9] = 1                       # a DATE record follows
+        f.write(record(iparam.tobytes()))
+        f.write(record(np.array([1, 1, 1, 1, 1, 1], dtype=">i4").tobytes()))
+        f.write(record(np.array([1, npoin, 6, nplan], dtype=">i4").tobytes()))
+        f.write(record(np.ones(6, dtype=">i4").tobytes()))
+        f.write(record(np.zeros(npoin, dtype=">i4").tobytes()))
+        f.write(record(x.astype(">f8").tobytes()))
+        f.write(record(y.astype(">f8").tobytes()))
+        f.write(record(np.array([0.0], dtype=">f8").tobytes()))
+        for values in (z, u, v):
+            f.write(record(values.astype(">f8").tobytes()))
+    return path
+
+
+def test_read_slf_unrolls_a_3d_result_onto_its_plan_nodes(tmp_path):
+    """SERAFIN stores a 3D field plane by plane over the same 2D mesh; leaving it
+    flat would make every consumer re-derive npoin2 from the dims record."""
+    from hydromate.core.selafin import read_slf
+
+    data = read_slf(_write_3d_slf(tmp_path / "r3d.slf", nplan=3, npoin2=4))
+    assert data["nplan"] == 3
+    assert data["x"].size == 4                       # cut back to the plan nodes
+    assert data["values"]["VELOCITY U"].shape == (3, 4)
+    assert data["values"]["VELOCITY U"][:, 0].tolist() == [1.0, 2.0, 3.0]
+
+
+def test_a_2d_result_is_untouched_by_the_3d_path(tmp_path):
+    """nplan == 1 must stay exactly as it was: flat values, no reshape."""
+    from hydromate.core.selafin import read_slf, write_geometry
+
+    path = write_geometry(tmp_path / "geometry.slf",
+                          x=np.array([0.0, 1.0, 0.0]), y=np.array([0.0, 0.0, 1.0]),
+                          ikle=np.array([[1, 2, 3]]), ipobo=np.array([1, 2, 3]),
+                          bottom=np.array([1.0, 1.0, 1.0]))
+    data = read_slf(path)
+    assert data["nplan"] == 1
+    assert data["values"]["BOTTOM"].shape == (3,)
+
+
+def test_the_3d_seed_carries_the_profile_and_a_true_depth_average(tmp_path):
+    """The depth-average must integrate over the levels' actual elevations, not
+    average the levels - sigma layers are equal only where the depth is."""
+    from hydromate.solvers.openfoam.hotstart import State2D
+
+    state = State2D.from_slf(_write_3d_slf(tmp_path / "r3d.slf"))
+    assert state.has_profile
+    assert state.bottom[0] == pytest.approx(0.0)
+    assert state.surface[0] == pytest.approx(2.0)
+    assert state.depth[0] == pytest.approx(2.0)
+    # u = 1, 2, 3 over z = 0, 1, 2 -> trapezoidal mean is exactly 2.0
+    assert state.u[0] == pytest.approx(2.0)
+
+
+def test_sample_profile_interpolates_in_z_and_holds_the_ends(tmp_path):
+    """Below the bed and above the surface there is nothing to continue, and a
+    linear extrapolation there would invent a jet."""
+    from hydromate.solvers.openfoam.hotstart import State2D
+
+    state = State2D.from_slf(_write_3d_slf(tmp_path / "r3d.slf"))
+    xy = np.array([[0.0, 0.0]] * 4)
+    uv = state.sample_profile(xy, np.array([0.0, 0.5, 2.0, 9.0]))
+    assert uv[:, 0] == pytest.approx([1.0, 1.5, 3.0, 3.0])   # last one is HELD
+
+
+def test_a_2d_seed_still_answers_sample_profile(tmp_path):
+    """So a caller never has to ask which kind of seed it was handed."""
+    from hydromate.solvers.openfoam.hotstart import State2D
+
+    flat = State2D(x=np.array([0.0, 1.0]), y=np.array([0.0, 0.0]),
+                   triangles=np.zeros((0, 3), dtype=int),
+                   depth=np.array([1.0, 1.0]), surface=np.array([1.0, 1.0]),
+                   bottom=np.array([0.0, 0.0]), u=np.array([2.0, 2.0]),
+                   v=np.array([0.0, 0.0]))
+    assert not flat.has_profile
+    uv = flat.sample_profile(np.array([[0.0, 0.0], [0.0, 0.0]]),
+                             np.array([0.1, 0.9]))
+    assert uv[:, 0] == pytest.approx([2.0, 2.0])    # same at every elevation

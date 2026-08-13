@@ -127,6 +127,14 @@ def main() -> None:
         print(line)
     for path in files:
         print(f"  wrote {path.name}")
+
+    # A balanced discharge says nothing about whether the surface was free to find
+    # its own level: the lid and the footprint were both sized from the 2D seed, and
+    # a run that pressed against either was constrained by a meshing decision rather
+    # than by the flow - which nothing else in the output would reveal.
+    print("\n=== was the surface free? ===")
+    for line in report.surface_freedom(cfg, case_dir).lines(cfg):
+        print(line)
     print(f"\nopen {case_dir / 'case.foam'} in ParaView to view the result "
           "(threshold alpha.water > 0.5 to see the water phase alone).")
 

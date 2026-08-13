@@ -121,17 +121,30 @@ def initial_alpha(of_mesh) -> np.ndarray:
     return np.clip((wse - z_lo) / thickness, 0.0, 1.0)
 
 
-def initial_velocity(of_mesh, alpha: np.ndarray) -> np.ndarray:
-    """Per-cell velocity: the 2D depth-averaged value in water, zero in air.
+def initial_velocity(of_mesh, alpha: np.ndarray, state=None) -> np.ndarray:
+    """Per-cell velocity: the seed's velocity in water, zero in air.
 
-    Deliberately uniform over the depth rather than a log profile. The log profile's
-    normalisation is only meaningful where the wall function is admissible, and on a
-    gravel bed that is often nowhere (see :mod:`hydromate.solvers.openfoam.quality`); the
-    vertical structure is what the 3D run is *for*, so it is left to develop during
-    the spin-up stage rather than assumed here. Scaling by ``alpha`` keeps the
-    interface cell from carrying a full-strength velocity into the air.
+    From a **2D** seed this is uniform over the depth, deliberately, rather than an
+    assumed log profile: the log profile's normalisation is only meaningful where the
+    wall function is admissible, and on a gravel bed that is often nowhere (see
+    :mod:`hydromate.solvers.openfoam.quality`). The vertical structure is what the 3D
+    run is *for*, so it is left to develop during the spin-up rather than invented
+    here.
+
+    From a **3D** seed (``pre_run.dimension: 3d``) the profile is not assumed - it was
+    computed, by a solver, on this reach's own bathymetry - so each cell is sampled at
+    its own elevation instead. That is the one case where prescribing vertical
+    structure is better than starting flat.
+
+    Scaling by ``alpha`` keeps an interface cell from carrying a full-strength
+    velocity into the air.
     """
     out = np.zeros((of_mesh.n_cells, 3))
+    if state is not None and getattr(state, "has_profile", False):
+        xy = of_mesh.grid.cell_xy[of_mesh.cell_column]
+        uv = state.sample_profile(xy, of_mesh.cell_centres[:, 2])
+        out[:, :2] = np.where(np.isfinite(uv), uv, 0.0) * alpha[:, None]
+        return out
     if of_mesh.column_uv is None:
         return out
     uv = np.asarray(of_mesh.column_uv, dtype=float)[of_mesh.cell_column]
@@ -197,15 +210,22 @@ def write_fields(of_mesh, cfg, case_dir: str | Path, *, state=None,
     *discharges* maps each inlet patch to its own Q [m3/s].
     """
     of = cfg.openfoam
+    rigid = getattr(of_mesh, "rigid_lid", False)
     case_dir = Path(case_dir)
     zero = case_dir / "0"
     zero.mkdir(parents=True, exist_ok=True)
     discharges = discharges or {}
     walls = ["bed", "banks"]
+    top = of_mesh.top_patch if hasattr(of_mesh, "top_patch") else "atmosphere"
     written: list[Path] = []
 
-    alpha = initial_alpha(of_mesh)
-    velocity = initial_velocity(of_mesh, alpha)
+    # Under a rigid lid the domain is water only, so alpha is identically 1: no
+    # interface to compress, no air to accelerate, and interFoam degenerates to a
+    # single-phase solver while keeping its p_rgh + gravity treatment intact. That is
+    # the whole trick - the air phase is removed by construction rather than modelled
+    # cheaply, and none of the pressure formulation has to be re-derived.
+    alpha = (np.ones(of_mesh.n_cells) if rigid else initial_alpha(of_mesh))
+    velocity = initial_velocity(of_mesh, alpha, state)
     k, epsilon, omega = turbulence_scales(state, cfg)
 
     # ---- alpha.water --------------------------------------------------------
@@ -225,8 +245,16 @@ def write_fields(of_mesh, cfg, case_dir: str | Path, *, state=None,
                          "value": inlet_value}
     for patch in walls:
         bc[patch] = {"type": "zeroGradient"}
-    bc["atmosphere"] = {"type": "inletOutlet", "inletValue": "uniform 0",
-                        "value": "uniform 0"}
+    bc[top] = ({"type": "zeroGradient"} if rigid else
+               {"type": "inletOutlet", "inletValue": "uniform 0",
+                "value": "uniform 0"})
+    if rigid:
+        # the inlet is fully wet by construction, so the variable-height machinery
+        # has nothing to vary
+        for patch in of_mesh.inlet_patches:
+            bc[patch] = {"type": "fixedValue", "value": "uniform 1"}
+        for patch in of_mesh.outlet_patches:
+            bc[patch] = {"type": "zeroGradient"}
     written.append(_write(zero / "alpha.water", render_field(
         "volScalarField", "alpha.water", "[0 0 0 0 0 0 0]",
         scalar_list(alpha), bc)))
@@ -240,17 +268,22 @@ def write_fields(of_mesh, cfg, case_dir: str | Path, *, state=None,
                 f"no discharge for inlet patch {patch!r}. Give each inflow line a "
                 "'Target flow' value in boundaries.liquid_boundaries, or set "
                 "boundaries.prescribed_flowrate for a single inflow.")
-        bc[patch] = {"type": "variableHeightFlowRateInletVelocity",
-                     "flowRate": f"{q:g}", "alpha": "alpha.water",
-                     "value": "uniform (0 0 0)"}
+        bc[patch] = ({"type": "flowRateInletVelocity",
+                      "volumetricFlowRate": f"constant {q:g}",
+                      "value": "uniform (0 0 0)"} if rigid else
+                     {"type": "variableHeightFlowRateInletVelocity",
+                      "flowRate": f"{q:g}", "alpha": "alpha.water",
+                      "value": "uniform (0 0 0)"})
     for patch in of_mesh.outlet_patches:
         bc[patch] = ({"type": "zeroGradient"} if outflow_stage is None else
                      {"type": "pressureInletOutletVelocity",
                       "value": "uniform (0 0 0)"})
     for patch in walls:
         bc[patch] = {"type": "noSlip"}
-    bc["atmosphere"] = {"type": "pressureInletOutletVelocity",
-                        "value": "uniform (0 0 0)"}
+    # slip, not noSlip: an air-water interface carries negligible shear, so the lid
+    # must not put a boundary layer on the top of the water column
+    bc[top] = ({"type": "slip"} if rigid else
+               {"type": "pressureInletOutletVelocity", "value": "uniform (0 0 0)"})
     written.append(_write(zero / "U", render_field(
         "volVectorField", "U", "[0 1 -1 0 0 0 0]", vector_list(velocity), bc)))
 
@@ -259,7 +292,12 @@ def write_fields(of_mesh, cfg, case_dir: str | Path, *, state=None,
     for patch in of_mesh.inlet_patches:
         bc[patch] = {"type": "fixedFluxPressure", "value": "uniform 0"}
     for patch in of_mesh.outlet_patches:
-        if outflow_stage is None:
+        if rigid:
+            # The lid IS the free surface, so the surface at the outlet is already
+            # fixed by the geometry; p_rgh = 0 there is exactly "atmospheric at the
+            # surface". Prescribing a stage as well would over-determine it.
+            bc[patch] = {"type": "fixedValue", "value": "uniform 0"}
+        elif outflow_stage is None:
             bc[patch] = {"type": "zeroGradient"}
         else:
             _, profile = _outlet_profiles(of_mesh, patch, outflow_stage,
@@ -267,7 +305,8 @@ def write_fields(of_mesh, cfg, case_dir: str | Path, *, state=None,
             bc[patch] = {"type": "prghPressure", "p": profile, "value": "uniform 0"}
     for patch in walls:
         bc[patch] = {"type": "fixedFluxPressure", "value": "uniform 0"}
-    bc["atmosphere"] = {"type": "totalPressure", "p0": "uniform 0"}
+    bc[top] = ({"type": "fixedFluxPressure", "value": "uniform 0"} if rigid else
+               {"type": "totalPressure", "p0": "uniform 0"})
     written.append(_write(zero / "p_rgh", render_field(
         "volScalarField", "p_rgh", "[1 -1 -2 0 0 0 0]", "uniform 0", bc)))
 
@@ -276,7 +315,7 @@ def write_fields(of_mesh, cfg, case_dir: str | Path, *, state=None,
 
     # ---- nut ----------------------------------------------------------------
     bc = {p: {"type": "calculated", "value": "uniform 0"}
-          for p in of_mesh.inlet_patches + of_mesh.outlet_patches + ["atmosphere"]}
+          for p in of_mesh.inlet_patches + of_mesh.outlet_patches + [top]}
     for patch in walls:
         bc[patch] = _wall_entries(of_mesh, cfg, patch)
     written.append(_write(zero / "nut", render_field(
@@ -288,7 +327,7 @@ def write_fields(of_mesh, cfg, case_dir: str | Path, *, state=None,
         bc[patch] = {"type": "turbulentIntensityKineticEnergyInlet",
                      "intensity": f"{TURBULENT_INTENSITY:g}",
                      "value": f"uniform {k:.6g}"}
-    for patch in of_mesh.outlet_patches + ["atmosphere"]:
+    for patch in of_mesh.outlet_patches + [top]:
         bc[patch] = {"type": "inletOutlet", "inletValue": f"uniform {k:.6g}",
                      "value": f"uniform {k:.6g}"}
     for patch in walls:
@@ -303,7 +342,7 @@ def write_fields(of_mesh, cfg, case_dir: str | Path, *, state=None,
         name, value, dims, wall = ("epsilon", epsilon, "[0 2 -3 0 0 0 0]",
                                    "epsilonWallFunction")
     bc = {}
-    for patch in of_mesh.inlet_patches + of_mesh.outlet_patches + ["atmosphere"]:
+    for patch in of_mesh.inlet_patches + of_mesh.outlet_patches + [top]:
         bc[patch] = {"type": "inletOutlet", "inletValue": f"uniform {value:.6g}",
                      "value": f"uniform {value:.6g}"}
     for patch in walls:
