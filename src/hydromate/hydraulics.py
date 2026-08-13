@@ -174,3 +174,31 @@ def read_measurements(path: Path, crs_epsg: int) -> pd.DataFrame:
     if vel is not None:
         out["scalar_velocity"] = pd.to_numeric(vel, errors="coerce")
     return out.dropna(subset=["x", "y"]).reset_index(drop=True)
+
+
+def resolve_outflow_wse(cfg, inflow_q: float) -> float:
+    """Downstream water-surface elevation for a prescribed-elevation outflow.
+
+    Shared by both backends: TELEMAC writes it as ``PRESCRIBED ELEVATIONS`` and
+    OpenFOAM as a ``prghPressure`` profile on the outlet patch, and they must agree
+    or the two models are not driven the same way.
+
+    ``stage_discharge`` (default) reads the rating curve and interpolates the WSE
+    at the simulated discharge; ``elevation`` uses the fixed prescribed value.
+    """
+    cond = cfg.boundaries.outflow_condition
+    if cond == "elevation":
+        if cfg.boundaries.prescribed_elevation is None:
+            raise ValueError(
+                "outflow_condition: elevation needs boundaries.prescribed_elevation"
+            )
+        return float(cfg.boundaries.prescribed_elevation)
+    # stage_discharge: look up the rating curve at the simulated Q
+    if cfg.boundaries.stage_discharge is None:
+        raise ValueError(
+            "outflow_condition: stage_discharge needs boundaries.stage_discharge (a Q-h "
+            "rating CSV). Generate one with `hydromate rating` from a Manning/"
+            "Strickler value and the channel geometry (normal-flow conditions)."
+        )
+    wse_at = read_stage_discharge(Path(cfg.boundaries.stage_discharge))
+    return wse_at(inflow_q)

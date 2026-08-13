@@ -27,7 +27,7 @@ Three things here address that directly:
 And the mesh is written directly, not snapped: a river bed is a height field, so it
 is *followed* by a structured, all-hexahedral, terrain-following grid rather than
 approximated by snappyHexMesh's castellate-and-snap. See
-``hydromate.openfoam.polymesh`` for the reasoning.
+``hydromate.solvers.openfoam.polymesh`` for the reasoning.
 
 Prerequisites: ``preprocessing.py`` and ``initial_run.py`` have run, so the case has
 a converged ``r2d.slf``; and ``openfoam.bashrc`` in case-config.yml points at your
@@ -44,7 +44,7 @@ from pathlib import Path
 
 from hydromate import setup_logging
 from hydromate.config import load_config
-from hydromate.openfoam import build_case, estimate_cells, load_hotstart, summarise
+from hydromate.solvers.openfoam import build_case, estimate_cells, load_hotstart, summarise
 
 # optional CLI arg selects the scenario config, e.g.
 #   python openfoam_preprocessing.py case-config-greenampt.yml

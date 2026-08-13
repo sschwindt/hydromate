@@ -8,7 +8,7 @@ result read as discharge/depth/velocity), so a 2D and a 3D run of the same reach
 held to the same standard and the numbers are directly comparable.
 
 The data come from the ``surfaceFieldValue`` monitors
-:func:`hydromate.openfoam.dicts._flux_functions` writes into ``controlDict``:
+:func:`hydromate.solvers.openfoam.dicts._flux_functions` writes into ``controlDict``:
 ``sum(phi)`` weighted by ``alpha.water`` over each inlet and outlet patch, i.e. the
 water discharge alone rather than the water-plus-air flux ``phi`` would give.
 OpenFOAM writes one ``surfaceFieldValue.dat`` per monitor under

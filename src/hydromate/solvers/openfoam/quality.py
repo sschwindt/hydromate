@@ -7,7 +7,7 @@ committing solver hours:
 volume - the same measures ``checkMesh`` reports, computed in numpy so the answer
 arrives while the mesh is still in memory and a bad ``cell_size`` / ``n_layers``
 combination can be corrected in seconds rather than after a decomposition and a
-failed run. ``checkMesh`` is still run by :mod:`hydromate.openfoam.runtime` and
+failed run. ``checkMesh`` is still run by :mod:`hydromate.solvers.openfoam.runtime` and
 remains the authority; this is the fast pre-check, exactly as
 :mod:`hydromate.mesh_quality` is for the TELEMAC mesh.
 
@@ -290,7 +290,7 @@ def aspect_ratios(mesh, face_normals: np.ndarray, volumes: np.ndarray) -> np.nda
 
 
 def assess(of_mesh, *, state=None, roughness_constant: float = 0.5) -> MeshReport:
-    """Measure *of_mesh* (an :class:`~hydromate.openfoam.mesh.OpenFoamMesh`).
+    """Measure *of_mesh* (an :class:`~hydromate.solvers.openfoam.mesh.OpenFoamMesh`).
 
     *state* is the optional 2D hotstart; with one, the roughness regime (``ks+``) is
     evaluated at the reach's own depth and velocity rather than guessed.
@@ -354,7 +354,7 @@ def assess(of_mesh, *, state=None, roughness_constant: float = 0.5) -> MeshRepor
 def _assess_wall_function(of_mesh, report: MeshReport, *, state,
                           roughness_constant: float) -> None:
     """Is the rough wall function admissible on the bed layer as built?"""
-    from hydromate.openfoam.mesh import column_corner_vertices
+    from hydromate.solvers.openfoam.mesh import column_corner_vertices
 
     corners = column_corner_vertices(of_mesh.grid)
     first = of_mesh.first_layer_height[corners].mean(axis=1)   # per column [m]

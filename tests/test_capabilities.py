@@ -313,3 +313,82 @@ def test_a_fresh_case_reports_steady2d_configured_but_unbuilt(tmp_path):
     assert steady.implemented is Support.SUPPORTED
     assert steady.configured is True
     assert steady.built is False and steady.run is False
+
+
+# --------------------------------------------------------------------------- #
+# compatibility shims for the moved modules
+# --------------------------------------------------------------------------- #
+
+
+MOVED_MODULES = [
+    ("hydromate.mesh", "hydromate.solvers.telemac.mesh"),
+    ("hydromate.steering", "hydromate.solvers.telemac.steering"),
+    ("hydromate.boundary", "hydromate.solvers.telemac.boundary"),
+    ("hydromate.pipeline", "hydromate.solvers.telemac.pipeline"),
+    ("hydromate.threed", "hydromate.solvers.telemac.threed"),
+    ("hydromate.unsteady", "hydromate.solvers.telemac.unsteady"),
+    ("hydromate.sortie", "hydromate.solvers.telemac.sortie"),
+    ("hydromate.wetting", "hydromate.solvers.telemac.wetting"),
+    ("hydromate.sections", "hydromate.solvers.telemac.sections"),
+    ("hydromate.fortran", "hydromate.solvers.telemac.fortran"),
+    ("hydromate.gainlose", "hydromate.solvers.telemac.gainlose"),
+    ("hydromate.watertable", "hydromate.solvers.telemac.watertable"),
+    ("hydromate.mesh_quality", "hydromate.solvers.telemac.mesh_quality"),
+    ("hydromate.flux_convergence", "hydromate.solvers.telemac.flux_convergence"),
+    ("hydromate.selafin", "hydromate.core.selafin"),
+    ("hydromate.openfoam", "hydromate.solvers.openfoam"),
+]
+
+
+@pytest.mark.parametrize("old,new", MOVED_MODULES, ids=[o for o, _ in MOVED_MODULES])
+def test_the_old_import_path_is_the_same_module_object(old, new):
+    """Case scripts written before the backends were split out are sitting in users'
+    working trees. The shims alias through ``sys.modules`` rather than re-exporting,
+    so there is exactly one module and no second surface to keep in step - which also
+    means private names and identity checks survive."""
+    import importlib
+
+    assert importlib.import_module(old) is importlib.import_module(new)
+
+
+def test_private_names_survive_the_shim():
+    """A re-export shim would have dropped these silently; tests import them."""
+    from hydromate.mesh import _classify_zone, _parse_decimal, _ZONE_PRIORITY
+
+    assert _parse_decimal("0,5") == 0.5
+    assert _classify_zone("Main channel") == "channel"
+    assert _ZONE_PRIORITY["channel"] == 1
+
+
+def test_nothing_in_core_imports_a_solver():
+    """The rule the layering exists to enforce: backends depend on the core, never
+    the other way round. Checked by reading the source, so it holds even for imports
+    that only happen inside a function."""
+    import pathlib
+    import re
+
+    core = pathlib.Path(__file__).resolve().parent.parent / "src" / "hydromate" / "core"
+    offenders = []
+    for path in core.rglob("*.py"):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"^\s*(from|import)\s+hydromate\.solvers\b", line):
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+    assert not offenders, "core imports a solver backend:\n  " + "\n  ".join(offenders)
+
+
+def test_openfoam_does_not_import_the_telemac_backend():
+    """The two backends are siblings. OpenFOAM is *hotstarted* from a TELEMAC result,
+    but it reads that through the shared SERAFIN codec in the core, not by reaching
+    into the other backend."""
+    import pathlib
+    import re
+
+    root = (pathlib.Path(__file__).resolve().parent.parent / "src" / "hydromate"
+            / "solvers" / "openfoam")
+    offenders = []
+    for path in root.rglob("*.py"):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"hydromate\.solvers\.telemac\b", line):
+                offenders.append(f"{path.name}:{number}: {line.strip()}")
+    assert not offenders, ("the OpenFOAM backend reaches into TELEMAC:\n  "
+                           + "\n  ".join(offenders))

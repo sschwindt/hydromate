@@ -1,12 +1,68 @@
 Code documentation
 ==================
 
-This page is generated automatically from the docstrings in the ``hydromate`` package. Each section documents one module of the pipeline.
+This page is generated automatically from the docstrings in the ``hydromate`` package. Each section documents one module. The package is layered: ``hydromate.core`` is solver-agnostic, and ``hydromate.solvers.<name>`` is one subpackage per simulation code.
 
 Configuration
 -------------------------------------------------------------------------------
 
 .. automodule:: hydromate.config
+   :members:
+
+Solver-agnostic core
+-------------------------------------------------------------------------------
+
+``hydromate.core`` holds everything that describes the river and the modelling intent
+rather than a particular simulation code. **Nothing here imports a solver** - backends
+depend on the core, never the other way round - which is what lets a second simulation
+code be an addition rather than a rewrite.
+
+.. automodule:: hydromate.core.geodata
+   :members:
+
+.. automodule:: hydromate.core.raster
+   :members:
+
+.. automodule:: hydromate.core.boundaries
+   :members:
+
+.. automodule:: hydromate.core.structures
+   :members:
+
+.. automodule:: hydromate.core.capabilities
+   :members:
+
+.. automodule:: hydromate.core.registry
+   :members:
+
+The OpenFOAM backend
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.solvers.openfoam.polymesh
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.mesh
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.hotstart
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.fields
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.dicts
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.case
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.quality
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.runtime
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.report
    :members:
 
 Compile docs
@@ -62,25 +118,25 @@ Stage 1 -- DEM ingest and clipping
 Stage 2 -- mesh, bathymetry and SELAFIN geometry
 -------------------------------------------------------------------------------
 
-.. automodule:: hydromate.mesh
+.. automodule:: hydromate.solvers.telemac.mesh
    :members:
 
-.. automodule:: hydromate.selafin
+.. automodule:: hydromate.core.selafin
    :members:
 
-.. automodule:: hydromate.mesh_quality
+.. automodule:: hydromate.solvers.telemac.mesh_quality
    :members:
 
 Stage 3 -- boundary conditions
 -------------------------------------------------------------------------------
 
-.. automodule:: hydromate.boundary
+.. automodule:: hydromate.solvers.telemac.boundary
    :members:
 
 Stage 4 -- steering and friction files
 -------------------------------------------------------------------------------
 
-.. automodule:: hydromate.steering
+.. automodule:: hydromate.solvers.telemac.steering
    :members:
 
 Hydraulic input readers
@@ -122,7 +178,7 @@ Stage 5 -- calibration CSV and HydroBayesCal config
 Pipeline orchestration
 -------------------------------------------------------------------------------
 
-.. automodule:: hydromate.pipeline
+.. automodule:: hydromate.solvers.telemac.pipeline
    :members:
 
 Shared per-case workflow helpers
@@ -134,7 +190,7 @@ Shared per-case workflow helpers
 Boundary-flux convergence (hotstart check)
 -------------------------------------------------------------------------------
 
-.. automodule:: hydromate.flux_convergence
+.. automodule:: hydromate.solvers.telemac.flux_convergence
    :members:
 
 Mesh-convergence study
@@ -152,7 +208,7 @@ Mesh-resolution validity checks
 TELEMAC-3D extension
 -------------------------------------------------------------------------------
 
-.. automodule:: hydromate.threed
+.. automodule:: hydromate.solvers.telemac.threed
    :members:
 
 Vertical-layer (3D) convergence study
@@ -164,7 +220,7 @@ Vertical-layer (3D) convergence study
 Unsteady (hydrograph) extension
 -------------------------------------------------------------------------------
 
-.. automodule:: hydromate.unsteady
+.. automodule:: hydromate.solvers.telemac.unsteady
    :members:
 
 Logging

@@ -68,7 +68,7 @@ class State2D:
     @classmethod
     def from_slf(cls, path: str | Path, *, frame: int = -1) -> "State2D":
         """Read *path* (a TELEMAC ``r2d.slf``), by default its last frame."""
-        from hydromate.selafin import read_slf
+        from hydromate.core.selafin import read_slf
 
         path = Path(path)
         data = read_slf(path, frame=frame)

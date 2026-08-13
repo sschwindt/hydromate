@@ -29,9 +29,9 @@ import numpy as np
 
 from hydromate.config import Config
 from hydromate.core.capabilities import refresh_markers
-from hydromate.openfoam import dicts, fields, mesh as ofmesh, quality
-from hydromate.openfoam.hotstart import State2D, load_hotstart
-from hydromate.openfoam.polymesh import write_polymesh
+from hydromate.solvers.openfoam import dicts, fields, mesh as ofmesh, quality
+from hydromate.solvers.openfoam.hotstart import State2D, load_hotstart
+from hydromate.solvers.openfoam.polymesh import write_polymesh
 
 log = logging.getLogger("hydromate")
 
@@ -155,7 +155,7 @@ def build_case(cfg: Config, *, state: State2D | None = None,
         stage = None
         notes.append("free (Neumann) outfall: the model chooses its own tailwater")
     else:
-        from hydromate.pipeline import resolve_outflow_wse
+        from hydromate.hydraulics import resolve_outflow_wse
 
         stage = float(resolve_outflow_wse(cfg, q))
         notes.append(f"outlet stage {stage:.3f} m a.s.l. from "

@@ -25,7 +25,8 @@ from pathlib import Path
 
 import numpy as np
 
-from hydromate import selafin, threed
+from hydromate import threed
+from hydromate.core import selafin
 from hydromate.config import Config
 from hydromate.convergence import (
     DEFAULT_QUANTITIES, _gci_triplet, _rel_change, default_probes,

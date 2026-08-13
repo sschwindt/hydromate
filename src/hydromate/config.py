@@ -1069,7 +1069,7 @@ class OpenFoam:
 
     Entirely additive: a case config without an ``openfoam:`` block gets this
     dataclass at its defaults and nothing in the TELEMAC path ever consults it.
-    See :mod:`hydromate.openfoam` for what the values mean physically.
+    See :mod:`hydromate.solvers.openfoam` for what the values mean physically.
 
     The defaults are tuned for a small gravel-bed reach hotstarted from a converged
     TELEMAC 2D result. The two that matter most:
@@ -1082,7 +1082,7 @@ class OpenFoam:
     * ``auto_bed_layer`` pins the bed-adjacent layer to the reach's own ``ks`` so
       OpenFOAM's rough wall function is admissible. On a gravel bed that layer is a
       large fraction of the depth; refining past it silently invalidates the wall
-      function rather than improving anything (see :mod:`hydromate.openfoam.quality`).
+      function rather than improving anything (see :mod:`hydromate.solvers.openfoam.quality`).
     """
 
     # ---- environment --------------------------------------------------------
@@ -1198,7 +1198,7 @@ class Config:
     drying: Drying = field(default_factory=Drying)
     # dams / weirs / walls / buildings (optional; see hydromate.core.structures)
     structures: Structures = field(default_factory=Structures)
-    # OpenFOAM free-surface extension (optional; purely additive, see hydromate.openfoam)
+    # OpenFOAM free-surface extension (optional; see hydromate.solvers.openfoam)
     openfoam: OpenFoam = field(default_factory=OpenFoam)
     # where the OpenFOAM case tree is written; defaults to <sim_dir>/openfoam
     openfoam_dir: Path | None = None

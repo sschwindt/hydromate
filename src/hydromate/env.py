@@ -9,7 +9,7 @@ geospatial stack (gmsh, rasterio, geopandas) cleanly decoupled from either solve
 interpreter, and means neither solver's environment can leak into the other's.
 
 :class:`ShellRuntime` is that mechanism on its own; :class:`TelemacRuntime` adds the
-TELEMAC-specific launchers, and :class:`hydromate.openfoam.runtime.OpenFoamRuntime`
+TELEMAC-specific launchers, and :class:`hydromate.solvers.openfoam.runtime.OpenFoamRuntime`
 the OpenFOAM ones.
 """
 

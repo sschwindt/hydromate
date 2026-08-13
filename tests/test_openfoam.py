@@ -1,4 +1,4 @@
-"""The OpenFOAM free-surface extension (:mod:`hydromate.openfoam`).
+"""The OpenFOAM free-surface extension (:mod:`hydromate.solvers.openfoam`).
 
 Pure-python: no OpenFOAM, no solver, no geodata. The mesh under test is a small
 hand-built lattice, which is enough to pin down the things that would otherwise only
@@ -24,9 +24,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from hydromate.openfoam import mesh as ofmesh
-from hydromate.openfoam import polymesh
-from hydromate.openfoam.quality import (
+from hydromate.solvers.openfoam import mesh as ofmesh
+from hydromate.solvers.openfoam import polymesh
+from hydromate.solvers.openfoam.quality import (
     aspect_ratios, cell_geometry, face_geometry, non_orthogonality, skewness,
 )
 
@@ -255,7 +255,7 @@ class _Cfg:
 
 
 def test_fvsolution_carries_the_settings_that_tame_the_air_phase():
-    from hydromate.openfoam.dicts import fv_solution, stages
+    from hydromate.solvers.openfoam.dicts import fv_solution, stages
 
     cfg = _Cfg()
     run = [s for s in stages(cfg) if s.name == "run"][0]
@@ -270,7 +270,7 @@ def test_fvsolution_carries_the_settings_that_tame_the_air_phase():
 
 
 def test_fvconstraints_caps_the_velocity():
-    from hydromate.openfoam.dicts import fv_constraints
+    from hydromate.solvers.openfoam.dicts import fv_constraints
 
     text = fv_constraints(_Cfg(), 4.5)
     assert "type            limitVelocity;" in text
@@ -282,7 +282,7 @@ def test_stage_schemes_differ_in_compression_not_in_kind():
     """Stage 1 must still compress the interface, only less - OF9 puts cAlpha in the
     scheme, so dropping interfaceCompression entirely would demand a legacy
     fvSolution key and smear the surface through the whole spin-up."""
-    from hydromate.openfoam.dicts import fv_schemes, stages
+    from hydromate.solvers.openfoam.dicts import fv_schemes, stages
 
     cfg = _Cfg()
     spinup, run = stages(cfg)
@@ -300,7 +300,7 @@ def test_time_step_estimate_is_calibrated_against_a_measured_run():
     0.3 with the 4.5 m/s cap and a 0.057 m thinnest layer. The naive
     `Courant * layer / water_speed` gave 1e-1 s - fifty times too optimistic.
     """
-    from hydromate.openfoam.case import estimate_time_step
+    from hydromate.solvers.openfoam.case import estimate_time_step
 
     class _M:
         min_layer_height = 0.057
@@ -312,7 +312,7 @@ def test_time_step_estimate_is_calibrated_against_a_measured_run():
 
 def test_reach_flush_time_warns_when_the_run_is_too_short():
     """A free-surface run cannot be steady before the domain has been flushed once."""
-    from hydromate.openfoam.case import cost_lines
+    from hydromate.solvers.openfoam.case import cost_lines
 
     class _Grid:
         cell_xy = np.array([[0.0, 0.0], [300.0, 400.0]])   # 500 m diagonal
@@ -333,7 +333,7 @@ def test_reach_flush_time_warns_when_the_run_is_too_short():
 
 
 def test_control_dict_monitors_water_discharge_not_total_flux():
-    from hydromate.openfoam.dicts import control_dict, stages
+    from hydromate.solvers.openfoam.dicts import control_dict, stages
 
     cfg = _Cfg()
     text = control_dict(cfg, stages(cfg)[1], patches=["inlet-1", "outlet-1"])
@@ -349,7 +349,7 @@ def test_control_dict_monitors_water_discharge_not_total_flux():
 
 
 def test_stage_activation_swaps_the_system_dicts(tmp_path):
-    from hydromate.openfoam.dicts import STAGED_FILES, activate
+    from hydromate.solvers.openfoam.dicts import STAGED_FILES, activate
 
     system = tmp_path / "system"
     for stage in ("stage1-spinup", "stage2-run"):
@@ -365,7 +365,7 @@ def test_stage_activation_swaps_the_system_dicts(tmp_path):
 def test_activate_regenerates_from_the_config_it_is_given(tmp_path):
     """Changing end_time and re-running must actually change the run, not just the
     message about it - the staged dicts are rewritten from the live config."""
-    from hydromate.openfoam.dicts import activate, write_dicts
+    from hydromate.solvers.openfoam.dicts import activate, write_dicts
 
     class _Mesh:
         inlet_patches = ["inlet-1"]
@@ -394,7 +394,7 @@ def test_read_patch_names_round_trips_the_boundary_file(tmp_path):
 
 
 def test_field_rendering_uses_the_verified_boundary_types():
-    from hydromate.openfoam.fields import render_field, scalar_list
+    from hydromate.solvers.openfoam.fields import render_field, scalar_list
 
     text = render_field("volScalarField", "alpha.water", "[0 0 0 0 0 0 0]",
                         scalar_list(np.array([0.0, 1.0])),
@@ -408,7 +408,7 @@ def test_field_rendering_uses_the_verified_boundary_types():
 
 def test_alpha_is_the_submerged_fraction_of_each_cell():
     """The VOF seed must be a one-cell-sharp interface at the 2D free surface."""
-    from hydromate.openfoam.fields import initial_alpha
+    from hydromate.solvers.openfoam.fields import initial_alpha
 
     grid = _plan_grid(1, 1)
     bed = np.zeros(grid.n_vertices)

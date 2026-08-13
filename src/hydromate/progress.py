@@ -48,7 +48,7 @@ class ProgressBar:
     the log is not flooded.
 
     Split out of :class:`SolverProgress` so the OpenFOAM renderer
-    (:class:`hydromate.openfoam.runtime.OpenFoamProgress`), which parses a completely
+    (:class:`hydromate.solvers.openfoam.runtime.OpenFoamProgress`), which parses a completely
     different listing, presents an identical bar rather than a second look-alike
     implementation. Callers :meth:`echo` each raw line and :meth:`update` the
     position; :class:`SolverProgress` keeps doing both from one :meth:`feed`.

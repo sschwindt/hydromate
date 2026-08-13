@@ -38,7 +38,7 @@ still selects the free outfall.
 Initial conditions
 ------------------
 ``alpha.water`` and ``U`` come from the 2D hotstart (see
-:mod:`hydromate.openfoam.hotstart`) and are the only non-uniform internal fields;
+:mod:`hydromate.solvers.openfoam.hotstart`) and are the only non-uniform internal fields;
 ``p_rgh`` starts at 0 (as in every tutorial - the first pressure solve resolves it)
 and the turbulence fields start uniform at scales derived from the reach's own depth
 and velocity.
@@ -52,7 +52,7 @@ from pathlib import Path
 
 import numpy as np
 
-from hydromate.openfoam.polymesh import foam_footer, foam_header
+from hydromate.solvers.openfoam.polymesh import foam_footer, foam_header
 
 log = logging.getLogger("hydromate")
 
@@ -126,7 +126,7 @@ def initial_velocity(of_mesh, alpha: np.ndarray) -> np.ndarray:
 
     Deliberately uniform over the depth rather than a log profile. The log profile's
     normalisation is only meaningful where the wall function is admissible, and on a
-    gravel bed that is often nowhere (see :mod:`hydromate.openfoam.quality`); the
+    gravel bed that is often nowhere (see :mod:`hydromate.solvers.openfoam.quality`); the
     vertical structure is what the 3D run is *for*, so it is left to develop during
     the spin-up stage rather than assumed here. Scaling by ``alpha`` keeps the
     interface cell from carrying a full-strength velocity into the air.

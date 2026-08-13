@@ -42,7 +42,7 @@ from pathlib import Path
 
 import numpy as np
 
-from hydromate import selafin
+from hydromate.core import selafin
 from hydromate.config import Config
 
 log = logging.getLogger("hydromate")

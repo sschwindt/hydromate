@@ -5,7 +5,7 @@ Why there is no STL here
 The usual reason a river CFD workflow needs an STL is ``snappyHexMesh``: it meshes a
 background block and *snaps* it onto a triangulated surface, so every solid object has
 to arrive as triangles. hydromate does not use snappyHexMesh (see
-:mod:`hydromate.openfoam.polymesh` for why), and writes ``constant/polyMesh``
+:mod:`hydromate.solvers.openfoam.polymesh` for why), and writes ``constant/polyMesh``
 directly. That removes the requirement entirely: a structure only has to tell the
 mesher **where its footprint is** and **how high it stands**, and both are ordinary
 vector attributes.

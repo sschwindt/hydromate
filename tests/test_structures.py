@@ -228,7 +228,7 @@ def test_solid_mask_and_footprint_select_only_solids():
 def test_a_solid_structure_removes_columns_from_the_openfoam_lattice():
     """And the removal must survive the hole-filling step, which exists to close
     exactly this kind of interior void."""
-    from hydromate.openfoam.mesh import build_plan_grid
+    from hydromate.solvers.openfoam.mesh import build_plan_grid
 
     domain = Polygon([(0, 0), (30, 0), (30, 30), (0, 30)])
     plain = build_plan_grid(domain, 1.0)
@@ -246,7 +246,7 @@ def test_a_wall_across_the_whole_domain_is_reported_not_silently_halved(caplog):
     """Cutting the domain in two is almost always a drawing error; it must be loud."""
     import logging
 
-    from hydromate.openfoam.mesh import build_plan_grid
+    from hydromate.solvers.openfoam.mesh import build_plan_grid
 
     domain = Polygon([(0, 0), (30, 0), (30, 30), (0, 30)])
     with caplog.at_level(logging.WARNING, logger="hydromate"):

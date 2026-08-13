@@ -14,7 +14,7 @@ terrain fills the domain with air that has nothing to do and every opportunity t
 misbehave: large recirculating air cells drive the Courant number, the atmosphere
 patch has to swallow the resulting in/outflow, and the time step collapses on a
 phase nobody is interested in. Clamping the lid to ``freeboard`` metres above the
-water surface (from the TELEMAC 2D result - see :mod:`hydromate.openfoam.hotstart`)
+water surface (from the TELEMAC 2D result - see :mod:`hydromate.solvers.openfoam.hotstart`)
 typically removes 60-90% of the air cells, keeps the atmosphere patch close to the
 interface where its ``inletOutlet``/``totalPressure`` pair behaves, and leaves the
 free surface room to move.
@@ -35,10 +35,11 @@ import numpy as np
 
 from hydromate.config import Config
 from hydromate.core.geodata import dataset
+from hydromate.core.raster import sample_raster_at
 from hydromate.core.structures import (
     SOLID, apply_to_bed, load_structures, solid_footprint,
 )
-from hydromate.openfoam.polymesh import PolyMesh, assemble, validate
+from hydromate.solvers.openfoam.polymesh import PolyMesh, assemble, validate
 
 log = logging.getLogger("hydromate")
 
@@ -475,7 +476,7 @@ def classify_sides(cfg: Config, midpoints: np.ndarray,
     """
     import shapely
 
-    from hydromate.boundary import liquid_line_details, liquid_lines
+    from hydromate.core.boundaries import liquid_line_details, liquid_lines
 
     labels = np.full(midpoints.shape[0], BANKS_PATCH, dtype=object)
     names: list[str] = []
@@ -589,9 +590,7 @@ def _domain_polygon(cfg: Config, state, *, domain: str, wet_margin: float,
     """The plan footprint the lattice covers: the ROI, or the wetted corridor."""
     from shapely.ops import unary_union
 
-    from hydromate.mesh import roi_polygon
-
-    roi = roi_polygon(cfg)
+    roi = dataset(cfg).roi_polygon()
     if domain == "roi" or state is None:
         return roi, "the full ROI boundary"
     wet = state.wet_footprint(wet_depth=wet_depth, buffer=wet_margin)
@@ -615,7 +614,7 @@ def _domain_polygon(cfg: Config, state, *, domain: str, wet_margin: float,
 def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> OpenFoamMesh:
     """Build the terrain-following hex mesh for *cfg*'s OpenFOAM case.
 
-    *state* is an optional :class:`~hydromate.openfoam.hotstart.State2D` (the
+    *state* is an optional :class:`~hydromate.solvers.openfoam.hotstart.State2D` (the
     converged TELEMAC 2D result). With one, the lid follows the free surface and the
     footprint can be trimmed to the wetted corridor; without one, the lid is flat and
     the footprint is the whole ROI - correct, but far more air.
@@ -641,8 +640,6 @@ def build_mesh(cfg: Config, *, state=None, dem: str | Path | None = None) -> Ope
         notes.append(f"lattice rotated {np.degrees(angle):+.1f} deg onto the reach axis")
     grid = build_plan_grid(polygon, of.cell_size, angle=angle,
                            max_columns=of.max_plan_columns, blocked=blocked)
-
-    from hydromate.mesh import sample_raster_at
 
     bed = sample_raster_at(dem, grid.vert_xy[:, 0], grid.vert_xy[:, 1])
     column_bed = sample_raster_at(dem, grid.cell_xy[:, 0], grid.cell_xy[:, 1])

@@ -228,7 +228,7 @@ def _run_openfoam(argv: list[str]) -> int:
     args = _openfoam_parser().parse_args(argv)
     setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
     log = logging.getLogger("hydromate")
-    from hydromate.openfoam import build_case, estimate_cells, load_hotstart, summarise
+    from hydromate.solvers.openfoam import build_case, estimate_cells, load_hotstart, summarise
 
     try:
         cfg = load_config(args.config)

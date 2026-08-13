@@ -1,6 +1,6 @@
 """A self-contained OpenFOAM ``constant/polyMesh`` writer.
 
-This is the OpenFOAM counterpart of :mod:`hydromate.selafin`: hydromate writes the
+This is the OpenFOAM counterpart of :mod:`hydromate.core.selafin`: hydromate writes the
 mesh itself rather than driving a mesher, so the mesh is exactly what the case
 config asks for and nothing is left to a black box.
 
@@ -26,7 +26,7 @@ lid gives a mesh that is:
   surface, so the wall functions see the real bed, not a staircase.
 
 The price is non-orthogonality wherever the bed is steep, which is measured
-(:mod:`hydromate.openfoam.quality`) rather than assumed away.
+(:mod:`hydromate.solvers.openfoam.quality`) rather than assumed away.
 
 Format notes
 ------------
@@ -367,7 +367,7 @@ def validate(mesh: PolyMesh) -> list[str]:
     """Return the structural problems that would make OpenFOAM reject the mesh.
 
     Cheap, exact checks on the addressing only - geometric quality (orthogonality,
-    skewness, volume) is :mod:`hydromate.openfoam.quality`'s job.
+    skewness, volume) is :mod:`hydromate.solvers.openfoam.quality`'s job.
     """
     problems: list[str] = []
     ni = mesh.n_internal_faces

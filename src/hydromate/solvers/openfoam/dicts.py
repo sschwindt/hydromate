@@ -23,12 +23,12 @@ settings", and the settings that matter are these four:
    as spurious velocity near the bed.
 
 The lid clamping that removes most air cells altogether is in
-:mod:`hydromate.openfoam.mesh`, and matters more than all four.
+:mod:`hydromate.solvers.openfoam.mesh`, and matters more than all four.
 
 Staging
 -------
 Two dict sets are written, under ``system/stage1-spinup/`` and
-``system/stage2-run/``; :mod:`hydromate.openfoam.runtime` copies one into
+``system/stage2-run/``; :mod:`hydromate.solvers.openfoam.runtime` copies one into
 ``system/`` to select it. Stage 1 settles the interface from the 2D hotstart at a
 tight Courant number with diffusive schemes; stage 2 restarts from it and runs the
 production settings. The split exists because the first seconds after a hotstart are
@@ -43,7 +43,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from hydromate.openfoam.polymesh import foam_footer, foam_header
+from hydromate.solvers.openfoam.polymesh import foam_footer, foam_header
 
 log = logging.getLogger("hydromate")
 
@@ -210,7 +210,7 @@ def monitor_interval(of) -> float:
 
     A tenth of the field write interval, so a run writing ten result frames leaves a
     hundred discharge samples - enough for the ten-sample steady window
-    :mod:`hydromate.openfoam.report` looks for, without a line per time step.
+    :mod:`hydromate.solvers.openfoam.report` looks for, without a line per time step.
     """
     return max(of.write_interval / 10.0, 1e-6)
 
@@ -221,7 +221,7 @@ def _flux_functions(patches: list[str], interval: float) -> str:
     ``phi`` is the total volumetric flux, water and air together; weighting it by
     ``alpha.water`` (a documented ``surfaceFieldValue`` option in OpenFOAM 9) gives
     the water discharge alone. That is the quantity the run has to converge on, and
-    the one :mod:`hydromate.openfoam.report` reads back - the direct analogue of the
+    the one :mod:`hydromate.solvers.openfoam.report` reads back - the direct analogue of the
     boundary-flux balance :mod:`hydromate.flux_convergence` reads out of a TELEMAC
     listing.
     """
@@ -467,12 +467,12 @@ def activate(case_dir: str | Path, stage: str, cfg=None) -> None:
     nothing about it looks wrong.
 
     The patch names are read back from the written mesh
-    (:func:`hydromate.openfoam.polymesh.read_patch_names`), so regenerating needs no
+    (:func:`hydromate.solvers.openfoam.polymesh.read_patch_names`), so regenerating needs no
     remeshing and no state carried over from the build.
     """
     import shutil
 
-    from hydromate.openfoam.polymesh import read_patch_names
+    from hydromate.solvers.openfoam.polymesh import read_patch_names
 
     case_dir = Path(case_dir)
     system = case_dir / "system"

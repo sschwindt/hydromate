@@ -39,7 +39,7 @@ from pathlib import Path
 
 from hydromate import setup_logging
 from hydromate.config import load_config
-from hydromate.openfoam import OpenFoamRuntime, report
+from hydromate.solvers.openfoam import OpenFoamRuntime, report
 
 # optional CLI arg selects the scenario config
 CONFIG = Path(__file__).resolve().parent / (
@@ -96,7 +96,7 @@ def main() -> None:
         print(f"\ndecomposing over {nprocs} subdomains ...")
         runtime.decompose(case_dir)
 
-    from hydromate.openfoam.dicts import stages
+    from hydromate.solvers.openfoam.dicts import stages
 
     for stage in stages(cfg):
         if stage.name not in STAGES:

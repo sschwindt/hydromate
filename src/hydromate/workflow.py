@@ -271,7 +271,7 @@ def mesh_from_geometry(cfg: Config):
     """
     import numpy as np
 
-    from hydromate import selafin
+    from hydromate.core import selafin
     from hydromate.mesh import Mesh
 
     geo = selafin.read_slf(cfg.model_path(cfg.geometry_slf))
@@ -298,7 +298,8 @@ def water_table_mask(cfg: Config):
     try:
         import numpy as np
 
-        from hydromate import selafin, watertable
+        from hydromate import watertable
+        from hydromate.core import selafin
 
         mesh = mesh_from_geometry(cfg)
         ic = selafin.read_slf(cfg.model_path(cfg.ic_slf))["values"]["WATER DEPTH"]

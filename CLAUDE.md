@@ -126,13 +126,19 @@ Config: `geodata.structures` (the layer) plus a `structures:` block for the attr
 
 ## Package structure: solver-agnostic core + pluggable backends
 
-hydromate is being restructured so TELEMAC and OpenFOAM are **two backends behind one
-case description**, rather than one tool with a second bolted on. The target layering is
-`hydromate/core/` (solver-agnostic: config, geodata, boundaries, ground truth,
-convergence maths, capabilities, registry) and `hydromate/solvers/<name>/` (one
-subpackage per simulation code). **Nothing in `core` imports a solver.** The move is
-staged; until a module has moved it stays at its historic `hydromate.<module>` path and
-old imports keep working through shims.
+hydromate is structured so TELEMAC and OpenFOAM are **two backends behind one case
+description**, rather than one tool with a second bolted on:
+
+* **`hydromate/core/`** - solver-agnostic. `config`, `geodata` (the cached `Dataset`), `raster` (DEM sampling), `boundaries` (the liquid-line readers), `structures` (dams/weirs/walls), `selafin` (the SERAFIN *codec* - a file format, not a solver: TELEMAC writes geometry through it and OpenFOAM reads a 2D result through it, neither owns it), `capabilities` and `registry`.
+* **`hydromate/solvers/telemac/`** - `mesh` (gmsh), `boundary` (`.cli`), `steering`, `sortie`, `threed`, `unsteady`, `fortran`, `gainlose`, `watertable`, `wetting`, `sections`, `flux_convergence`, `mesh_quality`, `pipeline`.
+* **`hydromate/solvers/openfoam/`** - `polymesh`, `mesh`, `hotstart`, `fields`, `dicts`, `case`, `runtime`, `quality`, `report`.
+* still at the top level, pending the phase-5 split into core + adapter halves: `convergence`, `vertical_convergence`, `calibration`, `bayescal`, `workflow`, `mesh_validity`, `rating`, `hydraulics`, `dem`, `ground_truth`, `targets`, `flowtracker`, `campaigns`, `env`, `progress`, `logsetup`.
+
+**Two rules, enforced by tests rather than intent** (`tests/test_capabilities.py`): nothing in `core` imports a solver, and the OpenFOAM backend never reaches into the TELEMAC backend. Both are checked by reading the source, so they hold even for imports that only happen inside a function. OpenFOAM *is* hotstarted from a TELEMAC result, but it reads it through the shared SERAFIN codec in the core - which is exactly why `selafin` sits there.
+
+**Every historic import path still works.** `hydromate/mesh.py`, `steering.py`, `pipeline.py` (14 of them) plus `selafin.py` and `openfoam.py` are **shims that alias through `sys.modules`**, not re-export modules: `hydromate.mesh is hydromate.solvers.telemac.mesh` is literally true. Re-exporting would have silently dropped every private name (tests import `mesh._parse_decimal`) and broken identity checks; aliasing means there is exactly one module object and no second surface to keep in step. Parametrised over all 16 in the tests.
+
+**Both `solvers/*/__init__.py` resolve attributes lazily** (PEP 562), like the top-level package. Not decoration: each backend's `spec.py` is read by `hydromate status` to build a capability table, and importing `hydromate.solvers.telemac.spec` runs the package `__init__` first - so eager imports there would drag gmsh and numpy into a question that should cost nothing. Measured: `import hydromate` 6 ms / 64 modules, a capability listing 30 ms with **zero** heavy modules.
 
 **Capabilities and the `MODEL=` marker files (`hydromate/core/capabilities.py`).** Every
 case carries one marker per solver at its top level - `MODEL=TELEMAC_ENABLED`,

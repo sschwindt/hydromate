@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Callable
 
 from hydromate.env import ShellRuntime
-from hydromate.openfoam import dicts
+from hydromate.solvers.openfoam import dicts
 
 log = logging.getLogger("hydromate")
 
@@ -161,7 +161,7 @@ class OpenFoamRuntime(ShellRuntime):
         Pass *cfg* so the dictionaries are regenerated from the configuration this
         run was launched with; without it the build-time dictionaries are used and a
         changed ``end_time`` would be reported but not honoured (see
-        :func:`hydromate.openfoam.dicts.activate`).
+        :func:`hydromate.solvers.openfoam.dicts.activate`).
 
         Returns the ``CompletedProcess``; a non-zero exit is returned rather than
         raised, so a caller running both stages can report which one failed.
