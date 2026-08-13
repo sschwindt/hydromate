@@ -673,7 +673,13 @@ def test_the_monitors_are_written_for_vof_and_skipped_under_a_rigid_lid():
 
 
 def _write_3d_slf(path, *, nplan=3, npoin2=4):
-    """A minimal 3D SERAFIN: same plan mesh on `nplan` sigma levels."""
+    """A minimal 3D SERAFIN, written the way TELEMAC-3D actually writes one.
+
+    In particular NPLAN goes in **IPARAM(7)** and the dims record's fourth slot is
+    left at 1 - verified against a real r3d.slf (iparam[6] = 5, dims[3] = 1). The
+    first version of this fixture set both, which hid the fact that the reader was
+    looking in the wrong place and reported every real 3D result as 2D.
+    """
     import struct
 
     def record(payload: bytes) -> bytes:
@@ -699,7 +705,7 @@ def _write_3d_slf(path, *, nplan=3, npoin2=4):
         iparam[9] = 1                       # a DATE record follows
         f.write(record(iparam.tobytes()))
         f.write(record(np.array([1, 1, 1, 1, 1, 1], dtype=">i4").tobytes()))
-        f.write(record(np.array([1, npoin, 6, nplan], dtype=">i4").tobytes()))
+        f.write(record(np.array([1, npoin, 6, 1], dtype=">i4").tobytes()))  # NOT nplan
         f.write(record(np.ones(6, dtype=">i4").tobytes()))
         f.write(record(np.zeros(npoin, dtype=">i4").tobytes()))
         f.write(record(x.astype(">f8").tobytes()))
@@ -716,6 +722,7 @@ def test_read_slf_unrolls_a_3d_result_onto_its_plan_nodes(tmp_path):
     from hydromate.core.selafin import read_slf
 
     data = read_slf(_write_3d_slf(tmp_path / "r3d.slf", nplan=3, npoin2=4))
+    # from IPARAM(7), not the dims record - see _write_3d_slf
     assert data["nplan"] == 3
     assert data["x"].size == 4                       # cut back to the plan nodes
     assert data["values"]["VELOCITY U"].shape == (3, 4)
@@ -773,3 +780,32 @@ def test_a_2d_seed_still_answers_sample_profile(tmp_path):
     uv = flat.sample_profile(np.array([[0.0, 0.0], [0.0, 0.0]]),
                              np.array([0.1, 0.9]))
     assert uv[:, 0] == pytest.approx([2.0, 2.0])    # same at every elevation
+
+
+def test_initial_velocity_varies_over_the_depth_with_a_3d_seed(tmp_path):
+    """The whole point of pre_run.dimension: 3d. Verified against a real telemac3d
+    result (inn-kb08, 5 sigma planes): the seed spans 0.074 m/s at the bed to
+    0.390 m/s at the surface where a 2D seed gives a uniform 0.251 m/s."""
+    from hydromate.solvers.openfoam.fields import initial_velocity
+    from hydromate.solvers.openfoam.hotstart import State2D
+
+    state = State2D.from_slf(_write_3d_slf(tmp_path / "r3d.slf"))   # u = 1, 2, 3
+    n = 3
+    z = np.array([0.0, 1.0, 2.0])
+
+    class _Grid:
+        cell_xy = np.array([[0.0, 0.0]])
+
+    class _M:
+        grid = _Grid()
+        n_cells = n
+        cell_column = np.zeros(n, dtype=int)
+        cell_centres = np.column_stack([np.zeros(n), np.zeros(n), z])
+        column_uv = np.array([[2.0, 0.0]])          # the depth-averaged value
+
+    profiled = initial_velocity(_M(), np.ones(n), state)
+    assert profiled[:, 0] == pytest.approx([1.0, 2.0, 3.0])
+
+    state.u3d = state.v3d = state.z3d = None        # same seed, depth-averaged
+    flat = initial_velocity(_M(), np.ones(n), state)
+    assert flat[:, 0] == pytest.approx([2.0, 2.0, 2.0])

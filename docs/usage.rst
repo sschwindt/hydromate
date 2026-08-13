@@ -181,6 +181,23 @@ surface. That is the one case where prescribing vertical structure beats startin
 flat: it was computed by a solver on this reach's own bathymetry, not assumed from a
 log law whose normalisation is inadmissible on a gravel bed anyway.
 
+**It is not available on every reach, and hydromate checks before it spends the run.**
+TELEMAC-3D has only sigma planes, and their count is sized from the flow depth against
+the horizontal cell size, refusing cells more than four times taller than wide. A
+reach that is shallow relative to its plan mesh therefore has no room for an interior
+level at all: isar-2025 is 0.26 m deep with 0.62 m cells and gets exactly **two**
+planes - one layer, which is a depth-averaged answer at 3D cost. Asking for
+``dimension: 3d`` there returns in seconds with that reason and keeps the 2D seed. To
+make it available, the reach has to be deeper, or the plan mesh coarser.
+
+Where it does run, the seed run is deliberately made **robust rather than faithful**:
+it cold-starts at a constant depth rather than continuing the 2D surface (which, on a
+braided bed, lifts a great many dry columns onto the sigma mesh and diverges on the
+first solve), and it uses k-epsilon rather than Spalart-Allmaras (which diverges in
+the vertical diffusion of velocity on a wetting/drying bed). A seed needs a plausible
+profile, not agreement with the 2D surface. The result is checked for NaN before it is
+adopted.
+
 The air phase is the usual reason such runs fail, so three things address it: the
 **lid follows the 2D free surface** at a fixed ``freeboard`` so most air cells never
 exist; **semi-implicit MULES** lets the Courant target run near 0.9 instead of the

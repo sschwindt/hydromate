@@ -11,10 +11,13 @@ Fortran unformatted record markers), everything big-endian.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Sequence
 
 import numpy as np
+
+log = logging.getLogger("hydromate")
 
 _I4 = np.dtype(">i4")
 _F4 = np.dtype(">f4")
@@ -70,8 +73,18 @@ def read_slf(path: str | Path, *, frame: int = -1) -> dict:
         if iparam.size >= 10 and iparam[9] == 1:
             _read_record(f)  # DATE record
         dims = np.frombuffer(_read_record(f), dtype=_I4)
-        nelem, ndp = int(dims[0]), int(dims[2])
-        nplan = int(dims[3]) if dims.size > 3 else 1
+        nelem, npoin, ndp = int(dims[0]), int(dims[1]), int(dims[2])
+        # NPLAN lives in IPARAM(7) - index 6 - and that is where TELEMAC-3D actually
+        # writes it: a real r3d.slf carries iparam[6] = 5 while the dims record's
+        # fourth slot stays 1, so reading dims[3] (the intuitive place, and what the
+        # format description suggests) silently reports every 3D result as 2D.
+        nplan = int(iparam[6]) if iparam.size > 6 and iparam[6] > 1 else 1
+        if nplan == 1 and dims.size > 3 and dims[3] > 1:
+            nplan = int(dims[3])
+        if nplan > 1 and npoin % nplan:
+            log.warning("%s: NPOIN %d is not divisible by NPLAN %d; reading it as 2D",
+                        path.name, npoin, nplan)
+            nplan = 1
         ikle = np.frombuffer(_read_record(f), dtype=_I4).reshape(nelem, ndp) - 1
         ipobo = np.frombuffer(_read_record(f), dtype=_I4).copy()
         x = np.frombuffer(_read_record(f), dtype=fdtype).astype(float)

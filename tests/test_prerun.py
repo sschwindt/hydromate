@@ -215,3 +215,102 @@ def test_pre_run_is_on_by_default_and_validates_its_own_fields():
         PreRun(dimension="2.5d").validate()
     with pytest.raises(ValueError, match="require"):
         PreRun(require="maybe").validate()
+
+
+# --------------------------------------------------------------------------- #
+# the 3D extension - every one of these came out of running it for real
+# --------------------------------------------------------------------------- #
+
+def test_the_3d_extension_applies_to_a_REUSED_result_too(tmp_path, spy, monkeypatch):
+    """It first hung off the coarse-pre-run branch alone, which meant `dimension: 3d`
+    silently did nothing on any case that already had an r2d.slf - and with
+    `reuse: true` as the default, that is the normal case."""
+    cfg = _cfg(tmp_path, dimension="3d")
+    (cfg.model_dir / "r2d.slf").write_bytes(b"")
+    seen = []
+    monkeypatch.setattr(prerun, "_extend_to_3d",
+                        lambda c, seed: seen.append(seed) or seed)
+
+    result = prerun.ensure_seed(cfg)
+    assert spy == []                       # the 2D result was reused, not recomputed
+    assert len(seen) == 1                  # ...and the 3D step still ran
+    assert result.source == prerun.EXISTING
+
+
+def test_a_2d_only_case_never_calls_the_3d_step(tmp_path, spy, monkeypatch):
+    cfg = _cfg(tmp_path)                   # dimension defaults to 2d
+    (cfg.model_dir / "r2d.slf").write_bytes(b"")
+    monkeypatch.setattr(prerun, "_extend_to_3d",
+                        lambda c, seed: pytest.fail("3D ran for a 2D case"))
+    assert prerun.ensure_seed(cfg).ok
+
+
+def test_a_mesh_too_flat_for_a_vertical_is_refused_before_the_solver(tmp_path,
+                                                                    monkeypatch):
+    """TELEMAC-3D has only sigma planes, sized from the depth against the cell size,
+    and refuses cells more than 4x taller than wide. isar-2025 is 0.26 m deep with
+    0.62 m cells and gets exactly 2 planes - one layer, i.e. a depth-averaged answer
+    at 3D cost (and, measured, a diverging one). Refuse, and say why."""
+    from hydromate.solvers.telemac import threed
+
+    flat = threed.VerticalDiscretization(
+        n_levels=2, dz=0.26, dx=0.62, depth=0.26, aspect=2.4,
+        reason="cells are flat (dx=0.62 m >> h=0.26 m)")
+    monkeypatch.setattr(threed, "infer_vertical_layers", lambda *a, **k: flat)
+    monkeypatch.setattr("hydromate.core.selafin.read_slf", lambda *a, **k: {})
+    monkeypatch.setattr(threed, "build_3d_cas",
+                        lambda *a, **k: pytest.fail("the solver was launched anyway"))
+
+    cfg = _cfg(tmp_path, dimension="3d")
+    seed = prerun.SeedResult(path=cfg.model_dir / "r2d.slf", source=prerun.EXISTING)
+    out = prerun._extend_to_3d(cfg, seed)
+
+    assert out.path == seed.path                    # kept the 2D seed
+    text = " ".join(out.notes)
+    assert "2 sigma planes" in text and "cells are flat" in text
+
+
+def test_a_diverged_3d_result_is_not_adopted_as_a_seed(tmp_path):
+    """A diverged TELEMAC run does not always fail loudly - it can march to the end
+    and write a file full of NaN. Seeding U from that gives an OpenFOAM run that dies
+    with no visible cause."""
+    import numpy as np
+
+    from hydromate.core.selafin import write_geometry
+
+    good = write_geometry(tmp_path / "good.slf",
+                          x=np.array([0.0, 1.0, 0.0]), y=np.array([0.0, 0.0, 1.0]),
+                          ikle=np.array([[1, 2, 3]]), ipobo=np.array([1, 2, 3]),
+                          bottom=np.array([1.0, 1.0, 1.0]))
+    bad = write_geometry(tmp_path / "bad.slf",
+                         x=np.array([0.0, 1.0, 0.0]), y=np.array([0.0, 0.0, 1.0]),
+                         ikle=np.array([[1, 2, 3]]), ipobo=np.array([1, 2, 3]),
+                         bottom=np.array([1.0, np.nan, 1.0]))
+    assert prerun._is_finite(good)
+    assert not prerun._is_finite(bad)
+    assert not prerun._is_finite(tmp_path / "absent.slf")
+
+
+def test_the_3d_seed_run_avoids_spalart_allmaras(monkeypatch):
+    """S-A maps to 3D model 5, which diverges in the velocity-diffusion solve on a
+    wetting/drying bed without a source-term patch. Measured NaN on two meshes; clean
+    with k-epsilon. A seed is not a turbulence study."""
+    from hydromate.solvers.telemac import steering
+
+    class _Hydro:
+        def __init__(self):
+            self.turbulence_model = "auto"
+
+    class _LC:
+        def __init__(self):
+            self.hydrodynamics = _Hydro()   # per instance, not shared on the class
+
+    lc = _LC()
+    monkeypatch.setattr(steering, "select_turbulence_model", lambda c: (6, "coarse"))
+    prerun._make_3d_robust(lc)
+    assert lc.hydrodynamics.turbulence_model == 3        # k-epsilon
+
+    lc2 = _LC()
+    monkeypatch.setattr(steering, "select_turbulence_model", lambda c: (3, "fine"))
+    prerun._make_3d_robust(lc2)
+    assert lc2.hydrodynamics.turbulence_model == "auto"  # left alone

@@ -135,9 +135,14 @@ def ensure_seed(cfg, *, enabled: bool | None = None,
 
     if pre.reuse and existing.exists():
         log.info("seeding from the existing 2D result %s", existing)
-        return _judge(SeedResult(path=existing, source=EXISTING), cfg.model_dir, cfg)
+        result = _judge(SeedResult(path=existing, source=EXISTING), cfg.model_dir, cfg)
+    else:
+        result = _coarse_pre_run(cfg, validate_env=validate_env)
 
-    result = _coarse_pre_run(cfg, validate_env=validate_env)
+    # The 3D extension applies to whichever 2D result we ended up with - including a
+    # reused one. Hanging it off the coarse-pre-run branch alone (as it first was)
+    # made `dimension: 3d` silently do nothing on every case that already had an
+    # r2d.slf, which with `reuse: true` is the normal one.
     if result.ok and pre.dimension == "3d":
         result = _extend_to_3d(cfg, result)
     return result
@@ -251,6 +256,18 @@ def _judge(result: SeedResult, model_dir, cfg) -> SeedResult:
 # the optional 3D pre-run
 # --------------------------------------------------------------------------- #
 
+# Below this many sigma planes a TELEMAC-3D run has one layer, which is a
+# depth-averaged answer computed at 3D cost. 3 is the first count that has an
+# interior level and therefore a profile to speak of.
+MIN_USEFUL_LEVELS = 3
+
+# Fixed step count for the 3D seed run - TELEMAC-3D has no DURATION keyword, so a
+# run is bounded by steps alone. Far fewer than add3d.py's 30,000-step
+# flux-convergence case: a seed does not have to reach steady state, it has to
+# produce a plausible profile for OpenFOAM to develop from.
+DEFAULT_3D_STEPS = 3_000
+
+
 def _extend_to_3d(cfg, seed: SeedResult) -> SeedResult:
     """Follow the 2D pre-run with a hydrostatic TELEMAC-3D run.
 
@@ -259,34 +276,129 @@ def _extend_to_3d(cfg, seed: SeedResult) -> SeedResult:
     still cheap enough to do better. The 3D case is itself hotstarted from the 2D
     result, which is why this can only run after the step above.
 
+    **It is not always possible, and the check happens before the solver.** TELEMAC-3D
+    has only sigma planes, and hydromate sizes their count from the depth against the
+    horizontal cell size, refusing cells more than four times taller than wide. On a
+    shallow reach meshed fine in plan there is no room for an interior level at all -
+    isar-2025 is 0.26 m deep with 0.62 m cells and gets exactly 2 planes, i.e. one
+    layer - so the run would cost 3D time to produce a depth-averaged answer. Measured
+    there: it also diverges (``GRACJG ... RELATIVE PRECISION NaN``), which is what a
+    single sigma layer over a wetting-drying bed tends to do. So this refuses, says
+    why, and keeps the 2D seed.
+
     Falls back to the 2D seed on any failure - a depth-uniform seed is a mild
     approximation, not a reason to lose the build.
     """
+    from hydromate.core import selafin
     from hydromate.solvers.telemac import threed
 
     try:
         from hydromate.env import TelemacRuntime
         from hydromate.workflow import run_solver_streaming
 
-        setups = threed.build_3d_cases(cfg)
-        case = setups["hydrostatic"]
+        # The 3D case hotstarts from the 2D result BY NAME (`FILE FOR 2D
+        # CONTINUATION`), so it has to be built and run in the folder that actually
+        # holds it - which is the pre-run subfolder when the seed was made here, not
+        # the main model dir.
+        lc = copy.copy(cfg)
+        lc.model_dir = seed.path.parent
+
+        data = selafin.read_slf(seed.path)
+        vertical = threed.infer_vertical_layers(lc, data=data)
+        if vertical.n_levels < MIN_USEFUL_LEVELS:
+            note = (f"3D pre-run skipped: this mesh supports only "
+                    f"{vertical.n_levels} sigma planes ({vertical.reason}), which is "
+                    "one layer - a depth-averaged answer at 3D cost. Seeding from 2D.")
+            log.warning("%s", note)
+            seed.notes.append(note)
+            return seed
+
+        _make_3d_robust(lc)
+        # build_3d_cas, not build_3d_cases: the seed needs exactly one case - the
+        # cheap hydrostatic one - and it needs it cold-started, which the three-case
+        # helper (written for add3d.py's continuation workflow) does not offer.
+        case = threed.build_3d_cas(
+            lc, n_levels=vertical.n_levels, non_hydrostatic=False,
+            hotstart="constant_depth", data=data,
+            out_name=threed.HYDROSTATIC_CAS,
+            results3d_name=threed.HYDROSTATIC_RESULT_3D,
+            results2d_name=threed.HYDROSTATIC_RESULT_2D,
+            n_time_steps=DEFAULT_3D_STEPS,
+            listing_period=threed.HYDROSTATIC_LISTING_PERIOD)
         runtime = TelemacRuntime(cfg.telemac)
         # The hydrostatic case is the cheap one and the only one written with a
         # listing period short enough to see its fluxes converge; the profile it
         # gives is what the seed is after, not the non-hydrostatic detail.
-        run_solver_streaming(runtime, cfg, cas_file=Path(case.cas).name,
+        run_solver_streaming(runtime, lc, cas_file=Path(case.cas).name,
                              solver="telemac3d",
                              duration=case.time_step * case.n_time_steps)
-        produced = cfg.model_path(threed.HYDROSTATIC_RESULT_3D)
-        if produced.exists():
+        produced = lc.model_path(threed.HYDROSTATIC_RESULT_3D)
+        if produced.exists() and _is_finite(produced):
             seed.path = produced
             seed.source = PRE_RUN
-            seed.notes.append("3D pre-run: the seed carries a vertical velocity "
-                              "profile rather than one depth-averaged value")
+            seed.notes.append(
+                f"3D pre-run: {vertical.n_levels} sigma planes, so the seed carries a "
+                "vertical velocity profile rather than one depth-averaged value")
             return seed
-        seed.notes.append(f"the 3D pre-run produced no {produced.name}; seeding from 2D")
+        why = ("diverged (its result is not finite)" if produced.exists()
+               else f"produced no {produced.name}")
+        seed.notes.append(f"the 3D pre-run {why}; seeding from 2D")
+        log.warning("the 3D pre-run %s; seeding from the 2D result", why)
     except Exception as exc:  # noqa: BLE001 - 2D is a perfectly good seed
         log.warning("the 3D pre-run failed (%s: %s); seeding from the 2D result",
                     type(exc).__name__, exc)
         seed.notes.append(f"3D pre-run failed ({type(exc).__name__}); seeding from 2D")
     return seed
+
+
+def _is_finite(result: Path) -> bool:
+    """Whether a solver result is usable at all.
+
+    A diverged TELEMAC run does not necessarily fail loudly - it can march to the end
+    and write a file full of NaN. Seeding an OpenFOAM case from that would put NaN
+    into ``U`` at t=0 and produce a run that dies with no obvious cause, so the seed
+    is checked before it is adopted rather than after it has done damage.
+    """
+    try:
+        import numpy as np
+
+        from hydromate.core import selafin
+
+        values = selafin.read_slf(result)["values"]
+        return all(np.isfinite(v).all() for v in values.values())
+    except Exception as exc:  # noqa: BLE001 - unreadable is also unusable
+        log.debug("could not validate %s: %s", result, exc)
+        return False
+
+
+def _make_3d_robust(lc) -> None:
+    """Two overrides the 3D *seed* run needs, both measured on isar-2025.
+
+    **Do not hotstart from the 2D continuation.** `FILE FOR 2D CONTINUATION` lifts the
+    2D free surface onto the sigma mesh, and on a braided reach that surface comes with
+    a great many dry and near-dry columns. TELEMAC-3D diverges on the very first solve
+    there (``GRACJG ... RELATIVE PRECISION NaN`` immediately after ``DEPTH IS READ IN
+    THE BINARY FILE``), on the coarse pre-run mesh and on the fine production mesh
+    alike. A ``CONSTANT DEPTH`` cold start at the reach's own median depth runs clean.
+    This is the same choice the vertical-convergence study already makes, for the same
+    reason - and it costs nothing here, because a seed does not need the 3D run to
+    agree with the 2D one about the surface. It needs a plausible *profile*.
+
+    **Do not take Spalart-Allmaras into 3D.** The 2D closure is auto-selected and on a
+    coarse mesh that is S-A, which maps to 3D model 5 - where it diverges in the
+    velocity-diffusion solve on a wetting/drying bed unless a source-term patch is
+    linked in (see any case's ``user_fortran/README``). Measured: NaN with S-A on two
+    different meshes, clean with k-epsilon. A seed is not a turbulence study, so the
+    robust closure is the right one to spend the run on.
+    """
+    from hydromate.solvers.telemac import steering
+
+    try:
+        pick = steering.select_turbulence_model(lc)[0]
+    except Exception as exc:  # noqa: BLE001 - the override is a safety net, not a need
+        log.debug("could not read the turbulence pick: %s", exc)
+        return
+    if int(pick) == 6:                      # 2D Spalart-Allmaras -> 3D model 5
+        log.info("3D pre-run: using k-epsilon instead of Spalart-Allmaras, which "
+                 "diverges in 3D on a wetting/drying bed without a source-term patch")
+        lc.hydrodynamics.turbulence_model = 3
