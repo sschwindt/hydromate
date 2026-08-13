@@ -146,11 +146,21 @@ class BackendSpec:
     def check_environment(self, cfg) -> bool | None:
         """Whether this machine can actually run the solver.
 
-        Delegated to the implementation, so it is the one thing here that does import
-        the backend - and only when a caller explicitly asks for it.
+        Probes the configured environment (:mod:`hydromate.core.environment`) and
+        checks it yields that solver's sentinel variables - so a wrong setup script is
+        caught here rather than hours into a job. Only ever called when a caller asks
+        for it (``hydromate status --check-env``), because it spawns a shell.
         """
         try:
-            return bool(self.load().check_environment(cfg))
+            from hydromate.core.environment import SolverEnvironment
+
+            block = getattr(getattr(cfg, self.config_key, None), "environment", None)
+            legacy = (getattr(cfg.telemac, "pysource", None) if self.name == "telemac"
+                      else getattr(cfg.openfoam, "bashrc", None))
+            env = SolverEnvironment.from_config(block, legacy_script=legacy)
+            if env.setup_script is None:
+                return None                      # nothing configured: not an answer
+            return bool(env.validate(self.name))
         except Exception as exc:  # noqa: BLE001 - an absent solver is a normal answer
             log.debug("%s environment check failed: %s", self.name, exc)
             return False

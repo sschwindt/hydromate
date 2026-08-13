@@ -23,19 +23,34 @@ from pathlib import Path
 from typing import Callable
 
 from hydromate.config import TelemacEnv
+from hydromate.core.environment import SolverEnvironment
 
 
 class ShellRuntime:
-    """Run commands in a subshell that has first sourced *env_script*."""
+    """Run commands inside a solver's environment.
 
-    def __init__(self, env_script: str | Path):
-        self.env_script = Path(env_script)
+    The *how* - source a shell script, call a ``.bat``, or go through WSL - belongs to
+    :class:`hydromate.core.environment.SolverEnvironment`, which this delegates to.
+    Before that existed this class hardcoded ``bash -lc 'source X; cmd'``, which is
+    three Linux assumptions in one line and the reason hydromate could not run on
+    Windows at all.
+    """
+
+    def __init__(self, env_script: str | Path | None = None, *,
+                 environment: SolverEnvironment | None = None):
+        if environment is None:
+            environment = SolverEnvironment(setup_script=env_script)
+        self.environment = environment
+
+    @property
+    def env_script(self) -> Path | None:
+        """The setup script (kept under its historic name for existing callers)."""
+        script = self.environment.setup_script
+        return Path(str(script)) if script is not None else None
 
     def _wrap(self, command: str) -> list[str]:
-        """Wrap *command* so it runs after sourcing the environment script."""
-        # `set -e` so a failing source aborts before the command runs.
-        script = f"set -e; source {shlex.quote(str(self.env_script))}; {command}"
-        return ["bash", "-lc", script]
+        """The argv that runs *command* inside the configured environment."""
+        return self.environment.command(command)
 
     def run(self, command: str, cwd: str | Path | None = None,
             check: bool = True,
@@ -77,7 +92,8 @@ class ShellRuntime:
 
 class TelemacRuntime(ShellRuntime):
     def __init__(self, env: TelemacEnv):
-        super().__init__(env.pysource)
+        super().__init__(environment=SolverEnvironment.from_config(
+            getattr(env, "environment", None), legacy_script=env.pysource))
         self.env = env
 
     @property

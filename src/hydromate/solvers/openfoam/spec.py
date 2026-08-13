@@ -16,10 +16,28 @@ distinction between *not applicable* and *not implemented* carries real informat
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from hydromate.core.capabilities import Capability, Support
 from hydromate.core.registry import BackendSpec, CapabilitySpec
+
+
+def _describe_environment(cfg) -> str:
+    """One line naming how this machine reaches OpenFOAM.
+
+    On Windows this is normally ``wsl / <distro> / bashrc``: the Foundation build
+    hydromate targets has no native Windows port.
+    """
+    env = cfg.openfoam.environment
+    kind = env.kind or ("windows" if os.name == "nt" else "posix")
+    script = env.setup_script or cfg.openfoam.bashrc
+    parts = [kind]
+    if env.distro:
+        parts.append(env.distro)
+    if script:
+        parts.append(Path(str(script)).name)
+    return " / ".join(parts)
 
 
 def _case(cfg) -> Path:
@@ -55,7 +73,7 @@ SPEC = BackendSpec(
     # Declared by the case when the block names an OpenFOAM installation. Whether
     # *this machine* has it is the marker body's `env` line, not the filename.
     enabled=lambda cfg: "openfoam" in cfg.declared_blocks,
-    environment=lambda cfg: str(cfg.openfoam.bashrc or ""),
+    environment=lambda cfg: _describe_environment(cfg),
     capabilities={
         Capability.STEADY2D: CapabilitySpec(support=Support.NOT_APPLICABLE),
         Capability.UNSTEADY2D: CapabilitySpec(support=Support.NOT_APPLICABLE),

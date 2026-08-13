@@ -30,6 +30,26 @@ project:
   calibration_dir: hydromate-case/calibration-validation   # HydroBayesCal artifacts (calibration CSV, config_Telemac.py)
 
 telemac:
+  # ---- WHERE TELEMAC IS, AND HOW TO ENTER IT ------------------------------
+  # `environment:` is optional. Omitted, hydromate sources `pysource` in a POSIX
+  # shell - which is what every Linux case wants and what older configs did.
+  #
+  #   environment: posix              # bash -lc 'source <pysource>; ...'   (Linux/macOS)
+  #
+  #   environment:                    # native Windows: a .bat through cmd
+  #     kind: windows
+  #     setup_script: C:\telemac\v9.1\configs\pysource.bat
+  #     mpi_launcher: mpiexec         # MS-MPI, not mpirun
+  #
+  #   environment:                    # or through WSL
+  #     kind: wsl
+  #     distro: Ubuntu-22.04
+  #     setup_script: /opt/telemac/configs/pysource.sh   # a path INSIDE the distro
+  #
+  # `shell:` points at a bundled bash where a distribution ships one (blueCFD-Core
+  # and the ESI OpenFOAM package both do). Check any of this with:
+  #     hydromate status case-config.yml --check-env
+
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported)
   # whenever the solver or SELAFIN tooling is needed. Machine-specific.
   pysource: /path/to/telemac/configs/pysource.sh

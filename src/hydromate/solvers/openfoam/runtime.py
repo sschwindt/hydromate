@@ -21,6 +21,7 @@ import shlex
 from pathlib import Path
 from typing import Callable
 
+from hydromate.core.environment import SolverEnvironment
 from hydromate.env import ShellRuntime
 from hydromate.solvers.openfoam import dicts
 
@@ -90,7 +91,8 @@ class OpenFoamRuntime(ShellRuntime):
                 "OpenFOAM install (e.g. "
                 "/home/modelling/OpenFOAM/OpenFOAM-9/etc/bashrc) in case-config.yml."
             )
-        super().__init__(of_config.bashrc)
+        super().__init__(environment=SolverEnvironment.from_config(
+            getattr(of_config, "environment", None), legacy_script=of_config.bashrc))
         self.of = of_config
 
     # ------------------------------------------------------------------ checks

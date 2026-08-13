@@ -13,6 +13,7 @@ fast, has to work on a half-finished case, and must never be the thing that fail
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from hydromate.core.capabilities import Capability, Support
@@ -22,6 +23,23 @@ from hydromate.core.registry import BackendSpec, CapabilitySpec
 HYDROSTATIC_CAS = "hotstart3d_hydrostatic.cas"
 HYDRODYN_CAS = "hotstart3d_hydrodyn.cas"
 UNSTEADY3D_CAS = "unsteady3d.cas"
+
+
+def _describe_environment(cfg) -> str:
+    """One line naming how this machine reaches TELEMAC (posix / windows / wsl).
+
+    Import-light: builds the description from config fields only, never by probing -
+    a status listing must not spawn a shell per solver.
+    """
+    env = cfg.telemac.environment
+    kind = env.kind or ("windows" if os.name == "nt" else "posix")
+    script = env.setup_script or cfg.telemac.pysource
+    parts = [kind]
+    if env.distro:
+        parts.append(env.distro)
+    if script:
+        parts.append(Path(str(script)).name)
+    return " / ".join(parts)
 
 
 def _model(cfg, name: str) -> Path:
@@ -67,7 +85,7 @@ SPEC = BackendSpec(
     # declared by the case, not "resolvable on this machine" - the marker
     # FILENAME must mean the same thing wherever the case is checked out
     enabled=lambda cfg: "telemac" in cfg.declared_blocks,
-    environment=lambda cfg: Path(cfg.telemac.pysource).name if cfg.telemac.pysource else "",
+    environment=lambda cfg: _describe_environment(cfg),
     capabilities={
         Capability.STEADY2D: CapabilitySpec(
             support=Support.SUPPORTED,

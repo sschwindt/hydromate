@@ -51,6 +51,35 @@ def _only_known(cls, data: dict[str, Any]) -> dict[str, Any]:
 
 
 @dataclass
+class Environment:
+    """How to enter a solver's installation on *this* machine.
+
+    Optional everywhere: a config that only carries ``telemac.pysource`` (every case
+    written before this existed) resolves to a POSIX environment against that script,
+    so nothing has to be migrated. See :mod:`hydromate.core.environment`.
+
+    ``kind`` is what makes Windows work. TELEMAC has native Windows builds configured
+    through a ``.bat`` (``windows``); the Foundation OpenFOAM hydromate targets has no
+    native Windows build, so on Windows it is reached through ``wsl``.
+    """
+
+    kind: str | None = None            # posix | windows | wsl (default: match the host)
+    setup_script: Path | None = None   # overrides telemac.pysource / openfoam.bashrc
+    shell: str | None = None           # a bundled bash (blueCFD / ESI / TELEMAC-Windows)
+    distro: str | None = None          # WSL only
+    mpi_launcher: str | None = None    # mpirun (default) | mpiexec (MS-MPI) | srun
+    overrides: dict[str, str] = field(default_factory=dict)
+
+    def validate(self) -> None:
+        if self.kind is not None and self.kind not in ("posix", "windows", "wsl"):
+            raise ValueError(
+                f"environment.kind must be 'posix', 'windows' or 'wsl', "
+                f"got {self.kind!r}")
+        if self.distro and self.kind != "wsl":
+            raise ValueError("environment.distro only applies to kind: wsl")
+
+
+@dataclass
 class TelemacEnv:
     """How to reach and run the TELEMAC solver.
 
@@ -61,6 +90,9 @@ class TelemacEnv:
     """
 
     pysource: Path
+    # how to enter that installation (kind/shell/distro/mpi_launcher); omitted means
+    # a POSIX shell sourcing `pysource`, which is what every existing case wants
+    environment: Environment = field(default_factory=Environment)
     solver: str = "telemac2d"  # telemac2d | telemac3d
     n_processors: int = 1
     version: str = "v8p4"
@@ -1088,6 +1120,9 @@ class OpenFoam:
     # ---- environment --------------------------------------------------------
     # the OpenFOAM etc/bashrc to source (as telemac.pysource is for TELEMAC)
     bashrc: Path | None = None
+    # how to enter that installation. On Windows this is `kind: wsl` plus a `distro`,
+    # because the Foundation OpenFOAM hydromate targets has no native Windows build.
+    environment: Environment = field(default_factory=Environment)
     n_processors: int = 1
     solver: str = "interFoam"
 
@@ -1308,6 +1343,8 @@ class Config:
                 "provided for topographic-change calibration data."
             )
         self.percolation.validate()
+        self.telemac.environment.validate()
+        self.openfoam.environment.validate()
         self.structures.validate()
         self.openfoam.validate()
         self.initialization.validate()
@@ -1334,6 +1371,24 @@ class Config:
         for d in (self.preprocessing_dir, self.model_dir,
                   self.postprocessing_dir, self.calibration_dir):
             Path(d).mkdir(parents=True, exist_ok=True)
+
+
+def _load_environment(raw, cfg_dir: Path) -> "Environment":
+    """Build an :class:`Environment` from a config block.
+
+    A bare string is accepted as shorthand for the kind (``environment: wsl``), since
+    that is the common case and a one-key mapping would be noise.
+    """
+    if raw is None:
+        return Environment()
+    if isinstance(raw, str):
+        return Environment(kind=raw)
+    data = _only_known(Environment, dict(raw))
+    # A WSL setup script is a path INSIDE the distro, so it must not be resolved
+    # against the config directory on the host.
+    if data.get("setup_script") is not None and data.get("kind") != "wsl":
+        data["setup_script"] = _resolve(cfg_dir, data["setup_script"])
+    return Environment(**data)
 
 
 def _load_gain_lose(raw: dict, cfg_dir: Path) -> GainLose:
@@ -1401,6 +1456,7 @@ def load_config(path: str | os.PathLike) -> Config:
     # telemac env
     tdict = dict(raw.get("telemac", {}))
     tdict["pysource"] = _resolve(cfg_dir, tdict.get("pysource"))
+    tdict["environment"] = _load_environment(tdict.get("environment"), cfg_dir)
     telemac = TelemacEnv(**_only_known(TelemacEnv, tdict))
 
     # geodata (resolve every path against the config dir)
@@ -1460,6 +1516,7 @@ def load_config(path: str | os.PathLike) -> Config:
     ofdict = dict(raw.get("openfoam") or {})
     if "bashrc" in ofdict and ofdict["bashrc"] is not None:
         ofdict["bashrc"] = _resolve(cfg_dir, ofdict["bashrc"])
+    ofdict["environment"] = _load_environment(ofdict.get("environment"), cfg_dir)
     openfoam = OpenFoam(**_only_known(OpenFoam, ofdict))
     openfoam_dir = _resolve(cfg_dir, project.get("openfoam_dir")) if \
         project.get("openfoam_dir") else None
