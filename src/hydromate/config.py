@@ -21,6 +21,8 @@ from typing import Any
 
 import yaml
 
+from hydromate.core import schema
+
 log = logging.getLogger("hydromate")
 
 # --------------------------------------------------------------------------- #
@@ -1124,6 +1126,12 @@ class PreRun:
     # it is used when present. False forces the dedicated coarse pre-run every time.
     reuse: bool = True
     dimension: str = "2d"           # 2d | 3d (3d also seeds the velocity profile)
+    # Pin the sigma-plane count instead of inferring it from depth vs cell size.
+    # For a reach whose vertical resolution has already been settled by
+    # vertical_convergence_3d.py - and, deliberately, to override the inference on a
+    # mesh it judges too flat, which is a choice worth making consciously rather than
+    # by accident (see prerun.MIN_USEFUL_LEVELS).
+    n_levels: int | None = None
 
     # ---- the dedicated coarse pre-run --------------------------------------
     # Multiplier on mesh.size_scale. This scales the WHOLE sizing field, including the
@@ -1153,6 +1161,9 @@ class PreRun:
                 f"got {self.require!r}")
         if self.size_scale <= 0:
             raise ValueError("openfoam.pre_run.size_scale must be > 0")
+        if self.n_levels is not None and self.n_levels < 2:
+            raise ValueError("openfoam.pre_run.n_levels must be at least 2 "
+                             f"(sigma planes), got {self.n_levels}")
 
 
 @dataclass
@@ -1553,17 +1564,19 @@ def load_config(path: str | os.PathLike) -> Config:
     with open(path) as fh:
         raw = yaml.safe_load(fh) or {}
 
+    # deprecated keys, renamed in place and reported once (hydromate.core.schema)
+    schema.warn_legacy(schema.apply_legacy(raw), path.name)
+
     project = raw.get("project", {})
     sim_dir = project.get("sim_dir", "hydromate-case")
-    # per-phase output dirs under hydromate-case/ (older work_dir/results_dir accepted)
+    # per-phase output dirs under hydromate-case/
     preprocessing_dir = _resolve(
-        cfg_dir, project.get("preprocessing_dir") or project.get("work_dir")
-        or f"{sim_dir}/preprocessing")
+        cfg_dir, project.get("preprocessing_dir") or f"{sim_dir}/preprocessing")
     model_dir = _resolve(cfg_dir, project.get("model_dir") or f"{sim_dir}/simulation")
     postprocessing_dir = _resolve(
         cfg_dir, project.get("postprocessing_dir") or f"{sim_dir}/postprocessing")
     calibration_dir = _resolve(
-        cfg_dir, project.get("calibration_dir") or project.get("results_dir")
+        cfg_dir, project.get("calibration_dir")
         or f"{sim_dir}/calibration-validation")
 
     # telemac env
@@ -1666,3 +1679,94 @@ def load_config(path: str | os.PathLike) -> Config:
         if hasattr(cfg, key):
             setattr(cfg, key, value)
     return cfg
+
+
+# --------------------------------------------------------------------------- #
+# writing a config back out
+# --------------------------------------------------------------------------- #
+
+# Blocks whose contents are pure derived state or machine-local bookkeeping, and so
+# have no place in a config file that someone else may open.
+_DUMP_SKIP_TOP = frozenset({"config_dir", "declared_blocks"})
+
+
+def _dump_value(value: Any, base: Path) -> Any:
+    """Convert one config value into something YAML can round-trip.
+
+    Paths are written **relative to the config file** wherever they sit underneath it,
+    exactly as ``load_config`` resolves them - so a dumped config stays portable to
+    another machine, which is the whole reason a case ships its data under its own
+    directory. A path outside that tree (a solver install, an absolute scratch dir)
+    is written absolute, because making it relative would be a lie about where it is.
+    """
+    if isinstance(value, Path):
+        try:
+            return str(value.relative_to(base))
+        except ValueError:
+            return str(value)
+    if isinstance(value, (list, tuple)):
+        return [_dump_value(v, base) for v in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted(_dump_value(v, base) for v in value)
+    if isinstance(value, dict):
+        return {str(k): _dump_value(v, base) for k, v in value.items()}
+    if hasattr(value, "__dataclass_fields__"):
+        return {f.name: _dump_value(getattr(value, f.name), base)
+                for f in fields(value)}
+    return value
+
+
+def config_to_dict(cfg: "Config", *, base: Path | None = None) -> dict[str, Any]:
+    """The config as plain data, shaped the way ``load_config`` reads it back."""
+    base = Path(base) if base else Path(cfg.config_dir)
+    out: dict[str, Any] = {"project": {
+        "name": cfg.name,
+        "crs_epsg": cfg.crs_epsg,
+        "preprocessing_dir": _dump_value(cfg.preprocessing_dir, base),
+        "model_dir": _dump_value(cfg.model_dir, base),
+        "postprocessing_dir": _dump_value(cfg.postprocessing_dir, base),
+        "calibration_dir": _dump_value(cfg.calibration_dir, base),
+    }}
+    if cfg.openfoam_dir is not None:
+        out["project"]["openfoam_dir"] = _dump_value(cfg.openfoam_dir, base)
+
+    for f in fields(cfg):
+        if f.name in _DUMP_SKIP_TOP or f.name in out["project"]:
+            continue
+        value = getattr(cfg, f.name)
+        if hasattr(value, "__dataclass_fields__"):
+            out[f.name] = _dump_value(value, base)
+
+    # output filename overrides, only where they differ from the defaults - a dump
+    # should record decisions, not restate the defaults back at the reader
+    defaults = {"geometry_slf": "geometry.slf", "boundary_cli": "boundaries.cli",
+                "cas_file": "steady2d.cas", "results_slf": "r2d.slf"}
+    outputs = {k: getattr(cfg, k) for k, v in defaults.items()
+               if hasattr(cfg, k) and getattr(cfg, k) != v}
+    if outputs:
+        out["outputs"] = outputs
+    return out
+
+
+def dump_config(cfg: "Config", path: str | os.PathLike | None = None, *,
+                base: Path | None = None) -> str:
+    """Write *cfg* back out as YAML; returns the text, and writes it if given a path.
+
+    The counterpart to :func:`load_config`, and the reason it exists is that anything
+    which *edits* a case - a form in a plugin, a migration, a scripted sweep - needs
+    to put the result back. Doing that by rewriting the YAML text keeps the comments
+    but requires a parser that understands the file; going through the dataclass loses
+    the comments but cannot produce a config that will not load.
+
+    This takes the second route deliberately. A comment that survives an edit it no
+    longer describes is worse than no comment, and the template configs in
+    ``cases/case-template/`` are where the explanations are meant to live.
+    """
+    text = yaml.safe_dump(config_to_dict(cfg, base=base), sort_keys=False,
+                          default_flow_style=False, allow_unicode=True)
+    if path is not None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        log.info("wrote %s", path)
+    return text

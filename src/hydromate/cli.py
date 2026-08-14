@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import shutil
 import sys
 from pathlib import Path
 
@@ -324,12 +325,68 @@ def _run_clip(argv: list[str]) -> int:
     return 0
 
 
+def _migrate_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="hydromate migrate",
+        description="Rewrite a case config in the current schema. Loading a config "
+                    "already applies every compatibility mapping (a `percolation:` "
+                    "block becomes `gain_lose:`, `work_dir` becomes "
+                    "`preprocessing_dir`, and so on); this writes the result back, so "
+                    "the deprecation warnings stop and the file says what hydromate "
+                    "actually read. NOTE that comments are not preserved - the config "
+                    "is written from the loaded schema, so a comment cannot survive an "
+                    "edit it no longer describes. Keep the annotated original if you "
+                    "want the prose (cases/case-template/case-config.yml has it all).",
+    )
+    p.add_argument("config", type=Path, help="path to the YAML configuration file")
+    p.add_argument("-o", "--out", type=Path, default=None,
+                   help="write here (default: print to stdout)")
+    p.add_argument("--in-place", action="store_true",
+                   help="overwrite the config, keeping a .bak copy beside it")
+    p.add_argument("-v", "--verbose", action="store_true")
+    return p
+
+
+def _run_migrate(argv: list[str]) -> int:
+    args = _migrate_parser().parse_args(argv)
+    setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
+    log = logging.getLogger("hydromate")
+    from hydromate.config import dump_config
+
+    try:
+        cfg = load_config(args.config)
+        # Written relative to where the file will LIVE, not where it came from, so
+        # `-o elsewhere/case.yml` does not silently break every relative data path.
+        target = args.config if args.in_place else args.out
+        base = Path(target).resolve().parent if target else Path(cfg.config_dir)
+        text = dump_config(cfg, base=base)
+    except Exception as exc:
+        log.error("%s: %s", type(exc).__name__, exc)
+        if args.verbose:
+            raise
+        return 1
+
+    if args.in_place:
+        backup = args.config.with_suffix(args.config.suffix + ".bak")
+        shutil.copy2(args.config, backup)
+        args.config.write_text(text)
+        log.info("migrated %s (original kept as %s)", args.config, backup.name)
+    elif args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(text)
+        log.info("wrote %s", args.out)
+    else:
+        print(text, end="")
+    return 0
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "clip":
         return _run_clip(argv[1:])
     if argv and argv[0] == "rating":
         return _run_rating(argv[1:])
+    if argv and argv[0] == "migrate":
+        return _run_migrate(argv[1:])
     if argv and argv[0] == "targets":
         return _run_targets(argv[1:])
     if argv and argv[0] == "openfoam":

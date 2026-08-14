@@ -50,7 +50,7 @@ import logging
 import shutil
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 log = logging.getLogger("hydromate")
@@ -305,6 +305,14 @@ def _extend_to_3d(cfg, seed: SeedResult) -> SeedResult:
 
         data = selafin.read_slf(seed.path)
         vertical = threed.infer_vertical_layers(lc, data=data)
+        pinned = cfg.openfoam.pre_run.n_levels
+        if pinned:
+            log.info("3D pre-run: %d sigma planes pinned by openfoam.pre_run.n_levels "
+                     "(the mesh itself suggests %d - %s)",
+                     pinned, vertical.n_levels, vertical.reason)
+            vertical = replace(vertical, n_levels=int(pinned),
+                               reason=f"pinned by openfoam.pre_run.n_levels "
+                                      f"(inference said {vertical.n_levels})")
         if vertical.n_levels < MIN_USEFUL_LEVELS:
             note = (f"3D pre-run skipped: this mesh supports only "
                     f"{vertical.n_levels} sigma planes ({vertical.reason}), which is "
