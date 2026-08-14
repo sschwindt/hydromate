@@ -96,15 +96,16 @@ the solver-backend split (`hydromate.core` / `hydromate.solvers`).
 |---|---|---|
 | solver abstraction (§12) | `core/registry.py`: `BackendSpec` (metadata) + `SolverBackend` (protocol) | **Do not introduce a second `SolverAdapter`.** Extend this one. Backends are discovered through the `hydromate.solvers` entry-point group, so a new solver is a plug-in, not a fork. |
 | capability / status model | `core/capabilities.py`: `Capability`, `Support`, `CaseStatus`, `MODEL=<SOLVER>_<ENABLED\|DISABLED>` markers | Three axes per capability: implemented / configured / built-run. **The plugin's tabs should be generated from this**, not hardcoded - see §17. |
-| environment initialization (§7) | `core/env.py`: `ShellRuntime` sources a setup script in a subshell and runs a command in it | This is exactly approach 1 of §7, already argument-safe (`shlex.quote`, no `shell=True` on user text). `TelemacRuntime` and `OpenFoamRuntime` subclass it. |
-| configuration system | `config.py`: `load_config()` -> validated dataclasses; `Config.declared_blocks` | Missing: `dump_config()` for round-trip. That is a prerequisite for a form-based editor. |
+| environment initialization (§7) | **`core/environment.py`: `SolverEnvironment`** (`posix` \| `windows` \| `wsl`), plus `core/env.py`'s `ShellRuntime` which delegates to it | **Done (phase 4a).** Captures the environment into a dict (`capture()`), validates a solver install by its sentinel variables (`validate()`), and translates paths for WSL. Argument-safe; no `shell=True` on user text. |
+| configuration system | `config.py`: `load_config()` / **`dump_config()`**, `Config.declared_blocks`; **`core/schema.py`** classifies every setting as shared-intent vs solver detail | **Done (phase 4b/4c).** Round-trip is verified over all ten repo configs. `core/schema.classify_setting()` is what a form should page the fields by. `hydromate migrate` rewrites a config in the current schema. NOTE dumping **loses comments** by design. |
 | MPI handling | `TelemacRuntime.run_solver(ncsize=...)`; OpenFOAM `mpirun -np N interFoam -parallel` | Both already build the command; neither currently owns the process tree. |
 | working directories | per-phase dirs (`preprocessing/ simulation/ postprocessing/ calibration-validation/ openfoam/`) | **Not job-oriented.** §4 needs `<job_root>/<job_id>/`; that is a real change, see the re-planned phases. |
 | logging | `logsetup.py`: per-phase compound logfile, `log_step()` timing | Missing: rotation. A multi-day MPI run will otherwise fill the scratch volume. |
+| structured failures | **`core/errors.py`**: `HydromateError` + 5 categories, each with a stable `code`, optional `subject` (the config key at fault) and `remedy`; `ErrorRecord.from_exception` | **Done (phase 4d).** §5's `status.json` should store `ErrorRecord.as_dict()`; the plugin should show `remedy` and highlight `subject`. |
 | restart / checkpoint | 2D hotstart (`r2d.slf`), `hotstart2d.cas`, BAL `--resume`, convergence-study resume via `level.json` | Per-workflow, not per-job. |
 | geodata ingest | `core/geodata.py`: one cached `Dataset`, **accepts in-memory GeoDataFrames** | The plugin can hand over open QGIS layers without writing temp files. |
 | structures (dams/walls) | `core/structures.py`, from ordinary vector layers | No STL needed anywhere - see the repo docs. |
-| CLI | `hydromate <config>`, `status`, `openfoam`, `clip`, `rating`, `targets` | Missing the job verbs: `submit`, `execute`, `cancel`, `logs`, `list`. |
+| CLI | `hydromate <config>`, `status`, `openfoam`, `clip`, `rating`, `targets`, **`migrate`** | Missing the job verbs: `submit`, `execute`, `cancel`, `logs`, `list`. |
 
 **Missing entirely, and therefore the real work**: job identity, the job registry,
 detached launch, process-tree cancellation, `status.json`, and the job CLI verbs.
@@ -116,6 +117,86 @@ Rules that stay:
 * there must be no `qgis`, `PyQt`, or `qgis.PyQt` import in the core/runner package;
 * **the plugin must never `import hydromate`** - QGIS's Python is not the solver's
   Python. The plugin talks to hydromate over the CLI and over files, only.
+
+---
+
+# 2b. Status, and what a next session should pick up
+
+*Written 2026-08-14, after phases 1-4 and the OpenFOAM work. Read this before §3.*
+
+## Done and on `main`
+
+| phase | what | where |
+|---|---|---|
+| 1 | capabilities, solver registry, `MODEL=` markers, `hydromate status` | `core/capabilities.py`, `core/registry.py`, `solvers/*/spec.py` |
+| 2 | solver-agnostic input layer, cached geodata `Dataset` | `core/geodata.py`, `core/raster.py`, `core/boundaries.py` |
+| 3 | backends split out; 16 `sys.modules` shims keep every old import path | `solvers/telemac/`, `solvers/openfoam/` |
+| 4a | `SolverEnvironment` (`posix` \| `windows` \| `wsl`) | `core/environment.py` |
+| 4b | shared-intent classification + legacy-key table | `core/schema.py` |
+| 4c | `dump_config`, `hydromate migrate` | `config.py`, `cli.py` |
+| 4d | typed errors with stable codes | `core/errors.py` |
+
+370 tests, `ruff` clean, `import hydromate` 22 ms / 59 modules with no heavy imports.
+
+## Remaining, in order
+
+1. **Phase 5 - the job model** (§5): `Job`, `JobState`, the registry, `status.json`,
+   `<job_root>/<job_id>/`. Store failures as `core.errors.ErrorRecord.as_dict()` -
+   that is what 4d was built for. This is the real work; nothing else can be built on
+   a per-phase directory layout.
+2. **Phase 6 - the runner** (§4, §8): `submit` / `execute` / `status` / `cancel` /
+   `logs` / `list`, plus the detached launchers. Use
+   `SolverEnvironment.capture()` to set the environment **directly on the detached
+   process**, so no shell sits in the middle of the tree and tree-kill stays clean.
+3. **The plugin itself** (§10 onward).
+
+**Not a prerequisite for any of the above:** the deferred split of
+`convergence`/`calibration` into core + adapters. It is leftover tidy-up from phase 3,
+worth doing on its own merits, and no plugin work is blocked by it.
+
+## Decisions taken that the plan no longer describes correctly
+
+* **Phase 4b was deliberately re-scoped.** The plan folded `openfoam.cell_size` into
+  `mesh.channel_size`. Do **not** do this: `openfoam.cell_size_factor` now expresses
+  the OpenFOAM lattice *relative to* the 2D channel size, which is the shared-intent
+  link the fold was after, and it does so without pretending a per-zone anisotropic
+  target edge length and a uniform Cartesian spacing are the same quantity. The
+  remaining moves (Telemac2d keywords out of `hydrodynamics:` into `telemac.numerics`)
+  are pure renaming: no behaviour change, every config touched, the artifact regression
+  baseline invalidated. `core/schema.LEGACY_KEYS` is the mechanism for doing it later
+  without breaking a single config. **The classification exists; the fields have not
+  moved.**
+* `project.results_dir` maps to **`calibration_dir`**, not `model_dir`.
+* `dump_config` goes through the dataclass, so it **loses comments**. A form-based
+  editor must therefore not be the only copy of a case's documentation - the annotated
+  original lives in `cases/case-template/case-config.yml`.
+
+## Traps a next session will otherwise re-discover
+
+* **The anisotropic TELEMAC mesh is not reproducible run to run** (BAMG retries at a
+  coarser background metric). Regression-test on mesh *statistics* within ~1%, never
+  byte-compare `geometry.slf`. The OpenFOAM mesh *is* bit-reproducible.
+* **`import hydromate` must stay light.** `tests/test_capabilities.py` asserts from a
+  subprocess that a capability listing pulls in no numpy/gmsh/geopandas. A QGIS plugin
+  process depends on this; an eager import in a `spec.py` breaks it silently.
+* **The two backends are siblings.** `solvers/openfoam/` may not reference
+  `solvers/telemac/` - enforced by reading the source. Orchestration that drives both
+  goes at the top level (`prerun.py` is the worked example).
+* **TELEMAC-3D writes NPLAN in `IPARAM(7)`, not the dims record**, which stays at 1.
+  Anything reading a 3D SELAFIN must not trust `dims[3]`.
+* **A shallow reach cannot carry a 3D run.** Sigma planes are sized from depth against
+  cell size and capped at 4x taller than wide, so isar-2025 (0.26 m deep, 0.62 m cells)
+  gets 2 planes - one layer. `prerun.MIN_USEFUL_LEVELS` refuses before the solver runs.
+* **TELEMAC-3D diverges from a 2D continuation on a braided bed** (dry columns onto the
+  sigma mesh: `GRACJG ... NaN` on the first solve), and **Spalart-Allmaras diverges in
+  3D** on a wetting/drying bed without a source-term patch. `prerun._make_3d_robust`
+  works around both for the *seed* run; **`add3d.py` still has both problems** and will
+  hit them on such a reach. That is the clearest outstanding TELEMAC-side bug.
+* **A diverged solver can write a file of NaN rather than failing.** Validate a result
+  before consuming it (`prerun._is_finite`).
+* On isar the OpenFOAM **rough wall function is inadmissible on ~100% of wetted bed
+  faces** (ks is a large fraction of the depth). OpenFOAM clamps and carries on, so the
+  run completes with unphysical near-bed velocity. Read such a result as bulk flow.
 
 ---
 
