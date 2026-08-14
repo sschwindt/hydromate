@@ -59,6 +59,7 @@ log = logging.getLogger("hydromate")
 # in build reports and written into logs far more often than they are branched on.
 EXISTING = "existing"      # the case's own converged 2D result
 PRE_RUN = "pre-run"        # a dedicated coarse run made here
+PRE_RUN_3D = "pre-run-3d"  # ...followed by a TELEMAC-3D run, so the seed has a profile
 DISABLED = "disabled"      # pre_run.enabled is false
 NONE = "none"              # nothing available; the caller builds cold
 
@@ -88,6 +89,7 @@ class SeedResult:
                     "air cells, plus the whole filling transient to pay for in 3D."]
         how = {EXISTING: "the case's own converged 2D result",
                PRE_RUN: "a dedicated coarse TELEMAC pre-run",
+               PRE_RUN_3D: "a TELEMAC-3D pre-run",
                DISABLED: "an existing 2D result (pre-run disabled)"}.get(
                    self.source, self.source)
         out = [f"seed: {self.path.name} - {how}"]
@@ -343,7 +345,10 @@ def _extend_to_3d(cfg, seed: SeedResult) -> SeedResult:
         produced = lc.model_path(threed.HYDROSTATIC_RESULT_3D)
         if produced.exists() and _is_finite(produced):
             seed.path = produced
-            seed.source = PRE_RUN
+            # not PRE_RUN: the 2D result may well have been reused, and only the 3D
+            # run is new. Saying "a dedicated coarse pre-run" there would claim work
+            # that did not happen.
+            seed.source = PRE_RUN_3D
             seed.notes.append(
                 f"3D pre-run: {vertical.n_levels} sigma planes, so the seed carries a "
                 "vertical velocity profile rather than one depth-averaged value")

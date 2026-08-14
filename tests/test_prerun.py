@@ -314,3 +314,21 @@ def test_the_3d_seed_run_avoids_spalart_allmaras(monkeypatch):
     monkeypatch.setattr(steering, "select_turbulence_model", lambda c: (3, "fine"))
     prerun._make_3d_robust(lc2)
     assert lc2.hydrodynamics.turbulence_model == "auto"  # left alone
+
+
+def test_a_3d_seed_does_not_claim_the_2d_run_was_recomputed(tmp_path, spy,
+                                                            monkeypatch):
+    """Verified end to end on isar: the 2D result was REUSED and only the 3D run was
+    new, but the summary said "a dedicated coarse TELEMAC pre-run"."""
+    cfg = _cfg(tmp_path, dimension="3d")
+    (cfg.model_dir / "r2d.slf").write_bytes(b"")
+
+    def fake_3d(c, seed):
+        seed.path = cfg.model_dir / "r3d-hydrostatic.slf"
+        seed.source = prerun.PRE_RUN_3D
+        return seed
+
+    monkeypatch.setattr(prerun, "_extend_to_3d", fake_3d)
+    text = " ".join(prerun.ensure_seed(cfg).summary())
+    assert "TELEMAC-3D pre-run" in text
+    assert "dedicated coarse" not in text
