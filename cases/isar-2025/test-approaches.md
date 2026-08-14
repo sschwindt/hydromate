@@ -1,37 +1,27 @@
-# Internal loss/gain (percolation) - what was tried, what worked, what to do next
+---
+author: Sebastian Schwindt
+date: 2026-08-11
+---
 
-**Case:** `cases/isar-2025` - Isar side-channel reach, steady TELEMAC-2D,
-Q = 2.4 m3/s (inflow LB 1.6 + inflow RB 0.8), outflow via stage-discharge rating
-(WSE 815.114 m at 2.4 m3/s, ~0.27 m depth). Mesh ~460 k elements / 231 k nodes,
-shortest edge ~0.21 m, variable time step, Spalart-Allmaras turbulence.
+# Internal loss/gain (percolation)
 
-## What is actually being modelled
+The challenge of this case is to model the percolation zone between the main river branch and the small side channel on the left that gains approx. 0.065 m3/s at its outlet; tiny discharge, huge ecologically impact, so we want to have that in the model.
 
-**Read this first - it is what makes the problem hard, and it is easy to get
-backwards.**
+## Input files
 
-A gravel bar sits between the main channel and a small **side channel**. The bar
-is **so porous that ~0.065 m3/s of water flows through it, beneath the surface**,
-within roughly the top **0.5 m** (`porous depth (m)` in
-`percolation-zone.gpkg`). Water leaves the main channel at the bar's upstream
-edge (`int-outflow-lose`), travels *under* the bar, and resurfaces at
-`int-inflow-gain`, which feeds the side channel.
+The following `/geodata/` files served for the mesh generation:
 
-The consequences for the model:
+* `baffles.gpkg` contains lines for metering discharge during simulations
+* `dem-initial-roi.tif` the DEM snippet I used
+* `liquid-boundaries.gpkg` has liquid boundaries, incl. internal loss `int-outflow-lose` and gain `int-inflow-gain` boundary lines (0.065 m3/s)
+* `mesh-zones.gpkg` baseline for mesh size definition and extent
+* `percolation-zone.gpkg` is an attempt to define a porous patch across the gravel deposit between the main and sidel channels (in addition to internal loss and gain boundary lines); used for green-ampt option
+* `roughness-zones.gpkg` + `roughness-table.csv` are Hannah's roughness zones (not the most final one but this is probably not the biggest issue here)
 
-* **The bar is DRY on top - by design, at 2.4 m3/s.** A converged run showing no
-  surface water on the bar is *correct*, not a DEM or discharge error. Do not
-  "fix" it.
-* **A 2D depth-averaged model has no subsurface**, so this underflow can only be
-  represented as a **withdrawal + injection pair** on the surface model.
-* **The withdrawal must be taken from the channel where the water infiltrates**
-  (at the losing line), **not from the dry bar it subsequently flows beneath.**
-  This distinction is what rungs T4-T6 turn on: taking it from the bar is
-  numerically stable but physically meaningless, and moves no water (see the
-  [side-channel comparison](#side-channel-comparison-the-deliverable-measurement)).
 
-Getting water into the side channel is the point of the whole exercise; the steady
-run must reach a stable boundary-flux balance with that exchange active.
+## Modeling approaches
+
+The rather porous gravel accumulation dates back to the 2024 summer flood; I designed it so that the ~0.065 m3/s percolate beneath its surface within roughly the top 0.5 m (defined by `porous depth (m)` in `percolation-zone.gpkg`). Water leaves the main channel at the deposits upstream edge (`int-outflow-lose`), travels under the bar, and resurfaces at `int-inflow-gain`, which feeds the side channel. Getting water into the side channel is the point of the whole exercise; so my minimum goal was that the steady run must reach a stable boundary-flux balance with that exchange active.
 
 **Status: SOLVED.** Use **`percolation.mode: fortran`** with
 **`percolation.losing_region: line`** and a **12 m** strip width - a generated
