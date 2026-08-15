@@ -1,0 +1,76 @@
+name: tests
+
+# There was no test CI at all, despite ~600 tests. This runs them, plus ruff, on every
+# push and pull request.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  # A new push supersedes an in-flight run of the same branch.
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor hydromate declares, and current. The floor is the one that catches
+        # accidental use of newer syntax.
+        python-version: ["3.10", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: conda-incubator/setup-miniconda@v3
+        with:
+          miniforge-version: latest
+          activate-environment: hydromate-env
+          python-version: ${{ matrix.python-version }}
+          channels: conda-forge
+          auto-activate-base: false
+
+      - name: Install the geospatial stack
+        shell: bash -el {0}
+        # From conda-forge, because rasterio and geopandas need a matching GDAL and
+        # wheels alone are not reliably consistent across it.
+        run: |
+          mamba install -y -q \
+            numpy pandas scipy pyyaml pyproj 'shapely>=2.0' geopandas rasterio \
+            'openpyxl>=3.1' matplotlib
+          pip install 'gmsh>=4.13'
+
+      - name: Install hydromate
+        shell: bash -el {0}
+        run: pip install -e ".[dev]" --no-deps && pip install pytest ruff
+
+      - name: Lint
+        shell: bash -el {0}
+        run: ruff check src/ tests/ qgis_plugin/ scripts/
+
+      - name: Test
+        shell: bash -el {0}
+        # Both suites in one process: the plugin package is loaded under an alias by
+        # qgis_plugin/tests/conftest.py, since it shares the name `hydromate`.
+        run: pytest tests/ qgis_plugin/tests -q
+
+      - name: The plugin package is publishable
+        shell: bash -el {0}
+        run: python scripts/build_plugin_zip.py --check
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the docs
+        # Heavy imports are mocked in docs/conf.py, so this needs Sphinx alone - and it
+        # catches a new module that imports something the mock list does not cover.
+        run: |
+          pip install -r docs/requirements-docs.txt
+          sphinx-build -b html docs docs/_build/html

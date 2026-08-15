@@ -19,18 +19,17 @@ from __future__ import annotations
 import json
 import os
 import stat
-import sys
 from pathlib import Path
 
 import pytest
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-if str(PLUGIN_ROOT) not in sys.path:
-    sys.path.insert(0, str(PLUGIN_ROOT))
 
-from hydromate.core import job_model, project as project_io  # noqa: E402
-from hydromate.core import runner_client  # noqa: E402
-from hydromate.gui.capability_tabs import CaseView  # noqa: E402
+# Loaded under an alias by conftest, because the plugin folder and the installed library
+# share the name ``hydromate`` and only one of them can own it in a pytest process.
+from hydromate_plugin.core import job_model, project as project_io  # noqa: E402
+from hydromate_plugin.core import runner_client  # noqa: E402
+from hydromate_plugin.gui.capability_tabs import CaseView  # noqa: E402
 
 
 # ------------------------------------------------------------------ metadata

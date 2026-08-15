@@ -133,6 +133,91 @@ Test:
    PY
 
 
+Jobs
+----
+
+A job is stuck in ``RUNNING``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+It will not stay that way. Any status or list reconciles a recorded process that has gone -
+after a crash, a reboot, an OOM kill, or ``wsl --shutdown`` - and reports ``FAILED`` with an
+explanation rather than leaving a job that can never finish:
+
+.. code-block:: bash
+
+   hydromate status <JOB_ID>
+   hydromate list --rebuild        # also re-indexes moved or restored job folders
+
+A job fails the moment it starts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Read ``runner.log`` first - it carries the error with a stable ``code`` and a suggested
+remedy. Almost always this is the solver environment:
+
+.. code-block:: bash
+
+   hydromate logs <JOB_ID>
+   hydromate profiles validate
+
+Watch for the *ambient* warning. A variable that came from your interactive shell (say
+``/etc/profile.d/openfoam9.sh``) is inherited by anything you launch from a terminal but
+**not** by a detached job - so the same case works by hand and fails when submitted. The
+fix is to make the setup script itself export it.
+
+To see the failure under a terminal, run the job synchronously - the same code path a
+detached job takes:
+
+.. code-block:: bash
+
+   hydromate execute <JOB_ID>
+
+``the systemd launcher is not available``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A bare SSH session without lingering has ``systemd-run`` on ``PATH`` but no user manager at
+all. Either enable lingering (``loginctl enable-linger $USER``) or use the fallback, which
+needs nothing:
+
+.. code-block:: bash
+
+   hydromate submit ... --launcher posix
+
+Jobs vanish after ``wsl --shutdown``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Expected, and not something hydromate can prevent: the distro's lifetime is not ours.
+``wsl --shutdown``, a Windows restart, or WSL2 idling the VM out terminates everything
+running inside it. Those jobs recover to ``FAILED`` rather than a stuck ``RUNNING``, and can
+be resubmitted.
+
+The QGIS plugin
+---------------
+
+``hydromate could not be found``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The message names all three places it looked - the plugin setting, ``$HYDROMATE_EXE`` and
+``PATH``. Set the path in *HydroMate ▸ Settings* and press *Test*. There is deliberately no
+silent fallback to another interpreter, because a wrong one fails obscurely much later.
+
+Remember that hydromate belongs in the environment that reaches your **solver**, not in
+QGIS's Python.
+
+The panel shows only Setup and Jobs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The capability tabs are generated from the case, so there is no case selected yet, or
+hydromate could not read it. Check the same thing the plugin does:
+
+.. code-block:: bash
+
+   hydromate case-status <config.yml> --json
+
+A layer loaded but is not styled
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The dataset name in the result did not match what the manifest expected. The file itself is
+fine - style it from Layer Properties.
 
 .. toctree::
    :hidden:

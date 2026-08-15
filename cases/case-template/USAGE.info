@@ -160,8 +160,11 @@ warnings and errors.
 
   WHAT CAN THIS CASE DO?
 
-    hydromate status case-config.yml          # summary, refreshes the markers
-    hydromate status case-config.yml --full   # the full capability table
+    hydromate case-status case-config.yml          # summary, refreshes the markers
+    hydromate case-status case-config.yml --full   # the full capability table
+    hydromate case-status case-config.yml --json   # what the QGIS plugin reads
+
+  (`hydromate status case-config.yml` still works - see RUNNING IT AS A JOB.)
 
   Each solver gets a MODEL=<SOLVER>_<ENABLED|DISABLED> file here. The NAME says
   whether this case declares that solver; the BODY reports every capability on
@@ -169,6 +172,42 @@ warnings and errors.
   configured (does this case ask for it), and built/run (do the artifacts exist).
   The files are generated on every build, so do not edit them.
 
+  RUNNING IT AS A JOB (instead of the scripts above)
+
+    Every step above is also a submittable JOB that keeps running after this
+    shell - or QGIS - is gone, and can be found again later:
+
+      hydromate submit case-config.yml --kind preprocessing   # then: steady,
+      hydromate submit case-config.yml --kind steady          #   mesh-convergence,
+      hydromate list                                          #   build-3d, unsteady,
+      hydromate status <JOB_ID>                               #   openfoam-build/run,
+      hydromate cancel <JOB_ID>                               #   calibration
+      hydromate logs   <JOB_ID> --follow
+
+    `hydromate submit --help-kinds` lists them all. The knobs that are constants
+    at the top of each script above become --option flags:
+
+      hydromate submit case-config.yml --kind mesh-convergence \
+          --option tolerance=0.05 --option auto_extend=true --option ncsize=16
+
+    `status` is overloaded and the ARGUMENT decides: an existing path means this
+    case, a job-id-shaped argument means that job. They cannot be confused.
+
+    To debug a job, run it synchronously here - the same code path a detached
+    job takes, so the failure reproduces under a terminal:
+
+      hydromate execute <JOB_ID>
+
+    Then read runner.log (hydromate's narration, with the error and a remedy)
+    and solver/*.log (the solver talking). See docs/jobs.rst.
+
+  THE SCRIPTS ARE NOT DEPRECATED. They remain the supported standalone path and
+  call the same functions the job system does - the job backends are adapters
+  over them, not a second implementation.
+
+  docs/jobs.rst             submitting, monitoring, cancelling; solver profiles
+  docs/qgis_plugin.rst      the QGIS frontend
+  docs/architecture.rst     how the pieces fit together, and why
   docs/usage.rst            CLI, GUI editor, example scripts, inputs
   CLAUDE.md                 in-depth design notes (meshing, boundaries,
                             friction, ground truth, conventions)

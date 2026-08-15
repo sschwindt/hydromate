@@ -150,3 +150,35 @@ def test_telemac_never_prepends_an_mpi_launcher(tmp_path, monkeypatch):
     runtime.run_solver("steady2d.cas", cwd=tmp_path)
     assert "mpirun" not in seen["command"] and "mpiexec" not in seen["command"]
     assert "--ncsize=8" in seen["command"]
+
+
+# --------------------------------------------------------------------------- version
+
+
+def test_the_version_is_declared_in_exactly_one_place():
+    """``__version__`` reads the installed metadata; the literal is only the fallback for
+    an uninstalled checkout. A drift between them would make a release report a version
+    it is not - which is precisely what the plugin's ``--version`` probe reads."""
+    import re
+    import tomllib
+
+    import hydromate
+
+    pyproject = tomllib.loads((SRC.parent / "pyproject.toml").read_text("utf-8"))
+    declared = pyproject["project"]["version"]
+    source = (SRC / "hydromate" / "__init__.py").read_text("utf-8")
+    fallback = re.search(r'_FALLBACK_VERSION\s*=\s*"([^"]+)"', source).group(1)
+    assert fallback == declared, "the fallback in __init__.py has drifted from pyproject"
+    assert hydromate.__version__ == declared
+
+
+def test_the_plugin_and_the_package_versions_agree():
+    """They are released together from one tag, so a mismatch means one of them is
+    stale - and the plugin's own release workflow checks the tag against metadata.txt."""
+    import re
+
+    import hydromate
+
+    metadata = (SRC.parent / "qgis_plugin" / "hydromate" / "metadata.txt").read_text("utf-8")
+    plugin_version = re.search(r"^version=(.+)$", metadata, re.M).group(1).strip()
+    assert plugin_version == hydromate.__version__

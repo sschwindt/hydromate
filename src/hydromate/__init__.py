@@ -33,7 +33,17 @@ from __future__ import annotations
 import importlib
 from typing import TYPE_CHECKING
 
-__version__ = "0.1.0"
+# Single source of truth: whatever was installed. The literal is the fallback for a
+# source checkout that was never `pip install`ed, and is kept in step with
+# pyproject.toml by a test.
+_FALLBACK_VERSION = "0.2.0"
+
+try:
+    from importlib.metadata import version as _pkg_version
+
+    __version__ = _pkg_version("hydromate")
+except Exception:  # noqa: BLE001 - a checkout that was never installed
+    __version__ = _FALLBACK_VERSION
 
 # Public name -> defining module. Grouped by module so the mapping stays legible and
 # a new export is one word in the right tuple.
