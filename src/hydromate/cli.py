@@ -16,9 +16,21 @@ Two forms:
   build the OpenFOAM (interFoam) free-surface case: a terrain-following
   all-hexahedral mesh, fields seeded from the converged TELEMAC 2D result, and both
   staged dictionary sets. ``--check`` only reports the cell count.
-* ``hydromate status <config.yml> [--check-env] [--full]`` - report what the case can
-  do (implemented / configured / built / run, per solver) and refresh its
-  ``MODEL=<SOLVER>_<ENABLED|DISABLED>`` marker files.
+* ``hydromate case-status <config.yml> [--check-env] [--full] [--json]`` - report what
+  the case can do (implemented / configured / built / run, per solver) and refresh its
+  ``MODEL=<SOLVER>_<ENABLED|DISABLED>`` marker files. ``--json`` is what a QGIS plugin
+  reads to decide which tabs to show.
+
+Job verbs (see :mod:`hydromate.jobcli`), which run work that outlives this shell:
+
+* ``hydromate submit <config.yml> --kind <kind>`` - create a persistent job and start
+  it detached; prints the job id.
+* ``hydromate execute <job>`` - run a job synchronously here (the debugging path).
+* ``hydromate status <JOB_ID>`` / ``cancel`` / ``logs`` / ``list`` / ``profiles``.
+
+``status`` is overloaded, and the argument decides: an existing **path** means the case
+(the historic meaning, kept working), while an argument matching the job-id grammar means
+the job. The two cannot collide - a job id is never a path.
 """
 
 from __future__ import annotations
@@ -176,6 +188,9 @@ def _status_parser() -> argparse.ArgumentParser:
                    help="print the full marker tables instead of the short summary")
     p.add_argument("--no-write", action="store_true",
                    help="report only; do not write the marker files")
+    p.add_argument("--json", dest="as_json", action="store_true",
+                   help="emit the capability matrix as JSON - what a QGIS plugin reads "
+                        "to decide which tabs to show")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -183,22 +198,27 @@ def _status_parser() -> argparse.ArgumentParser:
 def _run_status(argv: list[str]) -> int:
     args = _status_parser().parse_args(argv)
     setup_logging(level=logging.DEBUG if args.verbose else logging.INFO)
-    log = logging.getLogger("hydromate")
+    from hydromate import jobcli
     from hydromate.core.capabilities import CaseStatus
 
+    if args.as_json:
+        # Narration to stderr so stdout carries the document alone.
+        jobcli._setup_logging(args)
     try:
         cfg = load_config(args.config)
         status = CaseStatus.collect(cfg, check_env=args.check_env)
     except Exception as exc:
-        log.error("%s: %s", type(exc).__name__, exc)
-        if args.verbose:
-            raise
-        return 1
+        return jobcli.fail("case-status", exc, as_json=args.as_json,
+                           verbose=args.verbose)
 
+    written = [] if args.no_write else [str(p) for p in status.write_markers()]
+    if args.as_json:
+        payload = status.as_dict()
+        payload["markers"] = written
+        return jobcli.emit("case-status", payload, as_json=True)
     print(status.render() if args.full else "\n".join(status.summary()))
-    if not args.no_write:
-        for path in status.write_markers():
-            print(f"wrote {path.name}")
+    for path in written:
+        print(f"wrote {Path(path).name}")
     return 0
 
 
@@ -379,20 +399,66 @@ def _run_migrate(argv: list[str]) -> int:
         print(text, end="")
     return 0
 
+def _job(name: str):
+    """Late-bind a job verb.
+
+    Imported on call rather than at module scope so ``hydromate --check`` on a case does
+    not pay for the job machinery, and so a broken job module could never stop the build
+    commands from working.
+    """
+    def run(argv: list[str]) -> int:
+        from hydromate import jobcli
+        return getattr(jobcli, name)(argv)
+    return run
+
+
+#: The whole command surface, as a table. A verb is one entry here plus its ``_run_*``;
+#: the alternative - ``argparse`` subparsers - cannot express the default form
+#: (``hydromate <config.yml>``, with no verb at all) without a pre-pass on ``argv[0]``,
+#: so the chain would survive the conversion anyway and only the help output would churn.
+_DISPATCH = {
+    "clip": lambda argv: _run_clip(argv),
+    "rating": lambda argv: _run_rating(argv),
+    "migrate": lambda argv: _run_migrate(argv),
+    "targets": lambda argv: _run_targets(argv),
+    "openfoam": lambda argv: _run_openfoam(argv),
+    "case-status": lambda argv: _run_status(argv),
+    "submit": _job("run_submit"),
+    "execute": _job("run_execute"),
+    "cancel": _job("run_cancel"),
+    "logs": _job("run_logs"),
+    "list": _job("run_list"),
+    "profiles": _job("run_profiles"),
+}
+
+
+def _dispatch_status(argv: list[str]) -> int:
+    """``status`` means the case or the job, decided by the argument.
+
+    An existing path is a case configuration - the historic meaning, which keeps every
+    script and doc snippet written against it working, with a notice pointing at the new
+    spelling. Anything matching the job-id grammar is a job. Neither can be mistaken for
+    the other, so there is no guess here, only a rule.
+    """
+    positional = [a for a in argv if not a.startswith("-")]
+    first = positional[0] if positional else ""
+    if first and Path(first).exists():
+        logging.getLogger("hydromate").warning(
+            "'hydromate status <config>' now also accepts a job id; the case form is "
+            "spelled 'hydromate case-status <config>'. Both work.")
+        return _run_status(argv)
+    from hydromate import jobcli
+    return jobcli.run_job_status(argv)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    if argv and argv[0] == "clip":
-        return _run_clip(argv[1:])
-    if argv and argv[0] == "rating":
-        return _run_rating(argv[1:])
-    if argv and argv[0] == "migrate":
-        return _run_migrate(argv[1:])
-    if argv and argv[0] == "targets":
-        return _run_targets(argv[1:])
-    if argv and argv[0] == "openfoam":
-        return _run_openfoam(argv[1:])
-    if argv and argv[0] == "status":
-        return _run_status(argv[1:])
+    if argv:
+        if argv[0] == "status":
+            return _dispatch_status(argv[1:])
+        handler = _DISPATCH.get(argv[0])
+        if handler is not None:
+            return handler(argv[1:])
     return _run_build(argv)
 
 

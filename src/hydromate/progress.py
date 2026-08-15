@@ -130,11 +130,18 @@ class SolverProgress:
     """
 
     def __init__(self, total_time: float, *, width: int = 40,
-                 out: TextIO | None = None):
+                 out: TextIO | None = None, sink: object | None = None,
+                 echo: bool = True):
         self.total_time = float(total_time) if total_time and total_time > 0 else 0.0
         self.bar = ProgressBar(self.total_time, width=width, out=out)
         self.iteration = 0
         self.time = 0.0
+        # A second consumer of the same parse, so a detached job gets structured
+        # progress without a second listing parser existing anywhere (see
+        # hydromate.jobs.events). *echo* off suppresses the terminal rendering for a
+        # job that has no terminal, while the sink still receives everything.
+        self.sink = sink
+        self.echo = echo
 
     # the terminal state lives on the shared bar; these keep the old attribute names
     @property
@@ -194,11 +201,26 @@ class SolverProgress:
         """Echo *line* and, if it is a listing header, refresh the progress bar."""
         line = line.rstrip("\n")
         is_header = self._parse(line)
-        self.bar.echo(line)
-        # off a TTY only a header can have moved the clock, so the log is not
-        # flooded with an unchanged bar after every line of solver chatter
-        if self.bar.tty or is_header:
-            self.bar.update(self.time, self._suffix())
+        if self.echo:
+            self.bar.echo(line)
+            # off a TTY only a header can have moved the clock, so the log is not
+            # flooded with an unchanged bar after every line of solver chatter
+            if self.bar.tty or is_header:
+                self.bar.update(self.time, self._suffix())
+        self._emit(line, is_header)
+
+    def _emit(self, line: str, is_header: bool) -> None:
+        """Forward to the structured sink. Never lets a sink failure kill a run."""
+        if self.sink is None:
+            return
+        try:
+            self.sink.line(line)
+            if is_header:
+                self.sink.progress(simulated_time=self.time,
+                                   duration=self.total_time or None,
+                                   iteration=self.iteration)
+        except Exception:  # noqa: BLE001 - reporting must never stop the solver
+            pass
 
     def close(self) -> None:
         """Finish the bar so later output does not overwrite it."""

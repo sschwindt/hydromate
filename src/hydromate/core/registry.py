@@ -199,13 +199,81 @@ class SolverBackend(Protocol):
         """Can this machine run the solver? Must not raise."""
         ...
 
-    def build(self, cfg, capability: Capability):
+    def build(self, cfg, capability: Capability, **kwargs):
         """Assemble the case for *capability*; return the produced artifacts."""
         ...
 
     def run(self, cfg, capability: Capability, **kwargs):
         """Launch the solver on an already-built case."""
         ...
+
+    def study(self, cfg, capability: Capability, **kwargs):
+        """Run a multi-run investigation: convergence ladder, calibration campaign.
+
+        A third verb rather than folding these into :meth:`run`, because a study is
+        genuinely neither a build nor a run - it repeatedly does both, decides when to
+        stop, and reports on the sequence. Folding it into ``run`` would make every
+        caller inspect the capability to know what it just started.
+        """
+        ...
+
+    def postprocess(self, cfg, ctx):
+        """Turn raw solver output into results: reconstruction, reports, conversions.
+
+        Part of the **runner** lifecycle, deliberately (plan §13): QGIS must never do
+        heavy OpenFOAM postprocessing, so the expensive step happens where the solver
+        ran, before the job reports COMPLETED.
+        """
+        ...
+
+    def extract_objective(self, cfg, ctx) -> float | None:
+        """The single number a calibration is minimising, if this job produced one."""
+        ...
+
+    def export_qgis_results(self, cfg, ctx):
+        """Write ``results/qgis/`` and describe it in the result manifest.
+
+        **Never imports PyQGIS.** It creates files and says what they are; the plugin
+        loads and styles them (plan §14). That separation is what lets the runner work
+        on a headless cluster node.
+        """
+        ...
+
+
+class BaseBackend:
+    """Optional base supplying no-op defaults for the parts a backend does not have.
+
+    :class:`SolverBackend` has six methods, and a third-party backend that only builds
+    cases should not have to write four stubs to satisfy a ``runtime_checkable``
+    protocol. Subclassing is not required - the protocol is structural - but it removes
+    the boilerplate and documents which parts are genuinely optional.
+    """
+
+    name: str = ""
+
+    def check_environment(self, cfg) -> bool:
+        return True
+
+    def build(self, cfg, capability: Capability, **kwargs):
+        raise NotImplementedError(
+            f"{self.name or type(self).__name__} cannot build {capability}")
+
+    def run(self, cfg, capability: Capability, **kwargs):
+        raise NotImplementedError(
+            f"{self.name or type(self).__name__} cannot run {capability}")
+
+    def study(self, cfg, capability: Capability, **kwargs):
+        raise NotImplementedError(
+            f"{self.name or type(self).__name__} has no study for {capability}")
+
+    def postprocess(self, cfg, ctx):
+        return None
+
+    def extract_objective(self, cfg, ctx) -> float | None:
+        return None
+
+    def export_qgis_results(self, cfg, ctx):
+        return []
 
 
 # --------------------------------------------------------------------------- #

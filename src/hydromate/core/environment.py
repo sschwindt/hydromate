@@ -83,6 +83,11 @@ SENTINELS = {
 # a real entry.
 _MARKER = "__HYDROMATE_ENV_BEGIN__"
 
+#: Exported onto a detached job by the launcher. Its presence tells the child hydromate
+#: that the solver environment is already on the process, so it must not source the setup
+#: script again and put a shell back inside the job's process tree.
+ENTERED_MARKER = "HYDROMATE_ENV_CAPTURED"
+
 # sentinel for "argument not given", so None can mean "deliberately no script"
 _UNSET = object()
 
@@ -144,6 +149,9 @@ class SolverEnvironment:
     mpi_launcher: str | None = None
     # extra variables forced onto the captured environment (rarely needed)
     overrides: dict[str, str] = field(default_factory=dict)
+    #: Tri-state. ``None`` defers to the ``HYDROMATE_ENV_CAPTURED`` marker, which is how
+    #: a detached child inherits the answer; True/False override it explicitly.
+    _assume_entered: bool | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.kind, str):
@@ -185,10 +193,50 @@ class SolverEnvironment:
         A list, never a shell string: the only place a shell parses anything is inside
         the quoted payload we build ourselves, so user-supplied paths cannot reach a
         command line unquoted.
+
+        When the environment has **already been entered** (see :attr:`assume_entered`)
+        the setup script is skipped. That is not an optimisation: a detached job is
+        launched with a captured environment set directly on the process, so re-sourcing
+        would both be redundant and put a shell back inside the job's process tree -
+        which is exactly the layer that makes tree-kill unreliable.
         """
+        if self.assume_entered:
+            return self._bare_command(command)
         if self.kind is EnvironmentKind.WINDOWS and not self._uses_bash:
             return self._windows_command(command)
         return self._bash_command(command)
+
+    @property
+    def assume_entered(self) -> bool:
+        """True when this process already carries the solver environment.
+
+        Set explicitly on the dataclass, or inherited from the marker a detached
+        launcher exports - so the child hydromate discovers it without being told.
+        WSL is excluded unconditionally: a captured *Linux* environment cannot launch a
+        Windows process, so those commands must go through ``wsl.exe`` regardless.
+        """
+        if self.kind is EnvironmentKind.WSL:
+            return False
+        if self._assume_entered is not None:
+            return bool(self._assume_entered)
+        return os.environ.get(ENTERED_MARKER, "") == "1"
+
+    @assume_entered.setter
+    def assume_entered(self, value: bool | None) -> None:
+        self._assume_entered = value
+
+    def _bare_command(self, command: str) -> list[str]:
+        """Run *command* with no setup script and no login shell.
+
+        A shell is still involved because the payload is a shell string (it uses
+        ``command -v`` and quoting), but it is a plain non-login ``-c``: one thin layer,
+        not a login shell re-reading profile scripts that could contradict the captured
+        environment.
+        """
+        if os.name == "nt" and not self._uses_bash:  # pragma: no cover - Windows only
+            return ["cmd", "/c", command]
+        shell = str(self.shell) if self.shell else "bash"
+        return [shell, "-c", command]
 
     @property
     def _uses_bash(self) -> bool:
