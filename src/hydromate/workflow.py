@@ -231,7 +231,9 @@ def run_solver_streaming(runtime: TelemacRuntime, cfg: Config, *,
                          ncsize: int | None = None,
                          cwd: Path | str | None = None,
                          duration: float | None = None,
-                         show_progress: bool = True):
+                         show_progress: bool = True,
+                         sink: object | None = None,
+                         should_stop=None):
     """Run the TELEMAC solver, echoing its listing live with a progress bar.
 
     Unlike a plain :meth:`TelemacRuntime.run_solver`, this streams the solver's
@@ -243,17 +245,27 @@ def run_solver_streaming(runtime: TelemacRuntime, cfg: Config, *,
     *cwd* overrides the run folder (default ``cfg.model_dir`` - the convergence
     studies run each level in its own subfolder). Returns the ``CompletedProcess``
     (its ``returncode`` reports success/failure; a non-zero exit does not raise).
+
+    *sink* is an event sink (:mod:`hydromate.jobs.events`): the same parsed iteration
+    and simulated time that drive the terminal bar are also emitted as structured
+    progress, so a detached job never asks anyone to parse a console log. *should_stop*
+    is polled between lines and terminates the whole solver process group when it
+    returns true.
     """
     cas_file = cas_file or cfg.cas_file
     if ncsize is None:
         ncsize = cfg.telemac.n_processors
     if duration is None:
         duration = expected_duration(cfg)
-    progress = SolverProgress(duration) if show_progress else None
+    # A sink alone is enough reason to build the parser: a detached run wants the
+    # structured progress even though it has no terminal to draw a bar on.
+    progress = (SolverProgress(duration, sink=sink, echo=show_progress)
+                if (show_progress or sink is not None) else None)
     on_line = progress.feed if progress else print
     try:
         return runtime.run_solver(cas_file, cwd=cwd or cfg.model_dir, ncsize=ncsize,
-                                  solver=solver, check=False, on_line=on_line)
+                                  solver=solver, check=False, on_line=on_line,
+                                  should_stop=should_stop)
     finally:
         if progress is not None:
             progress.close()

@@ -54,7 +54,10 @@ class ShellRuntime:
 
     def run(self, command: str, cwd: str | Path | None = None,
             check: bool = True,
-            on_line: Callable[[str], None] | None = None) -> subprocess.CompletedProcess:
+            on_line: Callable[[str], None] | None = None,
+            should_stop: Callable[[], bool] | None = None,
+            env: dict[str, str] | None = None,
+            grace: float = 20.0) -> subprocess.CompletedProcess:
         """Run *command* inside the sourced environment.
 
         With *on_line* the command's combined stdout+stderr is streamed line by
@@ -62,32 +65,94 @@ class ShellRuntime:
         not silent) instead of being buffered until the end; the full output is
         still returned in ``CompletedProcess.stdout``. Without it, output is
         captured quietly as before.
+
+        *should_stop* is polled between output lines and, once it returns true, the
+        whole **process group** is terminated - not just the child. That distinction is
+        the point: the child is a shell or TELEMAC's launcher, and the ranks that matter
+        are its grandchildren, so signalling the child alone leaves orphan ``mpirun``
+        processes behind (plan §9). It is what makes a multi-hour run cancellable from
+        another process.
+
+        *env* replaces the child's environment wholesale, which is how a detached job
+        hands over an already-captured solver environment instead of sourcing it again.
         """
         args = self._wrap(command)
         cwd = str(cwd) if cwd else None
         if on_line is None:
             return subprocess.run(
-                args, cwd=cwd, check=check, text=True, capture_output=True,
+                args, cwd=cwd, check=check, text=True, capture_output=True, env=env,
             )
+        # A new session makes the child a process-group leader, so killpg reaches every
+        # descendant. Harmless when nothing ever cancels.
+        popen_kwargs: dict = {}
+        if os.name != "nt":
+            popen_kwargs["start_new_session"] = True
         proc = subprocess.Popen(
-            args, cwd=cwd, text=True, bufsize=1,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            args, cwd=cwd, text=True, bufsize=1, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, **popen_kwargs,
         )
         captured: list[str] = []
+        stopped = False
         assert proc.stdout is not None
-        for line in proc.stdout:
-            captured.append(line)
-            on_line(line.rstrip("\n"))
-        proc.stdout.close()
+        try:
+            for line in proc.stdout:
+                captured.append(line)
+                on_line(line.rstrip("\n"))
+                if should_stop is not None and should_stop():
+                    stopped = True
+                    _terminate_tree(proc, grace=grace)
+                    break
+        finally:
+            try:
+                proc.stdout.close()
+            except OSError:  # pragma: no cover
+                pass
         returncode = proc.wait()
         result = subprocess.CompletedProcess(
             args, returncode, stdout="".join(captured), stderr="",
         )
-        if check and returncode != 0:
+        if check and returncode != 0 and not stopped:
             raise subprocess.CalledProcessError(
                 returncode, args, output=result.stdout,
             )
         return result
+
+
+def _terminate_tree(proc: subprocess.Popen, *, grace: float = 20.0) -> None:
+    """Stop *proc* and everything it started.
+
+    ``SIGTERM`` to the group first so TELEMAC and MPI get the chance to shut down
+    cleanly, then ``SIGKILL`` to whatever is left. Never a bare ``os.kill(pid)``:
+    the solver ranks are grandchildren, and killing only the parent orphans them
+    (plan §9).
+    """
+    if os.name == "nt":  # pragma: no cover - Windows path
+        # No process groups in the POSIX sense; the launcher's Job Object is the
+        # equivalent, so here the best available action is the documented one.
+        proc.terminate()
+        try:
+            proc.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        return
+    import signal
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (ProcessLookupError, OSError):  # pragma: no cover - already gone
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):  # pragma: no cover
+        return
+    try:
+        proc.wait(timeout=grace)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):  # pragma: no cover
+        pass
 
 
 class TelemacRuntime(ShellRuntime):
@@ -112,7 +177,9 @@ class TelemacRuntime(ShellRuntime):
                    sortie: bool = True,
                    solver: str | None = None,
                    check: bool = True,
-                   on_line: Callable[[str], None] | None = None) -> subprocess.CompletedProcess:
+                   on_line: Callable[[str], None] | None = None,
+                   should_stop: Callable[[], bool] | None = None,
+                   ) -> subprocess.CompletedProcess:
         """Launch a TELEMAC solver on *cas_file* (used for the dry test run).
 
         *solver* overrides the configured solver launcher (default
@@ -129,7 +196,8 @@ class TelemacRuntime(ShellRuntime):
 
         *on_line* is forwarded to :meth:`run`: pass a callback (e.g.
         ``SolverProgress.feed``) to stream the solver's listing live instead of
-        running silently.
+        running silently. *should_stop* is likewise forwarded, and is how a job cancels
+        a run that is already marching.
         """
         ncsize = ncsize or self.env.n_processors
         parallel = f" --ncsize={ncsize}" if ncsize and ncsize > 1 else ""
@@ -153,7 +221,8 @@ class TelemacRuntime(ShellRuntime):
                   or sys.executable)
         cmd = (f'{shlex.quote(str(python))} "$(command -v {launcher}.py)" '
                f"{shlex.quote(str(cas_file))}{parallel}{sortie_flags}")
-        return self.run(cmd, cwd=cwd, check=check, on_line=on_line)
+        return self.run(cmd, cwd=cwd, check=check, on_line=on_line,
+                        should_stop=should_stop)
 
     def check_available(self) -> str:
         """Return the TELEMAC python version string, raising if the env is broken."""

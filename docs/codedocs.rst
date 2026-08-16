@@ -234,3 +234,93 @@ Command-line interface
 
 .. automodule:: hydromate.cli
    :members:
+
+The job system
+-------------------------------------------------------------------------------
+
+Job identity, persistence, execution and detachment. A sibling of ``core`` and
+``solvers`` rather than part of ``core``, because the executor dispatches to a solver
+backend - which nothing in ``core`` may do. ``model``, ``ids`` and ``paths`` are
+standard-library only, so a job verb costs no more than a capability listing.
+
+.. automodule:: hydromate.jobs.model
+   :members:
+
+.. automodule:: hydromate.jobs.ids
+   :members:
+
+.. automodule:: hydromate.jobs.paths
+   :members:
+
+.. automodule:: hydromate.jobs.store
+   :members:
+
+.. automodule:: hydromate.jobs.lock
+   :members:
+
+.. automodule:: hydromate.jobs.procs
+   :members:
+
+.. automodule:: hydromate.jobs.index
+   :members:
+
+.. automodule:: hydromate.jobs.reaper
+   :members:
+
+.. automodule:: hydromate.jobs.profiles
+   :members:
+
+.. automodule:: hydromate.jobs.events
+   :members:
+
+.. automodule:: hydromate.jobs.logs
+   :members:
+
+.. automodule:: hydromate.jobs.interaction
+   :members:
+
+.. automodule:: hydromate.jobs.results
+   :members:
+
+.. automodule:: hydromate.jobs.executor
+   :members:
+
+.. automodule:: hydromate.jobs.submit
+   :members:
+
+Detached launchers
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.jobs.launcher
+   :members:
+
+.. automodule:: hydromate.jobs.launchers.systemd
+   :members:
+
+.. automodule:: hydromate.jobs.launchers.posix
+   :members:
+
+.. automodule:: hydromate.jobs.launchers.windows
+   :members:
+
+.. automodule:: hydromate.jobs.launchers.wsl
+   :members:
+
+Solver backends
+-------------------------------------------------------------------------------
+
+The adapters the job system dispatches to. Both are thin: every piece of work is a
+function the per-case scripts already call, so the standalone path and a submitted job
+drive the same code.
+
+.. automodule:: hydromate.solvers.telemac.backend
+   :members:
+
+.. automodule:: hydromate.solvers.openfoam.backend
+   :members:
+
+Job command line
+-------------------------------------------------------------------------------
+
+.. automodule:: hydromate.jobcli
+   :members:

@@ -135,6 +135,23 @@ class CapabilityState:
                 f"{_flag(self.configured):<12}{_flag(self.built):<7}"
                 f"{_flag(self.run)}")
 
+    def as_dict(self) -> dict:
+        """JSON form, for ``hydromate case-status --json``.
+
+        The three axes stay separate and the unknown ones stay ``null``. A GUI needs
+        that distinction: ``n/a`` means hide the tab (a category error for this solver),
+        ``no`` means show it disabled with a reason (hydromate has not built it yet),
+        and ``null`` means "could not tell" - which is never the same as "no".
+        """
+        return {
+            "capability": self.capability.value,
+            "implemented": self.implemented.value,
+            "configured": self.configured,
+            "built": self.built,
+            "run": self.run,
+            "available": self.available,
+        }
+
 
 @dataclass
 class SolverStatus:
@@ -159,6 +176,18 @@ class SolverStatus:
             if state.capability is cap:
                 return state
         return None
+
+    def as_dict(self) -> dict:
+        return {
+            "solver": self.name,
+            "enabled": self.enabled,
+            "env_ok": self.env_ok,
+            "env_detail": self.env_detail,
+            "case": self.case_name,
+            "generated": self.generated,
+            "version": self.version,
+            "capabilities": [state.as_dict() for state in self.capabilities],
+        }
 
     def render(self) -> str:
         """The marker file body. Strictly parseable: ``#`` comments, ``key = value``
@@ -281,6 +310,20 @@ class CaseStatus:
 
     def write_markers(self) -> list[Path]:
         return [status.write(self.case_dir) for status in self.solvers]
+
+    def as_dict(self) -> dict:
+        """The whole case as JSON. **This is the plugin's tab-generation contract.**
+
+        The QGIS plugin builds its tab set from this rather than hardcoding one, so
+        adding a capability - or a whole solver - to hydromate surfaces in the plugin
+        with no plugin change. It must stay standard-library-only for the same reason
+        the rest of this module does: a plugin asking "what can this case do?" has to
+        get an answer without importing gmsh.
+        """
+        return {
+            "case_dir": str(self.case_dir),
+            "solvers": [status.as_dict() for status in self.solvers],
+        }
 
     def render(self) -> str:
         return "\n".join(status.render() for status in self.solvers)

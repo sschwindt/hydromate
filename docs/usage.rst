@@ -615,6 +615,48 @@ Useful flags:
     After building, launch the configured solver once to confirm the case is
     accepted by TELEMAC.
 
+The full command surface
+------------------------
+
+Building and inspecting a case:
+
+.. code-block:: bash
+
+   hydromate <config.yml> [--check|--dry-run|--no-validate-env|-v]  # build the case
+   hydromate case-status <config.yml> [--full] [--check-env] [--json]
+   hydromate openfoam <config.yml> [--check] [--cell-size <m>] [--layers <n>]
+   hydromate targets <config.yml> [-o <out.xlsx>] [--force]
+   hydromate clip <raster> -b <boundary> -o <out>
+   hydromate rating -o <out.csv> --manning <n> --slope <S0> --width <b> --q <Q...>
+   hydromate migrate <config> [-o <out.yml> | --in-place]
+
+Running work that outlives this shell (see :doc:`jobs`):
+
+.. code-block:: bash
+
+   hydromate submit <config.yml> --kind <kind> [--profile P] [--np N] [--option k=v]
+   hydromate execute <JOB_ID>            # synchronously, here - the debugging path
+   hydromate status  <JOB_ID> [--watch]
+   hydromate cancel  <JOB_ID>
+   hydromate logs    <JOB_ID> [--follow] [--solver] [--path]
+   hydromate list    [--state S] [--rebuild]
+   hydromate profiles [list | show N | validate [N] | path]
+
+Every command takes ``--json``, which emits one envelope
+(``{"ok", "command", "hydromate", "data", "error"}``) on **stdout** with all narration on
+stderr - so a caller can parse stdout unconditionally. That is what the QGIS plugin reads.
+
+.. note::
+
+   ``hydromate status`` is overloaded, and the argument decides. An existing **path** means
+   the *case* (the historic meaning, which keeps working) and a job-id-shaped argument
+   means the *job*. The two cannot be confused - a job id is never a path - and the case
+   form is also spelled ``hydromate case-status`` if you would rather be explicit.
+
+Exit codes are per error category, so a script can branch without parsing messages:
+``2`` config, ``3`` geodata, ``4`` environment, ``5`` solver, ``6`` mesh, ``1`` anything
+unanticipated, ``130`` cancelled.
+
 Generating the calibration-target template
 ------------------------------------------
 

@@ -31,8 +31,12 @@ def _captured_command(runtime, tmp_path, monkeypatch, **kw):
     """The shell command run_solver would run, without running it."""
     seen = {}
 
-    def fake_run(command, cwd=None, check=True, on_line=None):
+    def fake_run(command, cwd=None, check=True, on_line=None, **kwargs):
+        # **kwargs so this stub survives ShellRuntime.run growing a parameter (it has
+        # gained should_stop/env for cancellable, detached runs); the assertions here
+        # are about the command string, not the call signature.
         seen["command"] = command
+        seen.update(kwargs)
         return None
 
     monkeypatch.setattr(runtime, "run", fake_run)

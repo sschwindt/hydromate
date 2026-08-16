@@ -1,9 +1,14 @@
 hydromate
 =========
 
-**Automated, reproducible setup of calibration-ready TELEMAC hydro- and morphodynamic models.**
+**Automated, reproducible setup of calibration-ready river models - TELEMAC and OpenFOAM - with a persistent job runner and a QGIS frontend.**
 
-``hydromate`` turns raw field and geospatial data into a production-ready `TELEMAC <http://www.opentelemac.org/>`_ 2D (and, as an extension point, GAIA morphodynamic) model, wired directly into `HydroBayesCal <https://github.com/Ecohydraulics/hydrobayescal>`_ for surrogate-assisted Bayesian calibration. The result is a numerical model that can be run with **quantified uncertainty** on physically meaningful calibration parameters (bed friction zones, sediment-transport parameters).
+``hydromate`` turns raw field and geospatial data into a production-ready `TELEMAC <http://www.opentelemac.org/>`_ 2D/3D model (with GAIA morphodynamics), or an `OpenFOAM <https://openfoam.org/>`_ ``interFoam`` free-surface case, wired directly into `HydroBayesCal <https://github.com/Ecohydraulics/hydrobayescal>`_ for surrogate-assisted Bayesian calibration. The result is a numerical model that can be run with **quantified uncertainty** on physically meaningful calibration parameters (bed friction zones, sediment-transport parameters).
+
+Simulations run as **persistent jobs** that keep going after the shell - or QGIS - that
+started them is gone, and can be rediscovered, monitored and cancelled later. There is a
+**QGIS plugin** frontend for the whole workflow, and everything remains fully usable from
+the command line with QGIS absent.
 
 Motivation
 ----------
@@ -42,6 +47,9 @@ From a region-of-interest DEM, inflow data, an optional stage-discharge relation
    installation
    input_files
    usage
+   jobs
+   qgis_plugin
+   architecture
    troubleshoot
    codedocs
    license

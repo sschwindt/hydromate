@@ -122,7 +122,7 @@ Rules that stay:
 
 # 2b. Status, and what a next session should pick up
 
-*Written 2026-08-14, after phases 1-4 and the OpenFOAM work. Read this before §3.*
+*Updated 2026-08-15, after phases 5-6 and the plugin. Read this before §3.*
 
 ## Done and on `main`
 
@@ -135,24 +135,28 @@ Rules that stay:
 | 4b | shared-intent classification + legacy-key table | `core/schema.py` |
 | 4c | `dump_config`, `hydromate migrate` | `config.py`, `cli.py` |
 | 4d | typed errors with stable codes | `core/errors.py` |
+| **5** | **the job model**: ids, paths, states/kinds, atomic store, lock + staleness, SQLite index, reaper, profiles, events, rotation | **`jobs/`** |
+| **6** | **the runner**: executor, `submit/execute/status/cancel/logs/list/profiles`, four detached launchers, `--json` envelope, per-category exit codes | **`jobs/executor.py`, `jobs/launchers/`, `jobcli.py`** |
+| **6b** | **solver backends** finally implementing `SolverBackend` (`spec.load()` was dead code) | **`solvers/*/backend.py`** |
+| **7-11** | **the QGIS plugin**: compat layer, runner client, `.hydromate-prj`, capability-generated tabs, job dashboard, result loading, Processing provider, A3 layout | **`qgis_plugin/hydromate/`** |
 
-370 tests, `ruff` clean, `import hydromate` 22 ms / 59 modules with no heavy imports.
+596 tests, `ruff` clean, the import-weight contract intact.
 
-## Remaining, in order
+## Remaining
 
-1. **Phase 5 - the job model** (§5): `Job`, `JobState`, the registry, `status.json`,
-   `<job_root>/<job_id>/`. Store failures as `core.errors.ErrorRecord.as_dict()` -
-   that is what 4d was built for. This is the real work; nothing else can be built on
-   a per-phase directory layout.
-2. **Phase 6 - the runner** (§4, §8): `submit` / `execute` / `status` / `cancel` /
-   `logs` / `list`, plus the detached launchers. Use
-   `SolverEnvironment.capture()` to set the environment **directly on the detached
-   process**, so no shell sits in the middle of the tree and tree-kill stays clean.
-3. **The plugin itself** (§10 onward).
+Nothing in this plan is outstanding. What is worth doing next, on its own merits:
 
-**Not a prerequisite for any of the above:** the deferred split of
-`convergence`/`calibration` into core + adapters. It is leftover tidy-up from phase 3,
-worth doing on its own merits, and no plugin work is blocked by it.
+1. **Run the acceptance tests against real solvers.** A/C/D/F pass against the fake
+   solvers and a real detached run; A and E want a real TELEMAC run and a real QGIS
+   session, and B wants OpenFOAM.
+2. **Windows and WSL.** Both launchers are implemented and unit-tested (argv, Job Object
+   flags, stale-PID recovery) but have **never been executed** against a real install.
+   They are documented as such.
+3. **QGIS 4.x verification.** The plugin is written for it (`qgisMaximumVersion=4.99`, no
+   `.qrc`, enums by name) and was verified against PyQGIS 3.22 here; it has not been run
+   on a 4.x build.
+4. The deferred split of `convergence`/`calibration` into core + adapters - leftover tidy-up
+   from phase 3, blocking nothing.
 
 ## Decisions taken that the plan no longer describes correctly
 
@@ -170,6 +174,24 @@ worth doing on its own merits, and no plugin work is blocked by it.
 * `dump_config` goes through the dataclass, so it **loses comments**. A form-based
   editor must therefore not be the only copy of a case's documentation - the annotated
   original lives in `cases/case-template/case-config.yml`.
+* **§5's job tree does not fit every kind.** Steady/3D/unsteady/calibration run inside an
+  existing `model_dir` and hotstart from an `r2d.slf` there; giving each its own `input/`
+  would mean copying it, which §26 forbids. Hence `workspace.mode` (`job` | `case` |
+  `link`), defaulted per kind - build kinds own their directory, run kinds do not.
+* **§10's flat `progress` example is wrong**; the same section's prose is right. Progress
+  is typed per kind.
+* **§8's Windows Job Object must be named.** An unnamed one is reachable only through the
+  creating handle, which dies with the submitter - so `cancel` from a fresh process could
+  never open it, which is the exact failure the Job Object was introduced to prevent.
+* **§13's "MPI through the profile's launcher" does not apply to TELEMAC.** Its own
+  launcher spawns `mpirun` from the systel config, so prepending one would start the run
+  twice. It applies to OpenFOAM, which now honours it instead of hard-coding `mpirun`.
+* **§4's `status JOB_ID` collides with the existing case status.** Resolved by a rule
+  rather than a rename: an existing path means the case, a job-id-shaped argument means
+  the job, and `case-status` is the explicit spelling. Both keep working.
+* **§24's `error` shape** is `ErrorRecord`'s (`code`/`message`/`subject`/`remedy`/
+  `details`); `component` and `return_code` travel in `details` rather than widening the
+  dataclass.
 
 ## Traps a next session will otherwise re-discover
 
@@ -194,6 +216,16 @@ worth doing on its own merits, and no plugin work is blocked by it.
   hit them on such a reach. That is the clearest outstanding TELEMAC-side bug.
 * **A diverged solver can write a file of NaN rather than failing.** Validate a result
   before consuming it (`prerun._is_finite`).
+* **A zombie process reads as alive.** `os.kill(pid, 0)` succeeds against one, because the
+  table entry survives until the parent reaps it - so `cancel` reported failure against a
+  job that had already stopped. `jobs.procs.pid_alive` treats state `Z` as dead.
+* **A throttled status sink will skip the final write.** Fields assigned directly on the
+  status object leave the sink believing it is clean, so a failed job kept its real error
+  in `runner.log` while `status.json` still said RUNNING - and the reaper then relabelled
+  it "abandoned", losing the actual cause. The terminal write bypasses the sink.
+* **`QgsTask` does not take a Python reference.** A task whose only reference was a local
+  is garbage collected before it runs, and the symptom is not a crash but a callback that
+  never fires: no tabs, an empty dashboard, no error anywhere.
 * On isar the OpenFOAM **rough wall function is inadmissible on ~100% of wetted bed
   faces** (ks is a large fraction of the depth). OpenFOAM clamps and carries on, so the
   run completes with unphysical near-bed velocity. Read such a result as bulk flow.

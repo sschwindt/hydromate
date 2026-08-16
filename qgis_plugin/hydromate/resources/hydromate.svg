@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A reach seen in plan: two banks and the thread of the current between them.
+     Plain SVG, loaded from this file at runtime. Deliberately NOT compiled into a .qrc
+     module: those are built against one Qt major version and fail to import on the
+     other, which presents as a plugin that will not load at all. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="10" fill="#0d3b66"/>
+  <path d="M8 46c8-2 10-10 18-12s10 6 18 4 8-8 12-9"
+        fill="none" stroke="#7ec8e3" stroke-width="5" stroke-linecap="round"/>
+  <path d="M8 34c8-2 10-10 18-12s10 6 18 4 8-8 12-9"
+        fill="none" stroke="#f5f5f5" stroke-width="3" stroke-linecap="round"
+        opacity="0.85"/>
+  <path d="M8 55c9-3 12-7 20-7s12 5 20 3 8-5 11-6"
+        fill="none" stroke="#2e86ab" stroke-width="3" stroke-linecap="round"
+        opacity="0.7"/>
+</svg>

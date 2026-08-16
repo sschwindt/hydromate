@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hydromate"
-version = "0.1.0"
+version = "0.2.0"
 description = "Automated setup of calibration-ready TELEMAC-2D/3D + GAIA cases for the Inn river, feeding HydroBayesCal."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -55,6 +55,14 @@ calibration = ["hydrobayescal>=1.4.4"]
 [project.scripts]
 hydromate = "hydromate.cli:main"
 hydromate-gui = "hydromate.gui.launch:main"
+
+# Solver backends are discovered through this group, so a third solver is a
+# `pip install hydromate-<name>` rather than a fork. The built-ins register through the
+# same mechanism they document, with a hard-coded fallback in core/registry.py for a
+# source checkout that has not been re-installed.
+[project.entry-points."hydromate.solvers"]
+telemac = "hydromate.solvers.telemac.spec:SPEC"
+openfoam = "hydromate.solvers.openfoam.spec:SPEC"
 
 [tool.setuptools.packages.find]
 where = ["src"]

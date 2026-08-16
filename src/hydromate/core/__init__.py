@@ -18,12 +18,14 @@ from hydromate.core.capabilities import (
     Capability, CapabilityState, CaseStatus, SolverStatus, Support, read_marker,
 )
 from hydromate.core.registry import (
-    BackendSpec, CapabilitySpec, SolverBackend, backends, get, register, supporting,
+    BackendSpec, BaseBackend, CapabilitySpec, SolverBackend, backends, get, register,
+    supporting,
 )
 
 __all__ = [
     "Capability", "CapabilityState", "CaseStatus", "SolverStatus", "Support",
     "read_marker",
-    "BackendSpec", "CapabilitySpec", "SolverBackend", "backends", "get", "register",
+    "BackendSpec", "BaseBackend", "CapabilitySpec", "SolverBackend", "backends",
+    "get", "register",
     "supporting",
 ]

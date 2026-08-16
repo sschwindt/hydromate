@@ -49,20 +49,28 @@ class OpenFoamProgress:
     orders of magnitude with the simulated clock barely advancing.
     """
 
-    def __init__(self, end_time: float, *, start_time: float = 0.0, out=None):
+    def __init__(self, end_time: float, *, start_time: float = 0.0, out=None,
+                 sink=None, echo: bool = True):
         from hydromate.progress import ProgressBar
 
         self.bar = ProgressBar(total=max(end_time - start_time, 0.0), out=out)
         self.start_time = float(start_time)
+        self.end_time = float(end_time)
         self.time = float(start_time)
         self.courant = 0.0
         self.delta_t = 0.0
         self.continuity = 0.0
+        # The same parse feeds the terminal bar and a detached job's status.json, so
+        # there is exactly one place that knows what interFoam's output looks like.
+        self.sink = sink
+        self.echo = echo
 
     def feed(self, line: str) -> None:
+        advanced = False
         m = _TIME_RE.match(line)
         if m:
             self.time = float(m.group(1))
+            advanced = True
         m = _COURANT_RE.search(line)
         if m:
             self.courant = float(m.group(2))
@@ -72,10 +80,21 @@ class OpenFoamProgress:
         m = _CONTINUITY_RE.search(line)
         if m:
             self.continuity = float(m.group(1))
-        self.bar.echo(line)
-        self.bar.update(
-            self.time - self.start_time,
-            f"t={self.time:.2f}s  Co={self.courant:.2f}  dt={self.delta_t:.3g}s")
+        if self.echo:
+            self.bar.echo(line)
+            self.bar.update(
+                self.time - self.start_time,
+                f"t={self.time:.2f}s  Co={self.courant:.2f}  dt={self.delta_t:.3g}s")
+        if self.sink is not None:
+            try:
+                self.sink.line(line)
+                if advanced:
+                    self.sink.progress(simulated_time=self.time,
+                                       duration=self.end_time or None,
+                                       courant=self.courant,
+                                       time_step=self.delta_t)
+            except Exception:  # noqa: BLE001 - reporting never stops the solver
+                pass
 
     def close(self) -> None:
         self.bar.close()
@@ -155,9 +174,23 @@ class OpenFoamRuntime(ShellRuntime):
         return self.run(f"reconstructPar{flag}", cwd=case_dir, check=False)
 
     # -------------------------------------------------------------------- solve
+    def to_vtk(self, case_dir: str | Path, *, latest: bool = False,
+               fields: list[str] | None = None):
+        """Convert the reconstructed case to VTK for QGIS / ParaView.
+
+        Part of the **runner's** lifecycle, not the plugin's (plan §13): converting a
+        multi-gigabyte case is exactly the heavy postprocessing QGIS must never do, and
+        it belongs on the machine that ran the solver.
+        """
+        flags = " -latestTime" if latest else ""
+        if fields:
+            flags += " -fields '(" + " ".join(fields) + ")'"
+        return self.run(f"foamToVTK{flags}", cwd=case_dir, check=False)
+
     def run_stage(self, case_dir: str | Path, stage: str, *, end_time: float,
                   start_time: float = 0.0, n_processors: int | None = None,
-                  cfg=None, show_progress: bool = True):
+                  cfg=None, show_progress: bool = True,
+                  sink=None, should_stop=None):
         """Activate *stage*'s dictionaries and run the solver over them.
 
         Pass *cfg* so the dictionaries are regenerated from the configuration this
@@ -172,16 +205,21 @@ class OpenFoamRuntime(ShellRuntime):
         dicts.activate(case_dir, stage, cfg)
         n = n_processors if n_processors is not None else self.of.n_processors
         if n and n > 1:
-            command = f"mpirun -np {int(n)} {self.of.solver} -parallel"
+            # Through the environment, not a hard-coded "mpirun": MS-MPI on Windows
+            # provides `mpiexec`, and a profile may point at `srun` on a cluster. The
+            # launcher is a configured field, not a constant (plan §13).
+            command = self.environment.mpi_command(f"{self.of.solver} -parallel", n)
         else:
             command = self.of.solver
 
-        progress = OpenFoamProgress(end_time, start_time=start_time) \
-            if show_progress else None
+        progress = (OpenFoamProgress(end_time, start_time=start_time,
+                                     sink=sink, echo=show_progress)
+                    if (show_progress or sink is not None) else None)
         on_line = progress.feed if progress else print
         log.info("running the %s stage: %s (to t = %g s)", stage, command, end_time)
         try:
-            return self.run(command, cwd=case_dir, check=False, on_line=on_line)
+            return self.run(command, cwd=case_dir, check=False, on_line=on_line,
+                            should_stop=should_stop)
         finally:
             if progress is not None:
                 progress.close()

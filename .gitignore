@@ -89,3 +89,9 @@ docs/_build/
 
 # --- Local backup tooling ---------------------------------------------------
 /scripts/backup-logs/
+
+# --- build outputs ---------------------------------------------------------
+# The QGIS plugin zip is built from a tag by CI (and reproducibly by
+# scripts/build_plugin_zip.py); it is a release asset, not source.
+/dist/
+docs/_build/

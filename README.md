@@ -2,11 +2,29 @@
 
 Automated setup of a calibration-ready **TELEMAC-2D** (optionally **+ GAIA** morphodynamics) case for a reach of the **Inn river (Bavaria)**, wired into [HydroBayesCal](https://github.com/Ecohydraulics/hydrobayescal) for surrogate-assisted Bayesian calibration with quantified uncertainty.
 
-You provide geodata + hydraulics; `hydromate` produces a ready TELEMAC case (geometry `.slf`, `boundaries.cli`, steering `.cas`, friction `.tbl`) plus a `measurements-calibration.csv` and a HydroBayesCal `config_Telemac.py`.
+You provide geodata + hydraulics; `hydromate` produces a ready TELEMAC case (geometry `.slf`, `boundaries.cli`, steering `.cas`, friction `.tbl`) plus a `measurements-calibration.csv` and a HydroBayesCal `config_Telemac.py`. An **OpenFOAM `interFoam`** free-surface case can be built from the same configuration and the same converged 2D result.
+
+Simulations run as **persistent jobs** that outlive the shell - or QGIS - that started them, and there is a **QGIS plugin** frontend for the whole workflow. Everything stays fully usable from the command line with QGIS absent.
+
+```bash
+hydromate submit cases/example-Inn/case-config.yml --kind steady   # -> a job id, immediately
+hydromate list                                                     # what exists
+hydromate status <JOB_ID>                                          # where it is
+hydromate cancel <JOB_ID>                                          # stop it, and everything it started
+```
+
+Close the terminal, log out, restart QGIS: the job carries on. See [`docs/jobs.rst`](docs/jobs.rst).
 
 ## Documentation
 
-Full docs (Sphinx) live in `docs/` (the reStructuredText sources: `index.rst`, `installation.rst`, `usage.rst`, `input_files.rst`, `codedocs.rst`, `hbc.rst`). See `docs/usage.rst` for the workflow, meshing, and config reference, and `docs/input_files.rst` for the required input files.
+Full docs (Sphinx) live in `docs/`. Start with `docs/usage.rst` for the workflow, meshing and config reference, and `docs/input_files.rst` for the required input files. Then:
+
+| doc | what it covers |
+|---|---|
+| [`docs/architecture.rst`](docs/architecture.rst) | how the model builder, the job runner and the QGIS plugin fit together, and why the seams are where they are |
+| [`docs/jobs.rst`](docs/jobs.rst) | submitting, monitoring and cancelling runs that outlive their shell; solver profiles; debugging |
+| [`docs/qgis_plugin.rst`](docs/qgis_plugin.rst) | installing and using the QGIS frontend |
+| [`docs/hbc.rst`](docs/hbc.rst) | what hydromate hands to HydroBayesCal |
 
 ### Building / recompiling the docs
 
@@ -104,6 +122,35 @@ hydromate-gui                 # opens a local app in your browser; nothing leave
 ```
 
 The form mirrors every config section (Project, TELEMAC, Inputs, Mesh, Friction, Hydrodynamics, Morphodynamics, Calibration) plus a **Workflow** tab summarising the steps; friction zones, calibration parameters, ground-truth sources and sediment classes are edited as tables. You can load an existing YAML, preview/download the generated YAML, save it, and run **Validate** (`--check`) or **Build** (the case build = workflow step 1) directly - the later steps (test run, mesh convergence, calibration, the 3D extension) are run from the per-case scripts.
+
+## The QGIS plugin
+
+`qgis_plugin/hydromate/` is a QGIS 3.44+/4.x plugin that drives all of the above from a
+dock: choose a case, submit a run, watch it, and load the results as styled layers.
+
+**It never imports `hydromate`.** QGIS ships its own Python and hydromate needs gmsh,
+rasterio, geopandas and a solver environment, so the plugin talks to the `hydromate`
+command-line tool as a subprocess and reads the files it writes. Either side can be
+reinstalled without touching the other - and, because the plugin does not own the solver
+process, closing QGIS does not stop your simulation.
+
+The tabs between *Setup* and *Jobs* are **generated from what hydromate reports the case
+can do** (`hydromate case-status --json`), so a capability added to hydromate appears in
+the plugin with no plugin change.
+
+For development, link it into your QGIS profile:
+
+```bash
+ln -s "$PWD/qgis_plugin/hydromate" \
+      ~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/hydromate
+```
+
+Then enable *HydroMate* in **Plugins > Manage and Install Plugins**. See
+[`docs/qgis_plugin.rst`](docs/qgis_plugin.rst) and
+[`qgis_plugin/hydromate/README.md`](qgis_plugin/hydromate/README.md).
+
+The plugin is GPL-2.0-or-later, because it links PyQGIS; `hydromate` itself stays
+BSD-3-Clause and remains usable on its own.
 
 ## Case layout
 
