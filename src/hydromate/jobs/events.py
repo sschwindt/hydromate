@@ -141,7 +141,13 @@ class StatusFileSink(NullSink):
         self.job_dir = job_dir
         self.status = status
         self.min_interval = float(min_interval)
-        self._last_write = 0.0
+        #: ``None`` means "never written", which is **not** the same as "written at time
+        #: zero". Initialising this to 0.0 made the throttle compare against a fake past
+        #: write, and on a freshly-booted machine - where ``time.monotonic()`` is still a
+        #: small number - the very first progress update was therefore throttled away.
+        #: The job then published no progress at all until something forced a write. On a
+        #: long-uptime machine the clock is large enough that it never showed.
+        self._last_write: float | None = None
         self._dirty = False
 
     # -- events -------------------------------------------------------------------
@@ -185,7 +191,10 @@ class StatusFileSink(NullSink):
     def _touch(self, *, force: bool) -> None:
         self._dirty = True
         now = time.monotonic()
-        if not force and (now - self._last_write) < self.min_interval:
+        # The first write is never throttled: a dashboard that shows nothing until the
+        # second event looks like a job that has not started.
+        if (not force and self._last_write is not None
+                and (now - self._last_write) < self.min_interval):
             return
         self.flush()
 

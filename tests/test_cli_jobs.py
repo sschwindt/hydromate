@@ -217,7 +217,10 @@ def test_an_unknown_option_is_refused_before_anything_is_created(fake_case, caps
 
 
 def test_execute_runs_the_job_here_and_now(fake_case, capsys, monkeypatch):
-    from tests.test_jobs_executor import _FakeSpec, RecordingBackend
+    # Not `tests.test_jobs_executor`: pytest puts the test directory itself on
+    # sys.path, not its parent, so the package spelling only works when the
+    # repository root happens to be importable too.
+    from test_jobs_executor import _FakeSpec, RecordingBackend
     from hydromate.core import registry
     from hydromate.core.capabilities import Capability, Support
     from hydromate.core.registry import CapabilitySpec

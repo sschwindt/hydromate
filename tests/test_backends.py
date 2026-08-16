@@ -160,12 +160,14 @@ def test_the_version_is_declared_in_exactly_one_place():
     an uninstalled checkout. A drift between them would make a release report a version
     it is not - which is precisely what the plugin's ``--version`` probe reads."""
     import re
-    import tomllib
 
     import hydromate
 
-    pyproject = tomllib.loads((SRC.parent / "pyproject.toml").read_text("utf-8"))
-    declared = pyproject["project"]["version"]
+    # Read with a regex rather than tomllib, which is 3.11+ while hydromate supports
+    # 3.10 - and a version test that silently skips on the oldest supported Python is
+    # exactly the one you want running there.
+    pyproject = (SRC.parent / "pyproject.toml").read_text("utf-8")
+    declared = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.M).group(1)
     source = (SRC / "hydromate" / "__init__.py").read_text("utf-8")
     fallback = re.search(r'_FALLBACK_VERSION\s*=\s*"([^"]+)"', source).group(1)
     assert fallback == declared, "the fallback in __init__.py has drifted from pyproject"

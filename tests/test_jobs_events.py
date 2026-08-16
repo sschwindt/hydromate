@@ -128,6 +128,27 @@ def test_progress_is_throttled_but_a_phase_change_is_not(job, status, monkeypatc
     assert len(writes) == 3
 
 
+def test_the_first_write_is_never_throttled_even_on_a_freshly_booted_machine(
+        job, status, monkeypatch):
+    """The regression CI found and a developer machine cannot.
+
+    The throttle compares against the last write time. Seeding that with ``0.0`` meant
+    comparing against a *fake past write*, so on a machine whose ``time.monotonic()`` is
+    still small - a freshly booted container - the very first progress update fell inside
+    the interval and was dropped. The job then published no progress at all until
+    something forced a write. On a long-uptime machine the clock is large enough that the
+    bug is invisible.
+    """
+    monkeypatch.setattr(events.time, "monotonic", lambda: 0.5)   # 500 ms since boot
+    sink = events.StatusFileSink(job, status, min_interval=2.0)
+    sink.progress(iteration=1)
+
+    from hydromate.jobs.store import read_status
+    written = read_status(job)
+    assert written is not None, "the first progress update never reached status.json"
+    assert written.progress.as_dict()["iteration"] == 1
+
+
 def test_progress_fields_merge_rather_than_replace(job, status):
     sink = events.StatusFileSink(job, status, min_interval=0.0)
     sink.progress(iteration=10, simulated_time=100.0)

@@ -40,7 +40,9 @@ jobs:
         run: |
           mamba install -y -q \
             numpy pandas scipy pyyaml pyproj 'shapely>=2.0' geopandas rasterio \
-            'openpyxl>=3.1' matplotlib
+            'openpyxl>=3.1' matplotlib libglu
+          # libglu: gmsh links against libGLU even when meshing headlessly, and a bare
+          # CI image does not carry it.
           pip install 'gmsh>=4.13'
 
       - name: Install hydromate
