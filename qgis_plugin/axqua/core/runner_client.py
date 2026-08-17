@@ -121,8 +121,10 @@ def find_executable(configured: str | None = None) -> RunnerInfo:
              f"  3. PATH ({on_path or 'not found'})"]
     if problems:
         lines += ["", "What was tried:"] + problems
-    lines += ["", "Install it with 'pip install axqua' in the environment that has "
-              "your solver tooling, then set the path in aXqua > Settings."]
+    lines += ["", "Install it with",
+              "    pip install git+https://github.com/sschwindt/aXqua.git",
+              "in the environment that has your solver tooling (aXqua is not on PyPI "
+              "yet), then set the path in aXqua > Settings."]
     raise RunnerNotFound("\n".join(lines))
 
 

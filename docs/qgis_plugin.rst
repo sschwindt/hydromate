@@ -20,7 +20,7 @@ separately installed ``axqua`` command-line tool.
 
 1. **Install aXqua** in the environment that already reaches your solver::
 
-       pip install axqua
+       pip install git+https://github.com/sschwindt/aXqua.git
        axqua --version
 
 2. **Install the plugin.** From the QGIS plugin repository (*Plugins ▸ Manage and Install

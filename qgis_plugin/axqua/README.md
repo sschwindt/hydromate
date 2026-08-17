@@ -25,7 +25,7 @@ rediscovered with whatever state they have actually reached.
 | | |
 |---|---|
 | QGIS | 3.44 or newer, including QGIS 4.x |
-| aXqua | `pip install axqua` (version 0.2 or newer), in an environment that can reach your solver |
+| aXqua | `pip install git+https://github.com/sschwindt/aXqua.git` (0.3 or newer), in an environment that can reach your solver. Not on PyPI yet. |
 | TELEMAC | any version reachable through its `pysource.*.sh` (Linux/macOS) or `pysource.bat` (Windows) |
 | OpenFOAM | Foundation build (openfoam.org); on Windows this means WSL |
 

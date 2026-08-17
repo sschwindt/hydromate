@@ -26,7 +26,7 @@ different, and **nothing you already have needs moving.**
 
 | was | is now |
 |---|---|
-| `pip install hydromate` | `pip install aXqua` |
+| `pip install hydromate` | `pip install git+https://github.com/sschwindt/aXqua.git` (not on PyPI yet) |
 | `import hydromate` | `import axqua` |
 | `hydromate <config>` | `axqua <config>` |
 | `hydromate-case/` | `axqua-case/` |
@@ -35,9 +35,12 @@ different, and **nothing you already have needs moving.**
 | `HYDROMATE_JOB_ROOT` and friends | `AXQUA_JOB_ROOT` and friends |
 | `<name>.hydromate-prj` | `<name>.axqua-prj` |
 
-The distribution is branded `aXqua` on PyPI; the importable module is plain lowercase
-`axqua`, because a mixed-case module name resolves differently on case-insensitive
-filesystems. PyPI treats the two spellings as one project, so `pip install axqua` works too.
+The distribution is named `aXqua`; the importable module is plain lowercase `axqua`,
+because a mixed-case module name resolves differently on case-insensitive filesystems.
+
+> **Not on PyPI yet.** Install from the repository:
+> `pip install git+https://github.com/sschwindt/aXqua.git`. Once it is published,
+> `pip install aXqua` will work (PyPI treats `aXqua` and `axqua` as one project).
 
 **The old names are still read** wherever ignoring them would lose your work:
 

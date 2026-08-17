@@ -12,7 +12,7 @@ it writes, so either side can be reinstalled without touching the other.
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 
 def classFactory(iface):        # noqa: N802 - the name QGIS requires
