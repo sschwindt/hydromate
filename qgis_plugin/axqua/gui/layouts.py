@@ -16,16 +16,20 @@ wrong way down a river is worse than no arrow, because a reader will believe it.
 
 from __future__ import annotations
 
+import logging
 import math
 
 from qgis.core import (QgsLayoutItemLabel, QgsLayoutItemLegend, QgsLayoutItemMap,
                        QgsLayoutItemPicture, QgsLayoutItemPolyline, QgsLayoutItemScaleBar,
-                       QgsLayoutPoint, QgsLayoutSize, QgsPrintLayout, QgsProject,
-                       QgsUnitTypes)
+                       QgsLayoutPoint, QgsLayoutSize, QgsPrintLayout, QgsProject)
 from qgis.PyQt.QtCore import QPointF
 from qgis.PyQt.QtGui import QColor, QFont, QPolygonF
 
+from ..compat import LAYOUT_MM, LEGEND_STYLES, PICTURE_SVG
+
 LAYOUT_NAME = "aXqua A3"
+log = logging.getLogger("axqua.plugin")
+
 FONT_FAMILY = "Arial"
 FONT_SIZE_PT = 16
 
@@ -52,7 +56,7 @@ def add_default_layout(iface, project: QgsProject | None = None) -> str:
     layout.initializeDefaults()
     layout.setName(LAYOUT_NAME)
     page = layout.pageCollection().page(0)
-    page.setPageSize(QgsLayoutSize(PAGE_W, PAGE_H, QgsUnitTypes.LayoutMillimeters))
+    page.setPageSize(QgsLayoutSize(PAGE_W, PAGE_H, LAYOUT_MM))
 
     canvas = iface.mapCanvas()
     map_item = _add_map(layout, canvas)
@@ -71,8 +75,8 @@ def _add_map(layout: QgsPrintLayout, canvas) -> QgsLayoutItemMap:
     width = PAGE_W - 2 * MARGIN - 70.0          # room for the legend column
     height = PAGE_H - 2 * MARGIN - 22.0         # room for the title
     item.attemptMove(QgsLayoutPoint(MARGIN, MARGIN + 20.0,
-                                    QgsUnitTypes.LayoutMillimeters))
-    item.attemptResize(QgsLayoutSize(width, height, QgsUnitTypes.LayoutMillimeters))
+                                    LAYOUT_MM))
+    item.attemptResize(QgsLayoutSize(width, height, LAYOUT_MM))
     item.setExtent(canvas.extent())
     item.setFrameEnabled(True)
     layout.addLayoutItem(item)
@@ -84,7 +88,7 @@ def _add_title(layout: QgsPrintLayout, project: QgsProject) -> None:
     label.setText(project.title() or "Simulation region of interest")
     label.setFont(_font(bold=True))
     label.adjustSizeToText()
-    label.attemptMove(QgsLayoutPoint(MARGIN, MARGIN, QgsUnitTypes.LayoutMillimeters))
+    label.attemptMove(QgsLayoutPoint(MARGIN, MARGIN, LAYOUT_MM))
     layout.addLayoutItem(label)
 
 
@@ -93,10 +97,10 @@ def _add_north_arrow(layout: QgsPrintLayout) -> None:
     # QGIS ships the north arrows as SVGs; resolving one through the search paths avoids
     # bundling an image and keeps the plugin free of binary assets.
     picture.setPicturePath("NorthArrows/layout_default_north_arrow.svg",
-                           QgsLayoutItemPicture.FormatSVG)
+                           PICTURE_SVG)
     picture.attemptMove(QgsLayoutPoint(PAGE_W - 60.0, MARGIN + 24.0,
-                                       QgsUnitTypes.LayoutMillimeters))
-    picture.attemptResize(QgsLayoutSize(20.0, 20.0, QgsUnitTypes.LayoutMillimeters))
+                                       LAYOUT_MM))
+    picture.attemptResize(QgsLayoutSize(20.0, 20.0, LAYOUT_MM))
     layout.addLayoutItem(picture)
 
     label = QgsLayoutItemLabel(layout)
@@ -104,7 +108,7 @@ def _add_north_arrow(layout: QgsPrintLayout) -> None:
     label.setFont(_font(bold=True))
     label.adjustSizeToText()
     label.attemptMove(QgsLayoutPoint(PAGE_W - 52.0, MARGIN + 44.0,
-                                     QgsUnitTypes.LayoutMillimeters))
+                                     LAYOUT_MM))
     layout.addLayoutItem(label)
 
 
@@ -141,7 +145,7 @@ def _add_flow_arrow(layout: QgsPrintLayout, canvas) -> None:
     label.setFont(_font(bold=True))
     label.adjustSizeToText()
     label.attemptMove(QgsLayoutPoint(x + length / 2 - 3.0, y + 6.0,
-                                     QgsUnitTypes.LayoutMillimeters))
+                                     LAYOUT_MM))
     layout.addLayoutItem(label)
 
 
@@ -158,7 +162,7 @@ def _add_scalebar(layout: QgsPrintLayout, map_item: QgsLayoutItemMap) -> None:
     bar.setFillColor2(QColor("white"))
     bar.setFont(_font())
     bar.attemptMove(QgsLayoutPoint(PAGE_W - 62.0, PAGE_H - MARGIN - 18.0,
-                                   QgsUnitTypes.LayoutMillimeters))
+                                   LAYOUT_MM))
     layout.addLayoutItem(bar)
 
 
@@ -175,7 +179,7 @@ def _add_legend(layout: QgsPrintLayout, map_item: QgsLayoutItemMap) -> None:
             model.rootGroup().removeChildNode(child)
     _style_legend_fonts(legend)
     legend.attemptMove(QgsLayoutPoint(PAGE_W - 62.0, MARGIN + 92.0,
-                                      QgsUnitTypes.LayoutMillimeters))
+                                      LAYOUT_MM))
     layout.addLayoutItem(legend)
 
     hint = QgsLayoutItemLabel(layout)
@@ -184,7 +188,7 @@ def _add_legend(layout: QgsPrintLayout, map_item: QgsLayoutItemMap) -> None:
     hint.setFont(_font())
     hint.adjustSizeToText()
     hint.attemptMove(QgsLayoutPoint(PAGE_W - 62.0, MARGIN + 104.0,
-                                    QgsUnitTypes.LayoutMillimeters))
+                                    LAYOUT_MM))
     layout.addLayoutItem(hint)
 
 
@@ -196,12 +200,14 @@ def _style_legend_fonts(legend: QgsLayoutItemLegend) -> None:
     keeps working across the 3.44-to-4.x range the plugin targets - and a legend whose
     font could not be set is still a usable legend, so nothing here raises.
     """
-    from qgis.core import QgsLegendStyle, QgsTextFormat
+    from qgis.core import QgsTextFormat
 
-    for component, bold in ((QgsLegendStyle.Title, True),
-                            (QgsLegendStyle.Group, True),
-                            (QgsLegendStyle.Subgroup, False),
-                            (QgsLegendStyle.SymbolLabel, False)):
+    for name, bold in (("Title", True), ("Group", True),
+                       ("Subgroup", False), ("SymbolLabel", False)):
+        component = LEGEND_STYLES.get(name)
+        if component is None:                        # pragma: no cover - older QGIS
+            log.debug("this QGIS has no legend component %r", name)
+            continue
         try:
             style = legend.style(component)
             if hasattr(style, "setTextFormat"):
@@ -209,8 +215,11 @@ def _style_legend_fonts(legend: QgsLayoutItemLegend) -> None:
             else:                                    # pragma: no cover - older QGIS
                 style.setFont(_font(bold))
             legend.setStyle(component, style)
-        except Exception:  # noqa: BLE001
-            continue
+        except (AttributeError, TypeError, ValueError) as exc:
+            # Narrow, and reported: a legend whose font could not be set is still a
+            # usable legend, but swallowing the reason silently is how a styling bug
+            # becomes unexplainable.
+            log.debug("could not set the %s legend font: %s", name, exc)
 
 
 def bearing(dx: float, dy: float) -> float:

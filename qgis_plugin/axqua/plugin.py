@@ -13,9 +13,13 @@ stops working. So every registration here has a matching removal.
 
 from __future__ import annotations
 
+import logging
+
 from qgis.PyQt.QtWidgets import QAction
 
 from .compat import DOCK_RIGHT, icon
+
+log = logging.getLogger("axqua.plugin")
 
 MENU = "&aXqua"
 
@@ -102,8 +106,11 @@ class AxquaPlugin:
         try:
             from qgis.core import QgsApplication
             QgsApplication.processingRegistry().removeProvider(self.provider)
-        except Exception:  # noqa: BLE001 - pragma: no cover
-            pass
+        except (RuntimeError, AttributeError, ImportError) as exc:
+            # Unloading must finish whatever happens - a plugin that raises here cannot
+            # be reloaded without restarting QGIS - but the reason is logged rather than
+            # discarded, because a provider that will not detach is worth knowing about.
+            log.debug("could not remove the Processing provider: %s", exc)
         self.provider = None
 
     # -- the print layout ---------------------------------------------------------

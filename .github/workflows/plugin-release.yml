@@ -40,11 +40,13 @@ jobs:
             exit 1
           fi
 
-      - name: Run the plugin tests
-        # They need neither QGIS nor a solver, so they are cheap enough to gate a release.
+      - name: Run the plugin tests and the security scan
+        # Neither needs QGIS or a solver, so both are cheap enough to gate a release -
+        # and both are what plugins.qgis.org runs on upload anyway.
         run: |
-          pip install pytest
+          pip install pytest bandit
           pytest qgis_plugin/tests -q
+          bandit -r qgis_plugin/axqua -q
 
       - name: Build the zip
         run: python scripts/build_plugin_zip.py

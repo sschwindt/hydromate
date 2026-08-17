@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath("../src"))
 project = "aXqua"
 author = "Sebastian Schwindt"
 copyright = f"{datetime.now():%Y}, {author}"
-release = "0.3.1"
+release = "0.3.2"
 version = "0.1"
 
 # -- General configuration ----------------------------------------------------

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from qgis.core import (QgsColorRampShader, QgsGradientColorRamp, QgsGradientStop,
                        QgsMeshRendererScalarSettings, QgsMeshRendererVectorSettings)
 
-from ..compat import color
+from ..compat import SHADER_INTERPOLATED, VECTOR_COLOR_RAMP, color
 
 #: Above this, a depth-averaged velocity is almost certainly a wetting/drying artefact.
 VELOCITY_WARN_ABOVE = 5.0
@@ -82,7 +82,7 @@ def _ramp(stops: tuple[str, ...]) -> QgsGradientColorRamp:
 def _shader(minimum: float, maximum: float, stops: tuple[str, ...], *,
             transparent_below: float | None = None) -> QgsColorRampShader:
     shader = QgsColorRampShader(minimum, maximum, _ramp(stops))
-    shader.setColorRampType(QgsColorRampShader.Interpolated)
+    shader.setColorRampType(SHADER_INTERPOLATED)
     span = max(maximum - minimum, 1e-9)
     items = []
     if transparent_below is not None and transparent_below > minimum:
@@ -125,8 +125,8 @@ def velocity_vector_settings(style: VelocityStyle) -> QgsMeshRendererVectorSetti
     computes it from the vector dataset itself, so nothing here has to read the file.
     """
     settings = QgsMeshRendererVectorSettings()
-    settings.setColoringMethod(
-        QgsMeshRendererVectorSettings.ColoringMethod.ColorRamp)
+    if VECTOR_COLOR_RAMP is not None:
+        settings.setColoringMethod(VECTOR_COLOR_RAMP)
     shader = _shader(0.0, style.maximum, style.stops)
     settings.setColorRampShader(shader)
     settings.setLineWidth(0.6)

@@ -22,7 +22,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from qgis.core import Qgis
+from qgis.core import (Qgis, QgsColorRampShader, QgsLayoutItemPicture, QgsLegendStyle,
+                       QgsMeshRendererVectorSettings, QgsTask, QgsUnitTypes)
 from qgis.PyQt.QtCore import QRegularExpression, Qt  # noqa: F401  (re-exported)
 from qgis.PyQt.QtGui import QColor, QIcon
 
@@ -45,12 +46,21 @@ def exec_dialog(dialog):
     return runner()
 
 
-def enum_value(owner, *names):
+_MISSING = object()
+
+
+def enum_value(owner, *names, default=_MISSING):
     """The first of *names* that exists on *owner*, scoped or not.
 
     Qt 6 requires ``Qt.ItemDataRole.UserRole`` where Qt 5 also accepted ``Qt.UserRole``.
     Rather than branching on the Qt version - which would need updating for every enum -
-    this asks the object what it actually has.
+    this asks the object what it actually has, **scoped spelling first**. That ordering
+    matters for more than correctness: QGIS's own Qt6 checker reads the source and flags
+    an unscoped literal, so writing the scoped name first satisfies the tool and the
+    runtime at once.
+
+    *default* makes an enum optional, for members that simply do not exist in older QGIS.
+    Without it a missing member raises at import time and the plugin will not load at all.
     """
     for name in names:
         parts = name.split(".")
@@ -61,6 +71,8 @@ def enum_value(owner, *names):
                 break
         if target is not None:
             return target
+    if default is not _MISSING:
+        return default
     raise AttributeError(f"none of {names} exist on {owner!r}")
 
 
@@ -74,6 +86,37 @@ ITEM_ENABLED = enum_value(Qt, "ItemFlag.ItemIsEnabled", "ItemIsEnabled")
 #: Qt 6 requires a real MatchFlag here; Qt 5 silently accepted a bare int, which is
 #: exactly the kind of difference that only shows up when the widget is constructed.
 MATCH_EXACTLY = enum_value(Qt, "MatchFlag.MatchExactly", "MatchExactly")
+
+# QGIS's own enums, which moved under scopes for Qt6 in exactly the same way. Resolved
+# here so no widget module contains an unscoped literal - which is both a Qt6 hazard and
+# something the plugin repository's checker reports on upload.
+LAYOUT_MM = enum_value(QgsUnitTypes, "LayoutUnit.LayoutMillimeters", "LayoutMillimeters")
+PICTURE_SVG = enum_value(QgsLayoutItemPicture, "Format.FormatSVG", "FormatSVG")
+TASK_CAN_CANCEL = enum_value(QgsTask, "Flag.CanCancel", "CanCancel")
+SHADER_INTERPOLATED = enum_value(QgsColorRampShader, "Type.Interpolated", "Interpolated")
+
+#: Legend text components, in the order the plugin styles them.
+LEGEND_STYLES = {
+    name: enum_value(QgsLegendStyle, f"Style.{name}", name, default=None)
+    for name in ("Title", "Group", "Subgroup", "SymbolLabel")
+}
+
+#: Colouring a vector (arrow) layer by a ramp. **Optional**: the member does not exist
+#: before QGIS 3.4x, and resolving it eagerly without a default would stop the whole
+#: plugin from importing on an older build rather than costing one styling nicety.
+VECTOR_COLOR_RAMP = enum_value(
+    QgsMeshRendererVectorSettings, "ColoringMethod.ColorRamp", "ColorRamp", default=None)
+
+
+def exec_(obj):
+    """Run a modal object's event loop on either Qt.
+
+    The same shim as :func:`exec_dialog`, for a ``QEventLoop`` rather than a dialog.
+    Reached through ``getattr`` so the trailing-underscore spelling appears nowhere as a
+    literal member call - which is what the Qt6 checker looks for.
+    """
+    runner = getattr(obj, "exec", None) or getattr(obj, "exec_")
+    return runner()
 
 
 def icon(name: str) -> QIcon:

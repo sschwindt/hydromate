@@ -16,6 +16,7 @@ from typing import Any, Callable
 
 from qgis.core import QgsApplication, QgsTask
 
+from ..compat import TASK_CAN_CANCEL
 from .runner_client import RunnerError
 
 
@@ -30,7 +31,7 @@ class RunnerTask(QgsTask):
     def __init__(self, description: str, work: Callable[[], Any], *,
                  on_success: Callable[[Any], None] | None = None,
                  on_error: Callable[[Exception], None] | None = None) -> None:
-        super().__init__(description, QgsTask.CanCancel)
+        super().__init__(description, TASK_CAN_CANCEL)
         self._work = work
         self._on_success = on_success
         self._on_error = on_error

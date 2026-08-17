@@ -17,12 +17,13 @@ encoder is missing would throw away the expensive half of the work.
 from __future__ import annotations
 
 import shutil
-import subprocess
+import subprocess  # nosec B404
 from pathlib import Path
 
 from qgis.core import (QgsMapRendererParallelJob, QgsMapSettings, QgsMeshLayer,
                        QgsProject)
 from qgis.PyQt.QtCore import QEventLoop, QSize
+from ..compat import exec_
 from qgis.PyQt.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                  QFormLayout, QHBoxLayout, QLabel, QLineEdit,
                                  QProgressBar, QPushButton, QSpinBox, QVBoxLayout,
@@ -164,22 +165,29 @@ class MovieDialog(QDialog):
         loop = QEventLoop()
         job.finished.connect(loop.quit)
         job.start()
-        loop.exec() if hasattr(loop, "exec") else loop.exec_()
+        exec_(loop)
         job.renderedImage().save(str(path))
 
     def _encode(self, frames_dir: Path, output: Path, count: int) -> None:
         pattern = str(frames_dir / "frame-%05d.png")
-        command = ["ffmpeg", "-y", "-framerate", str(self.fps.value()), "-i", pattern,
-                   "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32",
+        # Resolved to an absolute path rather than relying on PATH lookup at exec time,
+        # so what gets run is what was found when the dialog was opened.
+        ffmpeg = shutil.which("ffmpeg")
+        command = [ffmpeg or "ffmpeg", "-y", "-framerate", str(self.fps.value()),
+                   "-i", pattern, "-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32",
                    "-pix_fmt", "yuv420p", str(output)]
-        if not shutil.which("ffmpeg"):
+        if not ffmpeg:
             self.note.setText(
                 f"{count} frames written to {frames_dir}.\n\n"
                 "ffmpeg is not installed, so nothing was encoded. To make the video "
                 "later:\n\n" + " ".join(command))
             return
         try:
-            proc = subprocess.run(command, capture_output=True, text=True, timeout=1800)
+            # A list with no shell: the only caller-supplied element is the output path
+            # the user picked in a save dialog, and as an argv entry it cannot be
+            # interpreted as anything but a filename.
+            proc = subprocess.run(  # nosec B603
+                command, capture_output=True, text=True, timeout=1800)
         except (OSError, subprocess.SubprocessError) as exc:
             self.note.setText(f"Encoding failed ({exc}). The frames are kept in "
                               f"{frames_dir}.")

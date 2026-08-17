@@ -47,11 +47,17 @@ jobs:
 
       - name: Install axqua
         shell: bash -el {0}
-        run: pip install -e ".[dev]" --no-deps && pip install pytest ruff
+        run: pip install -e ".[dev]" --no-deps && pip install pytest ruff bandit
 
       - name: Lint
         shell: bash -el {0}
         run: ruff check src/ tests/ qgis_plugin/ scripts/
+
+      - name: Security scan
+        shell: bash -el {0}
+        # The same bandit analysis plugins.qgis.org runs on upload. Running it here
+        # means a finding is a failed build rather than a rejected submission.
+        run: bandit -r qgis_plugin/axqua -q
 
       - name: Test
         shell: bash -el {0}

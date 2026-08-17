@@ -21,6 +21,12 @@ to something that might be a different axqua:
 The find is validated by running ``axqua --version`` **when it is configured**, not
 when a job is submitted. A wrong or half-installed executable discovered at submit time
 is a mystery; discovered in the settings dialog it is a sentence.
+
+Running a subprocess *is* this module's job, so a security scanner will flag it. Every
+call here passes an **argument list with no shell**, which is what makes that safe: the
+vector reaches ``execve`` untouched, so a path containing a space, a quote or a semicolon
+stays one argument and cannot become a second command. The executable itself is checked
+to be an existing, executable file before it is ever run.
 """
 
 from __future__ import annotations
@@ -28,8 +34,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import subprocess
+import subprocess  # nosec B404
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Sequence
 
 ENV_VAR = "AXQUA_EXE"
@@ -129,10 +136,26 @@ def find_executable(configured: str | None = None) -> RunnerInfo:
 
 
 def _probe(path: str) -> str:
-    """Run ``--version`` and check it parses. A wrong binary is caught here."""
+    """Run ``--version`` and check it parses. A wrong binary is caught here.
+
+    *path* is resolved and checked to be an existing regular file **before** it is
+    executed. That is not ceremony: the value arrives from a settings field, an
+    environment variable or ``PATH``, and running it is the one moment where a wrong
+    value becomes a wrong process rather than a wrong string.
+    """
+    resolved = Path(path).expanduser()
+    if not resolved.is_file():
+        raise RunnerError("no such file")
+    if not os.access(resolved, os.X_OK):
+        raise RunnerError("not executable")
     try:
-        proc = subprocess.run([path, "--version"], capture_output=True, text=True,
-                              timeout=30, **_no_window())
+        # A list, never a string, and never shell=True: the argument vector goes to
+        # execve untouched, so nothing in *path* can be interpreted as a command,
+        # a pipe or a redirection. This is what makes an arbitrary configured path
+        # safe to run rather than merely usual.
+        proc = subprocess.run(  # nosec B603
+            [str(resolved), "--version"], capture_output=True, text=True,
+            timeout=30, **_no_window())
     except FileNotFoundError:
         raise RunnerError("no such file") from None
     except PermissionError:
@@ -203,8 +226,14 @@ class RunnerClient:
         if expect_json and "--json" not in argv:
             argv.append("--json")
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True,
-                                  timeout=timeout or self.timeout, **_no_window())
+            # argv[0] has already been validated by _probe (an existing, executable
+            # file); the rest are this module's own flags plus paths the user chose in
+            # a file dialog. Passed as a list with no shell, so a path containing a
+            # space, a quote or a semicolon stays one argument and cannot start a
+            # second command.
+            proc = subprocess.run(  # nosec B603
+                argv, capture_output=True, text=True,
+                timeout=timeout or self.timeout, **_no_window())
         except subprocess.TimeoutExpired as exc:
             raise RunnerError(
                 f"axqua did not answer within {timeout or self.timeout:.0f}s",

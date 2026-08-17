@@ -4,7 +4,7 @@ qgisMinimumVersion=3.44
 qgisMaximumVersion=4.99
 description=Set up, run and monitor TELEMAC and OpenFOAM river models from QGIS, with jobs that keep running after QGIS is closed.
 about=aXqua turns geodata into a calibration-ready hydro- and morphodynamic model (TELEMAC-2D/3D with GAIA, or an OpenFOAM interFoam free-surface case) and drives it through a persistent job runner. Simulations are launched as detached system jobs, so they survive closing QGIS, and are rediscovered with their live state when you reopen it. Results load back as styled mesh, raster and vector layers. The plugin does not run solvers itself: it talks to the separately installed `axqua` command-line tool, so QGIS's Python never has to become the solver's Python. Requires the aXqua command-line tool, installed separately with 'pip install git+https://github.com/sschwindt/aXqua.git' (it is not on PyPI yet), plus a working TELEMAC and/or OpenFOAM installation.
-version=0.3.1
+version=0.3.2
 author=Sebastian Schwindt
 email=schwindt.water@gmail.com
 

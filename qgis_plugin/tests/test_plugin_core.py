@@ -16,6 +16,7 @@ Run with::
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import stat
@@ -422,3 +423,89 @@ def test_a_capability_this_plugin_has_never_heard_of_still_gets_a_tab():
         {"capability": "ice_jam", "implemented": "yes", "configured": True}]}]}
     capability = CaseView.from_payload(payload).solver("telemac").capability("ice_jam")
     assert capability.visible and capability.title == "Ice jam"
+
+
+# ------------------------------------------------- Qt6 and security regressions
+#
+# Both classes of problem below were reported by plugins.qgis.org's own analysis on
+# upload, which is a slow way to find out. These run them locally instead.
+
+
+#: Enums that Qt6 requires to be written scoped. QGIS's checker reads the source and
+#: flags the unscoped literal, and on Qt6 the unscoped spelling genuinely stops working -
+#: so the literal must not appear outside compat.py, which resolves it by name for both.
+UNSCOPED_ENUMS = [
+    (r"QgsUnitTypes\.LayoutMillimeters", "QgsUnitTypes.LayoutUnit.LayoutMillimeters"),
+    (r"QgsLayoutItemPicture\.FormatSVG", "QgsLayoutItemPicture.Format.FormatSVG"),
+    (r"QgsTask\.CanCancel", "QgsTask.Flag.CanCancel"),
+    (r"QgsColorRampShader\.Interpolated", "QgsColorRampShader.Type.Interpolated"),
+    (r"QgsLegendStyle\.(Title|Group|Subgroup|SymbolLabel)", "QgsLegendStyle.Style.*"),
+    (r"Qt\.(UserRole|AlignRight|AlignCenter|MatchExactly)\b", "Qt.<Scope>.*"),
+]
+
+
+@pytest.mark.parametrize("pattern,scoped", UNSCOPED_ENUMS)
+def test_no_unscoped_qt_enum_outside_compat(pattern, scoped):
+    """compat.py is the one file allowed to name both spellings - that is its job."""
+    import re
+
+    bad = re.compile(pattern)
+    offenders = []
+    for path in (PLUGIN_ROOT / "axqua").rglob("*.py"):
+        if path.name == "compat.py":
+            continue
+        for n, line in enumerate(path.read_text("utf-8").splitlines(), 1):
+            if bad.search(line):
+                offenders.append(f"{path.relative_to(PLUGIN_ROOT)}:{n}")
+    assert offenders == [], (f"unscoped enum; use the scoped form ({scoped}) via "
+                            f"compat: {offenders}")
+
+
+def test_no_exec_underscore_outside_compat():
+    """``exec_`` was removed in Qt6. compat routes it through getattr, so the literal
+    member call should exist nowhere else."""
+    import re
+
+    offenders = [str(p.relative_to(PLUGIN_ROOT))
+                 for p in (PLUGIN_ROOT / "axqua").rglob("*.py")
+                 if p.name != "compat.py" and re.search(r"\.exec_\(", p.read_text("utf-8"))]
+    assert offenders == []
+
+
+def test_optional_enums_degrade_instead_of_raising():
+    """``enum_value(..., default=None)`` is what stops a member that a given QGIS lacks
+    from breaking the import - and with it the whole plugin - rather than costing one
+    styling nicety. QgsMeshRendererVectorSettings.ColoringMethod is exactly that case.
+    """
+    if importlib.util.find_spec("qgis") is None:
+        pytest.skip("compat imports PyQGIS, which is not available here")
+
+    from axqua_plugin.compat import enum_value          # noqa: PLC0415
+
+    class Empty:
+        pass
+
+    assert enum_value(Empty, "Nope.Nope", default=None) is None
+    with pytest.raises(AttributeError):
+        enum_value(Empty, "Nope.Nope")
+
+
+def test_the_plugin_passes_a_security_scan():
+    """The same bandit analysis plugins.qgis.org runs on upload.
+
+    Every subprocess call here passes an argument **list** with no shell, which is what
+    makes running a user-configured executable safe; the ``# nosec`` markers record that
+    reasoning at the call site rather than hiding it in a config file.
+    """
+    import subprocess
+    import sys
+
+    if importlib.util.find_spec("bandit") is None:
+        pytest.skip("bandit is not installed")
+    proc = subprocess.run([sys.executable, "-m", "bandit", "-r",
+                           str(PLUGIN_ROOT / "axqua"), "-q", "-f", "json"],
+                          capture_output=True, text=True)
+    results = json.loads(proc.stdout or "{}").get("results", [])
+    assert results == [], "\n".join(
+        f"{r['filename']}:{r['line_number']} [{r['test_id']}] {r['issue_text']}"
+        for r in results)
