@@ -2,8 +2,8 @@
 
 Covers the two pieces that make up the pre-wetting option used by the
 mesh-convergence study: the hotstart SELAFIN writer
-(:func:`hydromate.selafin.write_initial_state`) and the hotstart keywords the
-steering writer emits (:func:`hydromate.steering.write_cas`). The TELEMAC solver
+(:func:`axqua.selafin.write_initial_state`) and the hotstart keywords the
+steering writer emits (:func:`axqua.steering.write_cas`). The TELEMAC solver
 is not involved.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from hydromate import selafin
+from axqua import selafin
 
 
 def test_write_initial_state_roundtrips(tmp_path):
@@ -39,7 +39,7 @@ def test_longitudinal_prewet_smooths_surface():
     no negative depths, ~prewet_depth over the thalweg, deeper there than at the
     banks, and a thalweg depth ~constant along the reach (a smooth surface following
     the gradient, not the jagged constant-depth seed)."""
-    from hydromate.steering import _longitudinal_prewet_depth
+    from axqua.steering import _longitudinal_prewet_depth
 
     ns, nc = 60, 21
     s = np.linspace(0.0, 300.0, ns)
@@ -70,11 +70,11 @@ def _straight_reach(tmp_path, *, length=300.0, slope=0.005, ks=0.05):
     import geopandas as gpd
     from shapely.geometry import LineString, Polygon
 
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
         Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )
-    from hydromate.mesh import Mesh
+    from axqua.mesh import Mesh
 
     ns, nc = 61, 41
     s = np.linspace(0.0, length, ns)
@@ -143,7 +143,7 @@ def test_normal_depth_prewet_never_seeds_above_its_own_surface(tmp_path):
     """The normal-depth seed lays water only where the target surface is above the
     bed, and the seeded surface is (per cross-section) flat - so no water sits on
     ground higher than the level that carries the discharge."""
-    from hydromate.steering import _normal_depth_prewet_depth
+    from axqua.steering import _normal_depth_prewet_depth
 
     cfg, mesh, cross = _straight_reach(tmp_path)
     mask = np.ones(mesh.x.size, dtype=bool)
@@ -172,7 +172,7 @@ def test_normal_depth_prewet_is_monotonic_in_fill(tmp_path):
     """prewet_fill scales the depth above the thalweg, so a lower fill seeds
     strictly less water - the knob that keeps the seed under the converged
     surface."""
-    from hydromate.steering import _normal_depth_prewet_depth
+    from axqua.steering import _normal_depth_prewet_depth
 
     cfg, mesh, _ = _straight_reach(tmp_path)
     mask = np.ones(mesh.x.size, dtype=bool)
@@ -186,8 +186,8 @@ def test_normal_depth_prewet_is_monotonic_in_fill(tmp_path):
 def test_prewet_min_depth_floor_drops_the_feathered_margin(tmp_path):
     """Nodes that would get less than prewet_min_depth are left dry: a feathered
     seed margin carries no flow and is what stalls as stagnant film."""
-    from hydromate.steering import write_initial_conditions
-    from hydromate import selafin
+    from axqua.steering import write_initial_conditions
+    from axqua import selafin
 
     cfg, mesh, _ = _straight_reach(tmp_path)
     cfg.initialization.prewet_min_depth = 0.0
@@ -198,7 +198,7 @@ def test_prewet_min_depth_floor_drops_the_feathered_margin(tmp_path):
         write_initial_conditions(cfg, mesh))["values"]["WATER DEPTH"]
 
     # the inflow plug is re-imposed after the floor, so exclude it from the comparison
-    from hydromate.steering import _inflow_plug_mask
+    from axqua.steering import _inflow_plug_mask
 
     plug = _inflow_plug_mask(cfg, mesh)
     thin = (depth_all > 0) & (depth_all < 0.15) & ~plug
@@ -214,8 +214,8 @@ def test_prewet_always_wets_the_inflow_section(tmp_path):
     """Whatever the seed and its filters leave behind, the inflow cross-section must
     end up wet: TELEMAC's DEBIMP scales the prescribed discharge by the depth
     integral along that section, so a dry inflow aborts the run at t=0."""
-    from hydromate import selafin
-    from hydromate.steering import _inflow_plug_mask, write_initial_conditions
+    from axqua import selafin
+    from axqua.steering import _inflow_plug_mask, write_initial_conditions
 
     cfg, mesh, _ = _straight_reach(tmp_path)
     plug = _inflow_plug_mask(cfg, mesh)
@@ -233,8 +233,8 @@ def test_prewet_always_wets_the_inflow_section(tmp_path):
 def test_prewet_falls_back_to_constant_without_a_centerline(tmp_path):
     """No centerline (or no discharge) -> the older constant-depth seed, so a case
     that cannot size a normal depth still builds."""
-    from hydromate import selafin
-    from hydromate.steering import _inflow_plug_mask, write_initial_conditions
+    from axqua import selafin
+    from axqua.steering import _inflow_plug_mask, write_initial_conditions
 
     cfg, mesh, _ = _straight_reach(tmp_path)
     cfg.geodata.channel_centerline = None
@@ -257,8 +257,8 @@ def test_water_table_pool_survives_both_seed_filters(tmp_path):
     import geopandas as gpd
     from shapely.geometry import Polygon
 
-    from hydromate import selafin
-    from hydromate.steering import write_initial_conditions
+    from axqua import selafin
+    from axqua.steering import write_initial_conditions
 
     cfg, mesh, cross = _straight_reach(tmp_path)
     bottom = np.asarray(mesh.bottom, float).copy()
@@ -296,8 +296,8 @@ def test_prescribed_flowrates_split_across_inflows(tmp_path):
     """The total reach Q is distributed across multiple inflow boundaries by node
     count (not prescribed in full on each, which would multiply the supplied
     discharge and flood the domain)."""
-    from hydromate.boundary import LiquidBoundary
-    from hydromate.steering import _prescribed_arrays
+    from axqua.boundary import LiquidBoundary
+    from axqua.steering import _prescribed_arrays
 
     cfg = _minimal_cfg(tmp_path)
     # two inflows (75 + 25 nodes) and one outflow
@@ -316,8 +316,8 @@ def test_steering_finite_element_default_vs_finite_volume(tmp_path):
     """Default steering is now finite elements (the FE numerics + lateral wall
     friction + the configured turbulence model); opting into finite_volumes=True
     emits the HLLC FV numerics and forces turbulence model 1 instead."""
-    from hydromate.boundary import LiquidBoundary
-    from hydromate.steering import write_cas
+    from axqua.boundary import LiquidBoundary
+    from axqua.steering import write_cas
 
     cfg = _minimal_cfg(tmp_path)
     liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=10),
@@ -349,7 +349,7 @@ def test_steering_finite_element_default_vs_finite_volume(tmp_path):
 def test_turbulence_model_auto_selection(tmp_path):
     """'auto' picks Smagorinski LES / k-epsilon / Spalart-Allmaras from the channel
     cell size relative to the turbulence length scale; an explicit setting overrides."""
-    from hydromate.steering import select_turbulence_model
+    from axqua.steering import select_turbulence_model
 
     cfg = _minimal_cfg(tmp_path)
     cfg.hydrodynamics.turbulence_length_scale = 1.0     # L = 1 m
@@ -372,9 +372,9 @@ def test_unsteady_cas_and_liquid_boundaries(tmp_path):
     cas referencing it with a DURATION; the steady writer is unaffected."""
     import numpy as np
 
-    from hydromate import steering
-    from hydromate.boundary import LiquidBoundary
-    from hydromate.hydraulics import Inflow
+    from axqua import steering
+    from axqua.boundary import LiquidBoundary
+    from axqua.hydraulics import Inflow
 
     cfg = _minimal_cfg(tmp_path)
     liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=30),
@@ -403,7 +403,7 @@ def test_unsteady_cas_and_liquid_boundaries(tmp_path):
 
 
 def _minimal_cfg(tmp_path):
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
         Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )
@@ -427,8 +427,8 @@ def _minimal_cfg(tmp_path):
 
 
 def test_write_cas_hotstart_keywords(tmp_path):
-    from hydromate import steering
-    from hydromate.boundary import LiquidBoundary
+    from axqua import steering
+    from axqua.boundary import LiquidBoundary
 
     cfg = _minimal_cfg(tmp_path)
     liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=5),
@@ -454,8 +454,8 @@ def test_steady_state_auto_stop_is_opt_in_and_fixed_step_only(tmp_path):
     """The steady-state auto-stop is OFF by default. Even opted in it is suppressed
     with a variable time step (TELEMAC's absolute per-step STOP CRITERIA false-fires on
     the tiny CFL dt); it is emitted only for a steady, fixed-step run, never unsteady."""
-    from hydromate import steering
-    from hydromate.boundary import LiquidBoundary
+    from axqua import steering
+    from axqua.boundary import LiquidBoundary
 
     cfg = _minimal_cfg(tmp_path)
     liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=5),
@@ -488,8 +488,8 @@ def test_turbulence_solver_accuracy(tmp_path):
     """The turbulence-transport solver accuracy is loosened from TELEMAC's tight 1e-9
     default (ACCURACY OF K/EPSILON for k-epsilon, ACCURACY OF SPALART-ALLMARAS for S-A);
     constant viscosity / Smagorinski solve no transport equation, so none is written."""
-    from hydromate import steering
-    from hydromate.boundary import LiquidBoundary
+    from axqua import steering
+    from axqua.boundary import LiquidBoundary
 
     cfg = _minimal_cfg(tmp_path)
     liquids = [LiquidBoundary(index=1, kind="inflow", n_nodes=5),
@@ -509,8 +509,8 @@ def test_variable_timestep_steady_run_bounded_by_duration(tmp_path):
     """A VARIABLE TIME-STEP steady run is bounded by DURATION (NUMBER OF TIME STEPS
     does not terminate a CFL-driven variable-dt run); a fixed-step run keeps using
     NUMBER OF TIME STEPS."""
-    from hydromate import steering
-    from hydromate.boundary import LiquidBoundary
+    from axqua import steering
+    from axqua.boundary import LiquidBoundary
 
     cfg = _minimal_cfg(tmp_path)
     cfg.hydrodynamics.n_time_steps = 15000

@@ -26,7 +26,7 @@ Pass ``--run`` to also launch ``telemac3d.py`` on the produced case (needs a rea
 ``telemac.pysource`` in case-config.yml). Otherwise it only writes the steering and
 prints the command to run it.
 
-Run: mamba run -n hydromate-env python cases/<your-case>/add3d.py [--run]
+Run: mamba run -n axqua-env python cases/<your-case>/add3d.py [--run]
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hydromate import build_3d_cas, setup_logging
-from hydromate.config import load_config
-from hydromate.env import TelemacRuntime
+from axqua import build_3d_cas, setup_logging
+from axqua.config import load_config
+from axqua.env import TelemacRuntime
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)

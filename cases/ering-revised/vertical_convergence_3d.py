@@ -20,15 +20,15 @@ this separate grid-independence study. It hotstarts each 3D run from r2d.slf and
 NOT rebuild the mesh; it runs telemac3d once per layer count and is slow (a
 deliberate, one-off study). Outputs land in tm-simulation/postprocessing/vertical-convergence/.
 
-Run: mamba run -n hydromate-env python cases/<your-case>/vertical_convergence_3d.py
+Run: mamba run -n axqua-env python cases/<your-case>/vertical_convergence_3d.py
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from hydromate import logging_to, run_vertical_convergence
-from hydromate.config import load_config
+from axqua import logging_to, run_vertical_convergence
+from axqua.config import load_config
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)

@@ -14,10 +14,10 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
 
-BASE = "/home/schwindt/github/hydromate/cases/isar-2025/user-sources/water-temperature"
+BASE = "/home/schwindt/github/axqua/cases/isar-2025/user-sources/water-temperature"
 TS_DIR = os.path.join(BASE, "time-series")
 LOC_FILE = os.path.join(BASE, "location", "logger-location.txt")
-OUT = "/home/schwindt/github/hydromate/cases/isar-2025/user-sources/geodata/water-temperature.gpkg"
+OUT = "/home/schwindt/github/axqua/cases/isar-2025/user-sources/geodata/water-temperature.gpkg"
 CRS = "EPSG:25832"
 
 

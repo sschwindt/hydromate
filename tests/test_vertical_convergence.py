@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from hydromate import vertical_convergence as vc
-from hydromate.vertical_convergence import VerticalLevel, _build_report
+from axqua import vertical_convergence as vc
+from axqua.vertical_convergence import VerticalLevel, _build_report
 
 
 def _level(n_levels, depth, vel, runtime=None, n_probes=6):

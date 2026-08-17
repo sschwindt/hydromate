@@ -1,4 +1,4 @@
-"""Sphinx configuration for the hydromate documentation (Read the Docs)."""
+"""Sphinx configuration for the axqua documentation (Read the Docs)."""
 
 import os
 import sys
@@ -8,10 +8,10 @@ from datetime import datetime
 sys.path.insert(0, os.path.abspath("../src"))
 
 # -- Project information ------------------------------------------------------
-project = "hydromate"
+project = "axqua"
 author = "Sebastian Schwindt"
 copyright = f"{datetime.now():%Y}, {author}"
-release = "0.2.0"
+release = "0.3.0"
 version = "0.1"
 
 # -- General configuration ----------------------------------------------------
@@ -54,4 +54,4 @@ intersphinx_mapping = {
 # -- HTML output --------------------------------------------------------------
 html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
-html_title = "hydromate"
+html_title = "axqua"

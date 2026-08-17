@@ -1,7 +1,7 @@
 """Mesh-quality metrics and validity checks on synthetic meshes.
 
 Builds tiny meshes by hand (no gmsh) and checks that
-:func:`hydromate.mesh_quality.assess_quality`:
+:func:`axqua.mesh_quality.assess_quality`:
 
 * measures the shortest edge, angles and aspect ratio correctly;
 * reports a deliberately anisotropic 'channel' region separately and does NOT
@@ -10,7 +10,7 @@ Builds tiny meshes by hand (no gmsh) and checks that
   (sliver angles, >20% adjacent area jumps).
 
 Pure-python (numpy only). Run via:
-    mamba run -n hydromate-env pytest tests/test_mesh_quality.py
+    mamba run -n axqua-env pytest tests/test_mesh_quality.py
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ import logging
 
 import numpy as np
 
-from hydromate.mesh import Mesh
-from hydromate.mesh_quality import assess_quality, log_report
+from axqua.mesh import Mesh
+from axqua.mesh_quality import assess_quality, log_report
 
 
 def _mesh(x, y, tris, ipobo=None):
@@ -72,7 +72,7 @@ def test_channel_region_relaxed(caplog):
     assert labels["channel"].aspect_max > 5     # elongated, as intended
     assert labels["channel"].relaxed is True
 
-    with caplog.at_level(logging.WARNING, logger="hydromate"):
+    with caplog.at_level(logging.WARNING, logger="axqua"):
         log_report(rep)
     # the channel's high aspect must NOT raise an aspect warning
     assert "aspect ratio" not in caplog.text
@@ -95,7 +95,7 @@ def test_area_jump_warning(caplog):
     rep = assess_quality(mesh, area_jump_threshold=0.20)
     assert rep.frac_area_jump_over > 0.0
     assert rep.max_area_jump_ratio > 1.25
-    with caplog.at_level(logging.WARNING, logger="hydromate"):
+    with caplog.at_level(logging.WARNING, logger="axqua"):
         log_report(rep)
     assert "jump in area" in caplog.text
 
@@ -103,7 +103,7 @@ def test_area_jump_warning(caplog):
 def test_edge_flip_caps_aspect_ratio():
     # a slanted quad split by its long diagonal -> two over-sharp triangles; the
     # flip to the short diagonal halves the aspect ratio (sliver removal).
-    from hydromate.mesh import _flip_sharp_edges, _tri_aspect
+    from axqua.mesh import _flip_sharp_edges, _tri_aspect
 
     x = np.array([0.0, 6.0, 7.0, 1.0])
     y = np.array([0.0, 0.0, 2.0, 2.0])

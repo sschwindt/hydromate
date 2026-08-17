@@ -2,7 +2,7 @@
 
 Two things are pinned here that are easy to get quietly wrong:
 
-* **the three axes stay separate.** "hydromate cannot do this for this solver",
+* **the three axes stay separate.** "axqua cannot do this for this solver",
   "this case did not ask for it" and "it has not been built yet" are three different
   answers with three different fixes, and collapsing them into a single yes/no is the
   failure mode this module exists to prevent;
@@ -22,11 +22,11 @@ import textwrap
 
 import pytest
 
-from hydromate.core import registry
-from hydromate.core.capabilities import (
+from axqua.core import registry
+from axqua.core.capabilities import (
     Capability, CapabilityState, CaseStatus, SolverStatus, Support, read_marker,
 )
-from hydromate.core.registry import BackendSpec, CapabilitySpec
+from axqua.core.registry import BackendSpec, CapabilitySpec
 
 
 # --------------------------------------------------------------------------- #
@@ -49,8 +49,8 @@ def test_not_applicable_is_distinct_from_not_implemented():
     """OpenFOAM has no depth-averaged mode (n/a); it has no morphodynamics *yet* (no).
     Reporting both as 'no' would tell a user to wait for something that is never
     coming."""
-    from hydromate.solvers.openfoam.spec import SPEC as openfoam
-    from hydromate.solvers.telemac.spec import SPEC as telemac
+    from axqua.solvers.openfoam.spec import SPEC as openfoam
+    from axqua.solvers.telemac.spec import SPEC as telemac
 
     assert openfoam.support(Capability.STEADY2D) is Support.NOT_APPLICABLE
     assert openfoam.support(Capability.MORPHODYNAMICS) is Support.NOT_IMPLEMENTED
@@ -208,9 +208,9 @@ def test_listing_capabilities_imports_nothing_heavy():
     the rest of the suite's imports cannot mask it."""
     code = textwrap.dedent("""
         import sys
-        import hydromate
-        from hydromate.core import registry
-        from hydromate.core.capabilities import Capability
+        import axqua
+        from axqua.core import registry
+        from axqua.core.capabilities import Capability
         specs = registry.backends()
         assert {s.name for s in specs} >= {"telemac", "openfoam"}
         heavy = sorted(m for m in
@@ -232,25 +232,25 @@ def test_listing_capabilities_imports_nothing_heavy():
 def test_every_public_name_resolves():
     """Lazy attribute access means a typo in the export map is invisible until
     someone imports that one name, so every advertised name is resolved here."""
-    import hydromate
+    import axqua
 
-    for name in hydromate.__all__:
-        assert getattr(hydromate, name) is not None, name
+    for name in axqua.__all__:
+        assert getattr(axqua, name) is not None, name
 
 
 def test_all_matches_the_export_map():
     """__all__ is written out by hand for the linters; this stops it drifting."""
-    import hydromate
+    import axqua
 
-    expected = set(hydromate._NAME_TO_MODULE) | set(hydromate._SUBMODULES)
-    assert set(hydromate.__all__) - {"__version__"} == expected
+    expected = set(axqua._NAME_TO_MODULE) | set(axqua._SUBMODULES)
+    assert set(axqua.__all__) - {"__version__"} == expected
 
 
 def test_unknown_attribute_still_raises_attribute_error():
-    import hydromate
+    import axqua
 
     with pytest.raises(AttributeError, match="no attribute 'nope'"):
-        hydromate.nope
+        axqua.nope
 
 
 # --------------------------------------------------------------------------- #
@@ -275,7 +275,7 @@ boundaries:
 
 
 def _write_case(tmp_path, *, openfoam: bool) -> "object":
-    from hydromate.config import load_config
+    from axqua.config import load_config
 
     (tmp_path / "pysource.sh").write_text("# stub\n")
     text = MINIMAL.format(pysource="pysource.sh")
@@ -321,22 +321,22 @@ def test_a_fresh_case_reports_steady2d_configured_but_unbuilt(tmp_path):
 
 
 MOVED_MODULES = [
-    ("hydromate.mesh", "hydromate.solvers.telemac.mesh"),
-    ("hydromate.steering", "hydromate.solvers.telemac.steering"),
-    ("hydromate.boundary", "hydromate.solvers.telemac.boundary"),
-    ("hydromate.pipeline", "hydromate.solvers.telemac.pipeline"),
-    ("hydromate.threed", "hydromate.solvers.telemac.threed"),
-    ("hydromate.unsteady", "hydromate.solvers.telemac.unsteady"),
-    ("hydromate.sortie", "hydromate.solvers.telemac.sortie"),
-    ("hydromate.wetting", "hydromate.solvers.telemac.wetting"),
-    ("hydromate.sections", "hydromate.solvers.telemac.sections"),
-    ("hydromate.fortran", "hydromate.solvers.telemac.fortran"),
-    ("hydromate.gainlose", "hydromate.solvers.telemac.gainlose"),
-    ("hydromate.watertable", "hydromate.solvers.telemac.watertable"),
-    ("hydromate.mesh_quality", "hydromate.solvers.telemac.mesh_quality"),
-    ("hydromate.flux_convergence", "hydromate.solvers.telemac.flux_convergence"),
-    ("hydromate.selafin", "hydromate.core.selafin"),
-    ("hydromate.openfoam", "hydromate.solvers.openfoam"),
+    ("axqua.mesh", "axqua.solvers.telemac.mesh"),
+    ("axqua.steering", "axqua.solvers.telemac.steering"),
+    ("axqua.boundary", "axqua.solvers.telemac.boundary"),
+    ("axqua.pipeline", "axqua.solvers.telemac.pipeline"),
+    ("axqua.threed", "axqua.solvers.telemac.threed"),
+    ("axqua.unsteady", "axqua.solvers.telemac.unsteady"),
+    ("axqua.sortie", "axqua.solvers.telemac.sortie"),
+    ("axqua.wetting", "axqua.solvers.telemac.wetting"),
+    ("axqua.sections", "axqua.solvers.telemac.sections"),
+    ("axqua.fortran", "axqua.solvers.telemac.fortran"),
+    ("axqua.gainlose", "axqua.solvers.telemac.gainlose"),
+    ("axqua.watertable", "axqua.solvers.telemac.watertable"),
+    ("axqua.mesh_quality", "axqua.solvers.telemac.mesh_quality"),
+    ("axqua.flux_convergence", "axqua.solvers.telemac.flux_convergence"),
+    ("axqua.selafin", "axqua.core.selafin"),
+    ("axqua.openfoam", "axqua.solvers.openfoam"),
 ]
 
 
@@ -353,7 +353,7 @@ def test_the_old_import_path_is_the_same_module_object(old, new):
 
 def test_private_names_survive_the_shim():
     """A re-export shim would have dropped these silently; tests import them."""
-    from hydromate.mesh import _classify_zone, _parse_decimal, _ZONE_PRIORITY
+    from axqua.mesh import _classify_zone, _parse_decimal, _ZONE_PRIORITY
 
     assert _parse_decimal("0,5") == 0.5
     assert _classify_zone("Main channel") == "channel"
@@ -367,11 +367,11 @@ def test_nothing_in_core_imports_a_solver():
     import pathlib
     import re
 
-    core = pathlib.Path(__file__).resolve().parent.parent / "src" / "hydromate" / "core"
+    core = pathlib.Path(__file__).resolve().parent.parent / "src" / "axqua" / "core"
     offenders = []
     for path in core.rglob("*.py"):
         for number, line in enumerate(path.read_text().splitlines(), 1):
-            if re.search(r"^\s*(from|import)\s+hydromate\.solvers\b", line):
+            if re.search(r"^\s*(from|import)\s+axqua\.solvers\b", line):
                 offenders.append(f"{path.name}:{number}: {line.strip()}")
     assert not offenders, "core imports a solver backend:\n  " + "\n  ".join(offenders)
 
@@ -383,12 +383,12 @@ def test_openfoam_does_not_import_the_telemac_backend():
     import pathlib
     import re
 
-    root = (pathlib.Path(__file__).resolve().parent.parent / "src" / "hydromate"
+    root = (pathlib.Path(__file__).resolve().parent.parent / "src" / "axqua"
             / "solvers" / "openfoam")
     offenders = []
     for path in root.rglob("*.py"):
         for number, line in enumerate(path.read_text().splitlines(), 1):
-            if re.search(r"hydromate\.solvers\.telemac\b", line):
+            if re.search(r"axqua\.solvers\.telemac\b", line):
                 offenders.append(f"{path.name}:{number}: {line.strip()}")
     assert not offenders, ("the OpenFOAM backend reaches into TELEMAC:\n  "
                            + "\n  ".join(offenders))

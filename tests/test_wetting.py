@@ -1,16 +1,16 @@
-"""Wetted-extent diagnostics (:mod:`hydromate.wetting`).
+"""Wetted-extent diagnostics (:mod:`axqua.wetting`).
 
-Both checks run on synthetic SELAFIN results written by hydromate's own writer, so
+Both checks run on synthetic SELAFIN results written by axqua's own writer, so
 no solver is involved:
 
-* :func:`hydromate.wetting.wetting_report` splits a constructed result into a
+* :func:`axqua.wetting.wetting_report` splits a constructed result into a
   flowing channel, a stagnant film and a disconnected puddle, and must recover each
   area/volume, count the puddle as isolated, and attribute the film to the seed;
-* :func:`hydromate.wetting.outlet_profile` must call a surface that flattens into
+* :func:`axqua.wetting.outlet_profile` must call a surface that flattens into
   the boundary *backwater*, one that steepens into it *drawdown*, and one that
   continues the reach slope *neutral*.
 
-Run via: mamba run -n hydromate-env pytest tests/test_wetting.py
+Run via: mamba run -n axqua-env pytest tests/test_wetting.py
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from hydromate import selafin
+from axqua import selafin
 
 NC = 21           # nodes across
 NS = 41           # nodes along
@@ -95,14 +95,14 @@ def _scene():
 
 def _areas(mask):
     """Nodal area of *mask* on the regular grid (matches wetting._nodal_areas)."""
-    from hydromate.wetting import _nodal_areas
+    from axqua.wetting import _nodal_areas
 
     x, y, ikle, _ = _grid()
     return _nodal_areas(x, y, ikle - 1)[mask].sum()
 
 
 def test_wetting_report_splits_active_film_and_puddle(tmp_path):
-    from hydromate.wetting import wetting_report
+    from axqua.wetting import wetting_report
 
     x, y, ikle, bottom, depth, u, v, channel, film, puddle = _scene()
     res = _write_result(tmp_path / "r2d.slf", depth=depth, u=u, v=v, bottom=bottom)
@@ -121,7 +121,7 @@ def test_wetting_report_splits_active_film_and_puddle(tmp_path):
 
 
 def test_wetting_report_attributes_the_film_to_the_seed(tmp_path):
-    from hydromate.wetting import wetting_report
+    from axqua.wetting import wetting_report
 
     x, y, ikle, bottom, depth, u, v, channel, film, puddle = _scene()
     res = _write_result(tmp_path / "r2d.slf", depth=depth, u=u, v=v, bottom=bottom)
@@ -140,7 +140,7 @@ def test_wetting_report_attributes_the_film_to_the_seed(tmp_path):
 
 
 def test_wetting_report_film_trend_flags_a_plateau(tmp_path):
-    from hydromate.wetting import wetting_report
+    from axqua.wetting import wetting_report
 
     x, y, ikle, bottom, depth, u, v, channel, film, puddle = _scene()
     # frames where the film does not change: the plateau the isar-2025 runs showed
@@ -168,7 +168,7 @@ def test_supported_water_is_not_counted_as_film_or_puddle(tmp_path):
     """Water the bar's water table holds in place is legitimately wet. Without the
     mask it reads as BOTH stagnant film and an isolated puddle - i.e. as a defect,
     when it is exactly what the model intends."""
-    from hydromate.wetting import wetting_report
+    from axqua.wetting import wetting_report
 
     x, y, ikle, bottom, depth, u, v, channel, film, puddle = _scene()
     res = _write_result(tmp_path / "r2d.slf", depth=depth, u=u, v=v, bottom=bottom)
@@ -189,7 +189,7 @@ def test_supported_water_is_not_counted_as_film_or_puddle(tmp_path):
 
 
 def test_supported_mask_of_the_wrong_size_is_ignored(tmp_path):
-    from hydromate.wetting import wetting_report
+    from axqua.wetting import wetting_report
 
     x, y, ikle, bottom, depth, u, v, channel, film, puddle = _scene()
     res = _write_result(tmp_path / "r2d.slf", depth=depth, u=u, v=v, bottom=bottom)
@@ -202,7 +202,7 @@ def _outlet_cfg(tmp_path):
     import geopandas as gpd
     from shapely.geometry import LineString
 
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
         Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )
@@ -258,7 +258,7 @@ def _reach(d, near_slope, near=10.0):
     ("neutral", lambda d: _reach(d, 0.005), "neutral"),
 ])
 def test_outlet_profile_verdicts(tmp_path, name, surface, expected):
-    from hydromate.wetting import outlet_profile
+    from axqua.wetting import outlet_profile
 
     cfg = _outlet_cfg(tmp_path)
     res = _profile_result(tmp_path, f"{name}.slf", surface)
@@ -271,7 +271,7 @@ def test_outlet_profile_verdicts(tmp_path, name, surface, expected):
 
 
 def test_outlet_profile_writes_csv(tmp_path):
-    from hydromate.wetting import outlet_profile
+    from axqua.wetting import outlet_profile
 
     cfg = _outlet_cfg(tmp_path)
     res = _profile_result(tmp_path, "n.slf", lambda d: _reach(d, 0.005))

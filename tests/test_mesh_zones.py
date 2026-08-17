@@ -3,7 +3,7 @@ per-polygon 'Max Edge Length (m)' field (with config fallbacks), decimal-comma
 tolerance, and the overlap-priority point assignment. The gmsh mesher is not run.
 
 Run via:
-    mamba run -n hydromate-env pytest tests/test_mesh_zones.py
+    mamba run -n axqua-env pytest tests/test_mesh_zones.py
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import math
 
 import numpy as np
 
-from hydromate.mesh import (_assign_point_zones, _classify_zone, _parse_decimal,
+from axqua.mesh import (_assign_point_zones, _classify_zone, _parse_decimal,
                             _read_mesh_zones)
 
 
@@ -34,7 +34,7 @@ def test_classify_zone_by_substring():
 
 
 def _zone_cfg(tmp_path, gpkg):
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
         Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )
@@ -98,7 +98,7 @@ def test_size_scale_scales_gpkg_and_fallback_sizes(tmp_path):
     convergence study (five 'levels', one mesh)."""
     import geopandas as gpd
 
-    from hydromate.mesh import nominal_channel_size
+    from axqua.mesh import nominal_channel_size
 
     zones = gpd.GeoDataFrame(
         {"Zone Name": ["floodplain", "channel", "refinement"],

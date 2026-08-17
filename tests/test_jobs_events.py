@@ -10,9 +10,9 @@ import logging
 
 import pytest
 
-from hydromate.jobs import events, logs
-from hydromate.jobs.model import JobKind, JobSpec, JobStatus, SolverRunProgress
-from hydromate.jobs.paths import JobDir
+from axqua.jobs import events, logs
+from axqua.jobs.model import JobKind, JobSpec, JobStatus, SolverRunProgress
+from axqua.jobs.paths import JobDir
 
 
 @pytest.fixture
@@ -33,7 +33,7 @@ def status() -> JobStatus:
 def test_the_telemac_parser_feeds_a_sink_without_a_second_parser():
     """``SolverProgress`` already extracts the iteration and simulated time from a real
     listing header; the sink is a second consumer of that parse, not a new one."""
-    from hydromate.progress import SolverProgress
+    from axqua.progress import SolverProgress
 
     class Collect(events.NullSink):
         def __init__(self):
@@ -59,7 +59,7 @@ def test_the_telemac_parser_feeds_a_sink_without_a_second_parser():
 
 
 def test_the_openfoam_parser_feeds_a_sink_too():
-    from hydromate.solvers.openfoam.runtime import OpenFoamProgress
+    from axqua.solvers.openfoam.runtime import OpenFoamProgress
 
     class Collect(events.NullSink):
         def __init__(self):
@@ -81,7 +81,7 @@ def test_the_openfoam_parser_feeds_a_sink_too():
 
 def test_a_failing_sink_never_stops_the_solver():
     """Reporting is not worth losing a run over."""
-    from hydromate.progress import SolverProgress
+    from axqua.progress import SolverProgress
 
     class Broken(events.NullSink):
         def progress(self, **fields):
@@ -102,7 +102,7 @@ def test_progress_is_throttled_but_a_phase_change_is_not(job, status, monkeypatc
     """A TELEMAC listing at a few headers a second would otherwise cause several
     fsync'd rewrites a second on a scratch volume."""
     writes = []
-    import hydromate.jobs.store as store
+    import axqua.jobs.store as store
     real = store.write_status
     monkeypatch.setattr(store, "write_status",
                         lambda jd, st: (writes.append(1), real(jd, st))[1])
@@ -120,7 +120,7 @@ def test_progress_is_throttled_but_a_phase_change_is_not(job, status, monkeypatc
     sink.progress(iteration=99)
     sink.close()
     assert len(writes) == 3
-    from hydromate.jobs.store import read_status
+    from axqua.jobs.store import read_status
     assert read_status(job).progress.as_dict()["iteration"] == 99
 
     # And a close with nothing pending writes nothing, rather than churning the file.
@@ -143,7 +143,7 @@ def test_the_first_write_is_never_throttled_even_on_a_freshly_booted_machine(
     sink = events.StatusFileSink(job, status, min_interval=2.0)
     sink.progress(iteration=1)
 
-    from hydromate.jobs.store import read_status
+    from axqua.jobs.store import read_status
     written = read_status(job)
     assert written is not None, "the first progress update never reached status.json"
     assert written.progress.as_dict()["iteration"] == 1
@@ -158,7 +158,7 @@ def test_progress_fields_merge_rather_than_replace(job, status):
 
 
 def test_a_status_write_failure_does_not_propagate(job, status, monkeypatch):
-    import hydromate.jobs.store as store
+    import axqua.jobs.store as store
 
     def explode(*args, **kwargs):
         raise OSError("read-only filesystem")
@@ -221,7 +221,7 @@ def test_the_solver_listing_never_leaks_into_the_runner_log(tmp_path):
     runner = tmp_path / "runner.log"
     solver = tmp_path / "solver.log"
     with logs.runner_log(runner):
-        logging.getLogger("hydromate.test").info("narration")
+        logging.getLogger("axqua.test").info("narration")
         with logs.RotatingTextSink(solver) as sink:
             sink.write("ITERATION 100 - a wall of solver output")
 
@@ -232,10 +232,10 @@ def test_the_solver_listing_never_leaks_into_the_runner_log(tmp_path):
 
 
 def test_the_runner_log_handler_is_removed_afterwards(tmp_path):
-    before = len(logging.getLogger("hydromate").handlers)
+    before = len(logging.getLogger("axqua").handlers)
     with logs.runner_log(tmp_path / "runner.log"):
         pass
-    assert len(logging.getLogger("hydromate").handlers) == before
+    assert len(logging.getLogger("axqua").handlers) == before
 
 
 # ----------------------------------------------------------------- the disk guard
@@ -243,10 +243,10 @@ def test_the_runner_log_handler_is_removed_afterwards(tmp_path):
 
 def test_the_disk_guard_refuses_with_an_actionable_remedy(tmp_path, monkeypatch):
     """Plan §24: turning a mid-run death into a refusal that says what to do."""
-    from hydromate.core.errors import EnvironmentError as HydromateEnvironmentError
+    from axqua.core.errors import EnvironmentError as AxquaEnvironmentError
 
     monkeypatch.setattr(logs, "free_bytes", lambda path: 1024)
-    with pytest.raises(HydromateEnvironmentError) as excinfo:
+    with pytest.raises(AxquaEnvironmentError) as excinfo:
         logs.require_free_space(tmp_path, minimum=5 * 1024 ** 3)
     assert "job root" in (excinfo.value.remedy or "")
     assert excinfo.value.details["free_bytes"] == 1024
@@ -265,7 +265,7 @@ def test_the_disk_guard_does_not_fail_when_it_cannot_tell(tmp_path, monkeypatch)
 
 
 def test_policy_ask_answers_from_the_job_and_never_blocks():
-    from hydromate.jobs.interaction import PolicyAsk, classify
+    from axqua.jobs.interaction import PolicyAsk, classify
 
     assert classify("Reuse the 3 completed levels?") == "resume"
     assert classify("Refine one level further?") == "extend"
@@ -281,10 +281,10 @@ def test_policy_ask_answers_from_the_job_and_never_blocks():
 
 def test_an_answer_file_outranks_the_job_record(tmp_path):
     """The file is the more recent human intent, which is what lets a future
-    'hydromate answer' reach a running study."""
+    'axqua answer' reach a running study."""
     import json
 
-    from hydromate.jobs.interaction import PolicyAsk
+    from axqua.jobs.interaction import PolicyAsk
 
     answers = tmp_path / "answers.json"
     answers.write_text(json.dumps({"extend": True}), encoding="utf-8")
@@ -293,7 +293,7 @@ def test_an_answer_file_outranks_the_job_record(tmp_path):
 
 
 def test_every_answer_is_recorded_for_audit():
-    from hydromate.jobs.interaction import PolicyAsk
+    from axqua.jobs.interaction import PolicyAsk
 
     ask = PolicyAsk({"resume": True})
     ask("Reuse the completed levels?")

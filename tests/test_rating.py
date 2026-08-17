@@ -1,7 +1,7 @@
 """Normal-flow stage-discharge generation and the rating-curve reader.
 
-Checks the outflow rating-curve generator (:mod:`hydromate.rating`) and the
-reader it feeds (:func:`hydromate.hydraulics.read_stage_discharge`):
+Checks the outflow rating-curve generator (:mod:`axqua.rating`) and the
+reader it feeds (:func:`axqua.hydraulics.read_stage_discharge`):
 
 * ``normal_depth`` round-trips — the depth it returns conveys exactly the target
   Q through Manning's equation;
@@ -10,7 +10,7 @@ reader it feeds (:func:`hydromate.hydraulics.read_stage_discharge`):
   reader parses, and a single Q-h pair yields a constant (clamped) WSE.
 
 Pure-python (no geopandas/TELEMAC). Run via:
-    mamba run -n hydromate-env pytest tests/test_rating.py
+    mamba run -n axqua-env pytest tests/test_rating.py
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from hydromate.hydraulics import read_stage_discharge
-from hydromate.rating import _conveyance_q, generate_stage_discharge, normal_depth
+from axqua.hydraulics import read_stage_discharge
+from axqua.rating import _conveyance_q, generate_stage_discharge, normal_depth
 
 GEOM = dict(slope=0.001, bottom_width=20.0, side_slope=1.5)
 
@@ -65,7 +65,7 @@ def test_single_pair_is_constant(tmp_path, caplog):
                                    bed_elevation=380.0, **GEOM)
     wse_at = read_stage_discharge(out)
     h47 = wse_at(47.0)
-    with caplog.at_level(logging.WARNING, logger="hydromate"):
+    with caplog.at_level(logging.WARNING, logger="axqua"):
         assert wse_at(60.0) == h47                          # clamped (constant)
     assert "outside the rating curve range" in caplog.text
 
@@ -89,8 +89,8 @@ def test_synthesize_outflow_rating(tmp_path):
     from rasterio.transform import from_origin
     from shapely.geometry import LineString
 
-    from hydromate import synthesize_outflow_rating
-    from hydromate.config import load_config
+    from axqua import synthesize_outflow_rating
+    from axqua.config import load_config
 
     crs = "EPSG:25832"
     x0, y0, w, h = 700000.0, 5340000.0, 200.0, 60.0
@@ -145,7 +145,7 @@ def test_stage_for_discharge_matches_section_rating(tmp_path):
     import numpy as np
     import pandas as pd
 
-    from hydromate.rating import section_rating, stage_for_discharge
+    from axqua.rating import section_rating, stage_for_discharge
 
     station = np.linspace(0.0, 20.0, 81)
     bed = 100.0 + 0.02 * (station - 10.0) ** 2      # V/parabolic section
@@ -164,7 +164,7 @@ def test_stage_for_discharge_is_monotonic_and_validated():
     import numpy as np
     import pytest
 
-    from hydromate.rating import stage_for_discharge
+    from axqua.rating import stage_for_discharge
 
     station = np.linspace(0.0, 20.0, 81)
     bed = 100.0 + 0.02 * (station - 10.0) ** 2

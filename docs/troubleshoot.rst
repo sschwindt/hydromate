@@ -1,28 +1,28 @@
 Troubleshooting
 ===============
 
-ModuleNotFoundError: No module named 'hydromate'
-------------------------------------------------
+ModuleNotFoundError: No module named 'aXqua'
+--------------------------------------------
 
 If terminal says
 
 .. code-block:: bash
 
-   from hydromate import ...                                                                                                    
-   ModuleNotFoundError: No module named 'hydromate'                         
+   from axqua import ...                                                                                                    
+   ModuleNotFoundError: No module named 'axqua'                         
 
-then the package is not importable because it was never installed into the new environment. hydromate uses a src/ layout (the code lives in src/hydromate/, not hydromate/), so being in the repo root does not put the package on Python's path, which means the scripts only work after the package is pip-installed into the env. But while developing, with the hydromate-env activated, make sure to setup dependencies:
+then the package is not importable because it was never installed into the new environment. aXqua uses a src/ layout (the code lives in src/axqua/, not axqua/), so being in the repo root does not put the package on Python's path, which means the scripts only work after the package is pip-installed into the env. But while developing, with the axqua-env activated, make sure to setup dependencies:
 
 .. code-block:: bash
 
-   cd /path/to/hydromate
+   cd /path/to/axqua
    pip install -e .
 
-Alternatively ``pip install -e ".[dev,gui]"``. The ``-e`` (editable) install just links the env to src/hydromate/, so any edits or git pulls in that folder take effect immediately without reinstalling.  One quick sanity check afterwards:
+Alternatively ``pip install -e ".[dev,gui]"``. The ``-e`` (editable) install just links the env to src/axqua/, so any edits or git pulls in that folder take effect immediately without reinstalling.  One quick sanity check afterwards:
 
 .. code-block:: bash
 
-   python -c "import hydromate; print(hydromate.__file__)"
+   python -c "import axqua; print(axqua.__file__)"
 
 
 
@@ -44,7 +44,7 @@ So on Debian12, aActivate the env and reinstall the whole geospatial binary stac
 
 .. code-block:: bash
 
-   mamba activate hydromate-env
+   mamba activate axqua-env
 
    mamba install -c conda-forge --strict-channel-priority \
      geopandas pyogrio fiona gdal libgdal libjxl
@@ -145,8 +145,8 @@ explanation rather than leaving a job that can never finish:
 
 .. code-block:: bash
 
-   hydromate status <JOB_ID>
-   hydromate list --rebuild        # also re-indexes moved or restored job folders
+   axqua status <JOB_ID>
+   axqua list --rebuild        # also re-indexes moved or restored job folders
 
 A job fails the moment it starts
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -156,8 +156,8 @@ remedy. Almost always this is the solver environment:
 
 .. code-block:: bash
 
-   hydromate logs <JOB_ID>
-   hydromate profiles validate
+   axqua logs <JOB_ID>
+   axqua profiles validate
 
 Watch for the *ambient* warning. A variable that came from your interactive shell (say
 ``/etc/profile.d/openfoam9.sh``) is inherited by anything you launch from a terminal but
@@ -169,7 +169,7 @@ detached job takes:
 
 .. code-block:: bash
 
-   hydromate execute <JOB_ID>
+   axqua execute <JOB_ID>
 
 ``the systemd launcher is not available``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -180,12 +180,12 @@ needs nothing:
 
 .. code-block:: bash
 
-   hydromate submit ... --launcher posix
+   axqua submit ... --launcher posix
 
 Jobs vanish after ``wsl --shutdown``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Expected, and not something hydromate can prevent: the distro's lifetime is not ours.
+Expected, and not something aXqua can prevent: the distro's lifetime is not ours.
 ``wsl --shutdown``, a Windows restart, or WSL2 idling the VM out terminates everything
 running inside it. Those jobs recover to ``FAILED`` rather than a stuck ``RUNNING``, and can
 be resubmitted.
@@ -193,25 +193,25 @@ be resubmitted.
 The QGIS plugin
 ---------------
 
-``hydromate could not be found``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``axqua could not be found``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The message names all three places it looked - the plugin setting, ``$HYDROMATE_EXE`` and
-``PATH``. Set the path in *HydroMate ▸ Settings* and press *Test*. There is deliberately no
+The message names all three places it looked - the plugin setting, ``$AXQUA_EXE`` and
+``PATH``. Set the path in *aXqua ▸ Settings* and press *Test*. There is deliberately no
 silent fallback to another interpreter, because a wrong one fails obscurely much later.
 
-Remember that hydromate belongs in the environment that reaches your **solver**, not in
+Remember that axqua belongs in the environment that reaches your **solver**, not in
 QGIS's Python.
 
 The panel shows only Setup and Jobs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The capability tabs are generated from the case, so there is no case selected yet, or
-hydromate could not read it. Check the same thing the plugin does:
+aXqua could not read it. Check the same thing the plugin does:
 
 .. code-block:: bash
 
-   hydromate case-status <config.yml> --json
+   axqua case-status <config.yml> --json
 
 A layer loaded but is not styled
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

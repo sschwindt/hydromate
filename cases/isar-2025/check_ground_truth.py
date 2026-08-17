@@ -30,11 +30,11 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
-from hydromate.sections import line_discharges
-from hydromate.selafin import read_slf
+from axqua.sections import line_discharges
+from axqua.selafin import read_slf
 
 CASE = Path(__file__).resolve().parent
-SCENARIOS = CASE / "hydromate-case" / "scenarios"
+SCENARIOS = CASE / "axqua-case" / "scenarios"
 CAMPAIGN = (CASE / "user-sources/ground-truth/flowtracker/Sep25"
             / "FT_TKE_Summary_Sep25.xlsx")
 BAFFLES = CASE / "user-sources/geodata/baffles.gpkg"

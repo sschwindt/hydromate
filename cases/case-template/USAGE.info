@@ -1,8 +1,8 @@
 ==============================================================================
- hydromate case template - USAGE
+ axqua case template - USAGE
 ==============================================================================
 This folder is a ready-to-copy scaffold for one TELEMAC-2D (+ optional GAIA)
-simulation case driven by the `hydromate` package. Copy the whole folder to
+simulation case driven by the `axqua` package. Copy the whole folder to
 cases/<your-case>/, drop your data into user-sources/, edit case-config.yml,
 then run the three workflow scripts. A worked example is in cases/example-Inn/.
 
@@ -35,7 +35,7 @@ cases/<your-case>/
 
   tm-simulation/       ALL produced artifacts (created on first run; gitignored),
                        split by workflow phase - each phase also writes its own
-                       hydromate.log here:
+                       axqua.log here:
     preprocessing/         DEM clips, mesh-raw.slf, mesh-elevations.slf,
                            ground-truth.xlsx
     simulation/            the TELEMAC case: geometry.slf, boundaries.cli,
@@ -50,7 +50,7 @@ cases/<your-case>/
  PRINCIPAL WORK STEPS
 ------------------------------------------------------------------------------
 0. Install the env and activate it (see docs/installation.rst):
-     mamba env create -f environment.yml && mamba activate hydromate-env
+     mamba env create -f environment.yml && mamba activate axqua-env
      pip install -e .
 
 1. Put your data in user-sources/ (EPSG:25832 / a metric CRS; see
@@ -61,11 +61,11 @@ cases/<your-case>/
      - inputs.*          -> your files under user-sources/
      - mesh / friction / hydrodynamics / calibration -> your values
    No measured outlet rating curve? Synthesise one from normal-flow hydraulics:
-     hydromate rating -o user-sources/geodata/rating-curve.csv \
+     axqua rating -o user-sources/geodata/rating-curve.csv \
        --manning 0.035 --slope <S0> --width <b> --bed-elevation <z> --q <Q>
 
 3. Validate the configuration:
-     hydromate cases/<your-case>/case-config.yml --check
+     axqua cases/<your-case>/case-config.yml --check
 
 4. Step 1 - build the complete TELEMAC case into tm-simulation/simulation/
    (final mesh, .cli, .tbl, .cas; the inflow + outflow rating are synthesised
@@ -119,9 +119,9 @@ tm-simulation/postprocessing/vertical-convergence/). Runs telemac3d once per cou
 and is slow:
      python cases/<your-case>/vertical_convergence_3d.py
 
-   (A one-shot build without the scripts: hydromate cases/<your-case>/case-config.yml)
+   (A one-shot build without the scripts: axqua cases/<your-case>/case-config.yml)
 
-Logging: every script writes a compound, timestamped hydromate.log into the
+Logging: every script writes a compound, timestamped axqua.log into the
 folder it outputs to, with the elapsed time of each calculation step plus all
 warnings and errors.
 
@@ -134,7 +134,7 @@ warnings and errors.
   independent of the TELEMAC-3D one. For when the vertical structure matters
   AND the water surface has a gradient (which rules out simpleFoam):
 
-    hydromate openfoam case-config.yml --check   # cell count, no build
+    axqua openfoam case-config.yml --check   # cell count, no build
     python openfoam_preprocessing.py             # build the interFoam case
     python openfoam_run.py                       # spin-up, run, discharge report
 
@@ -160,15 +160,15 @@ warnings and errors.
 
   WHAT CAN THIS CASE DO?
 
-    hydromate case-status case-config.yml          # summary, refreshes the markers
-    hydromate case-status case-config.yml --full   # the full capability table
-    hydromate case-status case-config.yml --json   # what the QGIS plugin reads
+    axqua case-status case-config.yml          # summary, refreshes the markers
+    axqua case-status case-config.yml --full   # the full capability table
+    axqua case-status case-config.yml --json   # what the QGIS plugin reads
 
-  (`hydromate status case-config.yml` still works - see RUNNING IT AS A JOB.)
+  (`axqua status case-config.yml` still works - see RUNNING IT AS A JOB.)
 
   Each solver gets a MODEL=<SOLVER>_<ENABLED|DISABLED> file here. The NAME says
   whether this case declares that solver; the BODY reports every capability on
-  three axes - implemented (does hydromate support it for that solver at all),
+  three axes - implemented (does axqua support it for that solver at all),
   configured (does this case ask for it), and built/run (do the artifacts exist).
   The files are generated on every build, so do not edit them.
 
@@ -177,17 +177,17 @@ warnings and errors.
     Every step above is also a submittable JOB that keeps running after this
     shell - or QGIS - is gone, and can be found again later:
 
-      hydromate submit case-config.yml --kind preprocessing   # then: steady,
-      hydromate submit case-config.yml --kind steady          #   mesh-convergence,
-      hydromate list                                          #   build-3d, unsteady,
-      hydromate status <JOB_ID>                               #   openfoam-build/run,
-      hydromate cancel <JOB_ID>                               #   calibration
-      hydromate logs   <JOB_ID> --follow
+      axqua submit case-config.yml --kind preprocessing   # then: steady,
+      axqua submit case-config.yml --kind steady          #   mesh-convergence,
+      axqua list                                          #   build-3d, unsteady,
+      axqua status <JOB_ID>                               #   openfoam-build/run,
+      axqua cancel <JOB_ID>                               #   calibration
+      axqua logs   <JOB_ID> --follow
 
-    `hydromate submit --help-kinds` lists them all. The knobs that are constants
+    `axqua submit --help-kinds` lists them all. The knobs that are constants
     at the top of each script above become --option flags:
 
-      hydromate submit case-config.yml --kind mesh-convergence \
+      axqua submit case-config.yml --kind mesh-convergence \
           --option tolerance=0.05 --option auto_extend=true --option ncsize=16
 
     `status` is overloaded and the ARGUMENT decides: an existing path means this
@@ -196,9 +196,9 @@ warnings and errors.
     To debug a job, run it synchronously here - the same code path a detached
     job takes, so the failure reproduces under a terminal:
 
-      hydromate execute <JOB_ID>
+      axqua execute <JOB_ID>
 
-    Then read runner.log (hydromate's narration, with the error and a remedy)
+    Then read runner.log (axqua's narration, with the error and a remedy)
     and solver/*.log (the solver talking). See docs/jobs.rst.
 
   THE SCRIPTS ARE NOT DEPRECATED. They remain the supported standalone path and
@@ -212,5 +212,5 @@ warnings and errors.
   CLAUDE.md                 in-depth design notes (meshing, boundaries,
                             friction, ground truth, conventions)
   cases/example-Inn/        a complete, filled-in worked example
-  hydromate <config> -h     command-line help (also: hydromate rating -h)
+  axqua <config> -h     command-line help (also: axqua rating -h)
 ==============================================================================

@@ -3,7 +3,7 @@
 ``BackendSpec.implementation`` named two modules that did not exist, so ``spec.load()``
 was dead code and nothing implemented ``SolverBackend``. These tests pin both halves: the
 implementations now exist and satisfy the protocol, and loading a *spec* still costs
-nothing - because ``hydromate status`` and a QGIS plugin ask "what can this case do?" far
+nothing - because ``axqua status`` and a QGIS plugin ask "what can this case do?" far
 more often than they ask anyone to mesh something.
 """
 
@@ -16,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
-from hydromate.core import registry
-from hydromate.core.capabilities import Capability
-from hydromate.core.registry import BaseBackend, SolverBackend
+from axqua.core import registry
+from axqua.core.capabilities import Capability
+from axqua.core.registry import BaseBackend, SolverBackend
 
 SRC = Path(registry.__file__).parents[2]
 
@@ -64,12 +64,12 @@ def test_base_backend_refuses_clearly_rather_than_returning_none():
 def test_listing_backends_does_not_import_their_implementations():
     """A capability listing must not drag a solver in.
 
-    Run in a subprocess, because this process has already imported half of hydromate and
+    Run in a subprocess, because this process has already imported half of axqua and
     would mask the regression completely.
     """
     code = (
         "import sys\n"
-        "from hydromate.core import registry\n"
+        "from axqua.core import registry\n"
         "registry.backends()\n"
         "print([m for m in sys.modules if m.endswith('.backend')])\n"
         "print([m for m in ('numpy','scipy','pandas','geopandas','rasterio','shapely',"
@@ -83,28 +83,28 @@ def test_listing_backends_does_not_import_their_implementations():
 
 
 def test_a_spec_module_stays_import_light():
-    """``spec.py`` is read by ``hydromate status`` and, later, by a plugin running
+    """``spec.py`` is read by ``axqua status`` and, later, by a plugin running
     inside the QGIS Python process. It may use the standard library and attribute
     access on a Config, and nothing else."""
     forbidden = re.compile(r"^\s*(?:from|import)\s+(numpy|pandas|gmsh|rasterio|geopandas"
                            r"|shapely|matplotlib|openpyxl)", re.M)
     for solver in ("telemac", "openfoam"):
-        spec_file = SRC / "hydromate" / "solvers" / solver / "spec.py"
+        spec_file = SRC / "axqua" / "solvers" / solver / "spec.py"
         assert not forbidden.search(spec_file.read_text("utf-8")), spec_file
 
 
 def test_the_openfoam_backend_never_reaches_into_telemac():
     """The two backends are siblings. Orchestration that drives both - obtaining a
     TELEMAC seed for an OpenFOAM build - lives above both, in the executor."""
-    pattern = re.compile(r"hydromate\.solvers\.telemac")
-    backend = SRC / "hydromate" / "solvers" / "openfoam" / "backend.py"
+    pattern = re.compile(r"axqua\.solvers\.telemac")
+    backend = SRC / "axqua" / "solvers" / "openfoam" / "backend.py"
     assert not pattern.search(backend.read_text("utf-8"))
 
 
 def test_the_openfoam_backend_does_not_call_prerun():
     """``prerun`` imports the TELEMAC backend transitively, so calling it from here
     would break the sibling rule in a way the regex above cannot see."""
-    backend = SRC / "hydromate" / "solvers" / "openfoam" / "backend.py"
+    backend = SRC / "axqua" / "solvers" / "openfoam" / "backend.py"
     text = backend.read_text("utf-8")
     assert "prerun" not in text.split("Two backends are siblings")[-1] or \
         "ensure_seed(" not in text
@@ -117,8 +117,8 @@ def test_openfoam_uses_the_configured_mpi_launcher_not_a_hard_coded_mpirun(tmp_p
                                                                           monkeypatch):
     """MS-MPI on Windows provides ``mpiexec``; a cluster profile may say ``srun``.
     The launcher is a configured field, not a constant (plan §13)."""
-    from hydromate.config import OpenFoam
-    from hydromate.solvers.openfoam.runtime import OpenFoamRuntime
+    from axqua.config import OpenFoam
+    from axqua.solvers.openfoam.runtime import OpenFoamRuntime
 
     bashrc = tmp_path / "bashrc.sh"
     bashrc.write_text("# stub\n", encoding="utf-8")
@@ -128,7 +128,7 @@ def test_openfoam_uses_the_configured_mpi_launcher_not_a_hard_coded_mpirun(tmp_p
     seen = {}
     monkeypatch.setattr(runtime, "run",
                         lambda command, **kw: seen.setdefault("command", command))
-    monkeypatch.setattr("hydromate.solvers.openfoam.dicts.activate",
+    monkeypatch.setattr("axqua.solvers.openfoam.dicts.activate",
                         lambda *a, **k: None)
     runtime.run_stage(tmp_path, "run", end_time=1.0, n_processors=4,
                       show_progress=False)
@@ -138,8 +138,8 @@ def test_openfoam_uses_the_configured_mpi_launcher_not_a_hard_coded_mpirun(tmp_p
 def test_telemac_never_prepends_an_mpi_launcher(tmp_path, monkeypatch):
     """TELEMAC's own launcher spawns mpirun from its systel config, so prepending one
     would start the run twice."""
-    from hydromate.config import TelemacEnv
-    from hydromate.env import TelemacRuntime
+    from axqua.config import TelemacEnv
+    from axqua.env import TelemacRuntime
 
     pysource = tmp_path / "pysource.sh"
     pysource.write_text("# stub\n", encoding="utf-8")
@@ -161,17 +161,17 @@ def test_the_version_is_declared_in_exactly_one_place():
     it is not - which is precisely what the plugin's ``--version`` probe reads."""
     import re
 
-    import hydromate
+    import axqua
 
-    # Read with a regex rather than tomllib, which is 3.11+ while hydromate supports
+    # Read with a regex rather than tomllib, which is 3.11+ while axqua supports
     # 3.10 - and a version test that silently skips on the oldest supported Python is
     # exactly the one you want running there.
     pyproject = (SRC.parent / "pyproject.toml").read_text("utf-8")
     declared = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, re.M).group(1)
-    source = (SRC / "hydromate" / "__init__.py").read_text("utf-8")
+    source = (SRC / "axqua" / "__init__.py").read_text("utf-8")
     fallback = re.search(r'_FALLBACK_VERSION\s*=\s*"([^"]+)"', source).group(1)
     assert fallback == declared, "the fallback in __init__.py has drifted from pyproject"
-    assert hydromate.__version__ == declared
+    assert axqua.__version__ == declared
 
 
 def test_the_plugin_and_the_package_versions_agree():
@@ -179,8 +179,8 @@ def test_the_plugin_and_the_package_versions_agree():
     stale - and the plugin's own release workflow checks the tag against metadata.txt."""
     import re
 
-    import hydromate
+    import axqua
 
-    metadata = (SRC.parent / "qgis_plugin" / "hydromate" / "metadata.txt").read_text("utf-8")
+    metadata = (SRC.parent / "qgis_plugin" / "axqua" / "metadata.txt").read_text("utf-8")
     plugin_version = re.search(r"^version=(.+)$", metadata, re.M).group(1).strip()
-    assert plugin_version == hydromate.__version__
+    assert plugin_version == axqua.__version__

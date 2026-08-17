@@ -17,18 +17,18 @@ from pathlib import Path
 
 import pytest
 
-from hydromate.core.environment import EnvironmentKind, SolverEnvironment
-from hydromate.core.errors import ConfigError
-from hydromate.jobs import procs
-from hydromate.jobs.launcher import (LaunchHandle, LaunchState, launcher_for,
+from axqua.core.environment import EnvironmentKind, SolverEnvironment
+from axqua.core.errors import ConfigError
+from axqua.jobs import procs
+from axqua.jobs.launcher import (LaunchHandle, LaunchState, launcher_for,
                                      runner_argv, select_launcher, write_env_file)
-from hydromate.jobs.launchers.posix import PosixDetachedLauncher
-from hydromate.jobs.launchers.systemd import SystemdUserLauncher, unit_name
-from hydromate.jobs.launchers.windows import (CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
+from axqua.jobs.launchers.posix import PosixDetachedLauncher
+from axqua.jobs.launchers.systemd import SystemdUserLauncher, unit_name
+from axqua.jobs.launchers.windows import (CREATE_NEW_PROCESS_GROUP, DETACHED_PROCESS,
                                               JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
                                               WindowsJobObjectLauncher, job_object_name)
-from hydromate.jobs.launchers.wsl import WslLauncher, _last_int
-from hydromate.jobs.paths import JobDir
+from axqua.jobs.launchers.wsl import WslLauncher, _last_int
+from axqua.jobs.paths import JobDir
 
 FAKES = Path(__file__).parent / "fakes"
 
@@ -96,13 +96,13 @@ def test_a_handle_reconstructs_its_own_launcher():
 
 
 def test_a_handle_round_trips_through_status_json():
-    handle = LaunchHandle(backend="systemd", unit="hydromate-x.service", pid=42,
+    handle = LaunchHandle(backend="systemd", unit="axqua-x.service", pid=42,
                           proc_started=1.5)
     restored = LaunchHandle.from_dict(handle.as_dict())
     assert restored == handle
 
 
-def test_a_handle_tolerates_unknown_keys_from_a_newer_hydromate():
+def test_a_handle_tolerates_unknown_keys_from_a_newer_axqua():
     restored = LaunchHandle.from_dict({"backend": "posix", "pid": 3, "cgroup": "/x"})
     assert restored.backend == "posix" and restored.pid == 3
 
@@ -115,7 +115,7 @@ def test_the_runner_argv_falls_back_to_module_form(monkeypatch):
     console script is routinely absent."""
     monkeypatch.setattr("shutil.which", lambda name: None)
     argv = runner_argv("/jobs/x")
-    assert argv[:3] == [sys.executable, "-m", "hydromate"]
+    assert argv[:3] == [sys.executable, "-m", "axqua"]
     assert argv[3:] == ["execute", "/jobs/x"]
 
 
@@ -123,7 +123,7 @@ def test_the_env_file_drops_multiline_values_rather_than_mangling_them(tmp_path,
     """A truncated PATH produces a job that fails much later with an inexplicable
     'command not found', so the drop has to be visible."""
     import logging
-    with caplog.at_level(logging.WARNING, logger="hydromate.jobs.launcher"):
+    with caplog.at_level(logging.WARNING, logger="axqua.jobs.launcher"):
         target = write_env_file(tmp_path / "launch.env",
                                 {"GOOD": "/usr/bin", "BAD": "line1\nline2"})
     text = target.read_text(encoding="utf-8")
@@ -135,7 +135,7 @@ def test_the_env_file_drops_multiline_values_rather_than_mangling_them(tmp_path,
 def test_the_systemd_unit_name_is_deterministic():
     """It has to be, or a later process could not find the unit."""
     assert unit_name("2026-08-14-x-steady-aaaaaa") == \
-        "hydromate-2026-08-14-x-steady-aaaaaa.service"
+        "axqua-2026-08-14-x-steady-aaaaaa.service"
 
 
 def test_the_windows_job_object_is_named():
@@ -143,7 +143,7 @@ def test_the_windows_job_object_is_named():
     that handle dies with the submitter - so cancellation from a fresh process would be
     impossible, which is the very failure the Job Object exists to prevent."""
     assert job_object_name("2026-08-14-x-steady-aaaaaa") == \
-        "Local\\hydromate-2026-08-14-x-steady-aaaaaa"
+        "Local\\axqua-2026-08-14-x-steady-aaaaaa"
 
 
 def test_the_windows_creation_flags_detach_without_killing_on_close():
@@ -155,7 +155,7 @@ def test_the_windows_creation_flags_detach_without_killing_on_close():
 
 
 def test_the_wsl_payload_detaches_inside_the_distro_and_returns_the_linux_pid():
-    payload = WslLauncher().launch_payload(["hydromate", "execute", "/jobs/x"],
+    payload = WslLauncher().launch_payload(["axqua", "execute", "/jobs/x"],
                                            "/jobs/x", "/jobs/x/solver/stdout.log")
     assert "setsid nohup" in payload
     assert "< /dev/null" in payload
@@ -253,12 +253,12 @@ def test_cancelling_something_already_gone_is_success_not_an_error(tmp_path):
 
 
 def test_a_launch_failure_becomes_a_typed_environment_error(tmp_path):
-    from hydromate.core.errors import EnvironmentError as HydromateEnvironmentError
+    from axqua.core.errors import EnvironmentError as AxquaEnvironmentError
     jd = JobDir(tmp_path / "2026-08-14-nope-steady-aaaaaa").create()
-    with pytest.raises(HydromateEnvironmentError) as excinfo:
+    with pytest.raises(AxquaEnvironmentError) as excinfo:
         PosixDetachedLauncher().submit(jd, ["/definitely/not/here"],
                                        env=dict(os.environ), cwd=tmp_path)
-    assert excinfo.value.code == "hydromate.environment"
+    assert excinfo.value.code == "axqua.environment"
     assert "PATH" in (excinfo.value.remedy or "")
 
 
@@ -283,7 +283,7 @@ def test_a_detached_job_has_no_controlling_terminal(tmp_path):
 @pytest.mark.skipif(os.name == "nt", reason="POSIX only")
 def test_the_fake_solver_prints_a_listing_the_real_parser_understands(tmp_path):
     """If it did not, every progress assertion elsewhere would be self-fulfilling."""
-    from hydromate.progress import SolverProgress
+    from axqua.progress import SolverProgress
 
     proc = subprocess.run([sys.executable, str(FAKES / "bin" / "telemac2d.py"),
                            str(tmp_path / "steady2d.cas"), "--ncsize=2"],

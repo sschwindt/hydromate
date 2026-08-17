@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from hydromate import prerun
+from axqua import prerun
 
 
 # --------------------------------------------------------------------------- #
@@ -19,7 +19,7 @@ from hydromate import prerun
 # --------------------------------------------------------------------------- #
 
 def _cfg(tmp_path: Path, **pre_kw):
-    from hydromate.config import (
+    from axqua.config import (
         Hydrodynamics, Initialization, MeshConfig, OpenFoam, PreRun, TelemacEnv,
     )
 
@@ -62,7 +62,7 @@ def spy(monkeypatch):
         (lc.model_dir / lc.results_slf).write_bytes(b"")   # the "result"
         return None
 
-    import hydromate.solvers.telemac.pipeline as pipeline
+    import axqua.solvers.telemac.pipeline as pipeline
 
     monkeypatch.setattr(pipeline, "run", fake_run)
     return calls
@@ -170,7 +170,7 @@ def test_the_pre_run_writes_into_its_own_folder_and_leaves_the_case_alone(tmp_pa
 def test_a_failed_pre_run_does_not_lose_the_build(tmp_path, monkeypatch):
     """A cold build is worse, not fatal. Losing the whole OpenFOAM build because the
     optional seed failed would be the wrong trade."""
-    import hydromate.solvers.telemac.pipeline as pipeline
+    import axqua.solvers.telemac.pipeline as pipeline
 
     def boom(lc, **kwargs):
         raise RuntimeError("BAMG gave up")
@@ -207,7 +207,7 @@ def _unconverged(result):
 # --------------------------------------------------------------------------- #
 
 def test_pre_run_is_on_by_default_and_validates_its_own_fields():
-    from hydromate.config import OpenFoam, PreRun
+    from axqua.config import OpenFoam, PreRun
 
     assert OpenFoam().pre_run.enabled is True
     assert OpenFoam().pre_run.dimension == "2d"
@@ -251,13 +251,13 @@ def test_a_mesh_too_flat_for_a_vertical_is_refused_before_the_solver(tmp_path,
     and refuses cells more than 4x taller than wide. isar-2025 is 0.26 m deep with
     0.62 m cells and gets exactly 2 planes - one layer, i.e. a depth-averaged answer
     at 3D cost (and, measured, a diverging one). Refuse, and say why."""
-    from hydromate.solvers.telemac import threed
+    from axqua.solvers.telemac import threed
 
     flat = threed.VerticalDiscretization(
         n_levels=2, dz=0.26, dx=0.62, depth=0.26, aspect=2.4,
         reason="cells are flat (dx=0.62 m >> h=0.26 m)")
     monkeypatch.setattr(threed, "infer_vertical_layers", lambda *a, **k: flat)
-    monkeypatch.setattr("hydromate.core.selafin.read_slf", lambda *a, **k: {})
+    monkeypatch.setattr("axqua.core.selafin.read_slf", lambda *a, **k: {})
     monkeypatch.setattr(threed, "build_3d_cas",
                         lambda *a, **k: pytest.fail("the solver was launched anyway"))
 
@@ -276,7 +276,7 @@ def test_a_diverged_3d_result_is_not_adopted_as_a_seed(tmp_path):
     with no visible cause."""
     import numpy as np
 
-    from hydromate.core.selafin import write_geometry
+    from axqua.core.selafin import write_geometry
 
     good = write_geometry(tmp_path / "good.slf",
                           x=np.array([0.0, 1.0, 0.0]), y=np.array([0.0, 0.0, 1.0]),
@@ -295,7 +295,7 @@ def test_the_3d_seed_run_avoids_spalart_allmaras(monkeypatch):
     """S-A maps to 3D model 5, which diverges in the velocity-diffusion solve on a
     wetting/drying bed without a source-term patch. Measured NaN on two meshes; clean
     with k-epsilon. A seed is not a turbulence study."""
-    from hydromate.solvers.telemac import steering
+    from axqua.solvers.telemac import steering
 
     class _Hydro:
         def __init__(self):

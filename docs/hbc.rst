@@ -6,11 +6,11 @@ Once :doc:`the pipeline <usage>` has produced a calibration-ready case and
 with `HydroBayesCal <https://github.com/Ecohydraulics/hydrobayescal>`_ (HBC) -
 surrogate-assisted Bayesian calibration with quantified uncertainty.
 
-What hydromate hands over
--------------------------
+What aXqua hands over
+---------------------
 
 Pipeline stage 5 writes two artifacts into the calibration directory
-(``hydromate-case/calibration-validation/``):
+(``axqua-case/calibration-validation/``):
 
 * ``measurements-calibration.csv`` - the calibration points, one row per
   measurement location: ``id, x, y, z, <QTY>_DATA, <QTY>_ERROR`` for each
@@ -30,7 +30,7 @@ must already be at a converged, mass-conservative state (that is exactly what th
 flux-convergence check in ``initial_run.py`` verifies, at a tight 1e-6 tolerance).
 
 The ``calibration`` config block
----------------------------------
+--------------------------------
 
 .. code-block:: yaml
 
@@ -56,7 +56,7 @@ Running the calibration
 
 .. code-block:: bash
 
-   cd cases/<your-case>/hydromate-case/calibration-validation
+   cd cases/<your-case>/axqua-case/calibration-validation
    python /path/to/hydrobayescal/bal_telemac.py --config config_Telemac.py
 
 HydroBayesCal then builds a Gaussian-process surrogate over the parameter space,
@@ -80,7 +80,7 @@ calibrated model can be checked against measurements it was not fitted to.
    A calibration quantity is only extracted if its name matches the SELAFIN
    variable exactly (whitespace-normalised, not period-stripped). The TKE variable
    is ``TURBULENT ENERG.`` **with the trailing period** (the real 16-character
-   TELEMAC name); hydromate emits this spelling, and HydroBayesCal's
+   TELEMAC name); aXqua emits this spelling, and HydroBayesCal's
    ``classification_tm_gaia_dict`` must contain it (add
    ``"TURBULENT ENERG.": "telemac"``) or the quantity is silently dropped. Extracting
    ``TURBULENT ENERG.`` requires the **k-epsilon** turbulence model (graphic

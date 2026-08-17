@@ -14,13 +14,13 @@ import time
 
 import pytest
 
-from hydromate.core.errors import ConfigError
-from hydromate.jobs import procs
-from hydromate.jobs.lock import JobLock, LockedError
-from hydromate.jobs.model import (JOB_SCHEMA_VERSION, JobKind, JobSpec, JobState,
+from axqua.core.errors import ConfigError
+from axqua.jobs import procs
+from axqua.jobs.lock import JobLock, LockedError
+from axqua.jobs.model import (JOB_SCHEMA_VERSION, JobKind, JobSpec, JobState,
                                   JobStatus, SteadyRunOptions)
-from hydromate.jobs.paths import JobDir
-from hydromate.jobs.store import (read_json_tolerant, read_spec, read_status,
+from axqua.jobs.paths import JobDir
+from axqua.jobs.store import (read_json_tolerant, read_spec, read_status,
                                   write_json_atomic, write_spec, write_status)
 
 
@@ -108,7 +108,7 @@ def test_the_submission_record_round_trips(job, spec):
 def test_reading_a_directory_that_is_not_a_job_says_so(tmp_path):
     with pytest.raises(ConfigError) as excinfo:
         read_spec(tmp_path)
-    assert "not a hydromate job" in (excinfo.value.remedy or "")
+    assert "not a axqua job" in (excinfo.value.remedy or "")
 
 
 def test_status_round_trips(job, spec):
@@ -135,7 +135,7 @@ def test_a_newer_schema_is_refused_and_both_versions_are_named(job, spec):
 
 def test_an_older_schema_migrates_in_memory_and_is_not_rewritten(job, spec, monkeypatch):
     """A read must not mutate a record the user may still want to inspect."""
-    from hydromate.jobs import store
+    from axqua.jobs import store
 
     monkeypatch.setitem(store.JOB_MIGRATIONS, 0, lambda d: {**d, "solver": "telemac"})
     payload = spec.as_dict()

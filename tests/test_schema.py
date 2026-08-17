@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from hydromate.core import errors, schema
+from axqua.core import errors, schema
 
 CASES = sorted((Path(__file__).resolve().parent.parent / "cases").glob(
     "*/case-config*.yml"))
@@ -39,7 +39,7 @@ def test_every_case_config_round_trips(path, tmp_path):
     editor that writes a config back must not quietly drop a field it did not know
     about, and there is no way to be sure of that by reading the code.
     """
-    from hydromate.config import dump_config, load_config
+    from axqua.config import dump_config, load_config
 
     original = load_config(path)
     # dumped into the case dir, so relative data paths still resolve
@@ -55,12 +55,12 @@ def test_every_case_config_round_trips(path, tmp_path):
 def test_dump_writes_paths_relative_to_where_the_config_will_live(tmp_path):
     """A dumped config must stay portable: a case ships its data under its own
     directory, so those paths are written relative and an install path is not."""
-    from hydromate.config import dump_config, load_config
+    from axqua.config import dump_config, load_config
 
     cfg = load_config(CASES[0])
     text = dump_config(cfg, base=cfg.config_dir)
     assert str(cfg.config_dir) not in text          # nothing machine-local leaked in
-    assert "hydromate-case" in text                 # the case tree stayed relative
+    assert "axqua-case" in text                 # the case tree stayed relative
 
 
 # --------------------------------------------------------------------------- #
@@ -91,7 +91,7 @@ def test_an_unknown_key_is_shared_rather_than_hidden():
 
 def test_every_classified_block_is_a_real_config_block():
     """The table must not drift away from the dataclass it describes."""
-    from hydromate.config import Config
+    from axqua.config import Config
 
     known = {f.name for f in fields(Config)} | {"project", "outputs"}
     for block in list(schema.BLOCK_LAYER) + list(schema.SHARED_FIELDS):
@@ -99,7 +99,7 @@ def test_every_classified_block_is_a_real_config_block():
 
 
 def test_every_shared_field_exists_on_its_block():
-    from hydromate.config import Hydrodynamics, MeshConfig
+    from axqua.config import Hydrodynamics, MeshConfig
 
     blocks = {"mesh": MeshConfig, "hydrodynamics": Hydrodynamics}
     for block, names in schema.SHARED_FIELDS.items():
@@ -132,7 +132,7 @@ def test_an_explicit_canonical_key_beats_the_legacy_one():
 
 def test_a_legacy_config_still_loads(tmp_path):
     """End to end through load_config, which is where it has to keep working."""
-    from hydromate.config import load_config
+    from axqua.config import load_config
 
     (tmp_path / "pysource.sh").write_text("# stub\n")
     (tmp_path / "dem.tif").write_text("")
@@ -167,7 +167,7 @@ def test_an_error_carries_a_stable_code_and_survives_serialisation():
                              remedy="Use 'elevation', 'stage_discharge' or 'free'.",
                              given="rating")
     data = exc.as_dict()
-    assert data["code"] == "hydromate.config"
+    assert data["code"] == "axqua.config"
     assert data["subject"] == "boundaries.outflow_condition"
     assert json.loads(json.dumps(data))["details"]["given"] == "rating"
     assert "Use 'elevation'" in str(exc)      # the remedy reaches the reader
@@ -176,12 +176,12 @@ def test_an_error_carries_a_stable_code_and_survives_serialisation():
 def test_every_error_is_catchable_by_the_base_class():
     for cls in (errors.ConfigError, errors.GeodataError, errors.EnvironmentError,
                 errors.SolverError, errors.MeshError):
-        with pytest.raises(errors.HydromateError):
+        with pytest.raises(errors.AxquaError):
             raise cls("boom")
 
 
 def test_error_codes_are_unique():
-    codes = [c.code for c in (errors.HydromateError, errors.ConfigError,
+    codes = [c.code for c in (errors.AxquaError, errors.ConfigError,
                               errors.GeodataError, errors.EnvironmentError,
                               errors.SolverError, errors.MeshError)]
     assert len(codes) == len(set(codes))
@@ -191,10 +191,10 @@ def test_an_unexpected_exception_is_recorded_honestly():
     """A job that died on a KeyError deep in a library still records something
     structured - labelled as unanticipated rather than mislabelled."""
     record = errors.ErrorRecord.from_exception(KeyError("Zone Name"))
-    assert record.code == "hydromate.unexpected"
+    assert record.code == "axqua.unexpected"
     assert record.details["type"] == "KeyError"
 
     record = errors.ErrorRecord.from_exception(
         errors.MeshError("BAMG failed", subject="mesh.channel_size"))
-    assert record.code == "hydromate.mesh"
+    assert record.code == "axqua.mesh"
     assert record.as_dict()["subject"] == "mesh.channel_size"

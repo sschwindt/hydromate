@@ -23,7 +23,7 @@ user-sources/
     channel-centerline.gpkg    # line the channel cells are elongated along
     roughness-zones.gpkg       # polygons 'Zone ID' (friction zonation)
     roughness-table.csv        # zone_id,ks  -> per-zone roughness (calibrated by HBC)
-    rating-curve.csv           # outlet Q,WSE rating curve (or generate via `hydromate rating`)
+    rating-curve.csv           # outlet Q,WSE rating curve (or generate via `axqua rating`)
   hydraulics/
     inflow.csv                 # [REQUIRED for a build] upstream discharge value / series
   ground-truth/                # optional calibration targets (field measurements)

@@ -12,12 +12,12 @@ Quick start
 .. code-block:: bash
 
     # submit; prints the job id and returns immediately
-    hydromate submit cases/example-Inn/case-config.yml --kind steady
+    axqua submit cases/example-Inn/case-config.yml --kind steady
 
-    hydromate list                        # what exists
-    hydromate status <JOB_ID>             # where it is
-    hydromate logs   <JOB_ID> --follow    # what it is saying
-    hydromate cancel <JOB_ID>             # stop it and everything it started
+    axqua list                        # what exists
+    axqua status <JOB_ID>             # where it is
+    axqua logs   <JOB_ID> --follow    # what it is saying
+    axqua cancel <JOB_ID>             # stop it and everything it started
 
 Close the terminal, log out, reboot QGIS - the job carries on. Add ``--json`` to any of
 these for machine-readable output.
@@ -42,11 +42,11 @@ kind                       what it does
 ``calibration``            HydroBayesCal, single or multi-flow
 =========================  ==========================================================
 
-``hydromate submit --help-kinds`` lists them at any time.
+``axqua submit --help-kinds`` lists them at any time.
 
 Per-kind options are the knobs that used to be constants at the top of each case script::
 
-    hydromate submit case-config.yml --kind mesh-convergence \
+    axqua submit case-config.yml --kind mesh-convergence \
         --option tolerance=0.05 --option auto_extend=true --option ncsize=16
 
 An unknown option is refused before anything is created, because a job that *looks*
@@ -60,7 +60,7 @@ What a job looks like on disk
     <job_root>/2026-08-14-isar-2025-steady-a3f19c/
       job.json          what was asked for, frozen (read-only after writing)
       status.json       where it is now (runner-only, replaced atomically)
-      runner.log        hydromate's narration, rotated
+      runner.log        axqua's narration, rotated
       solver/           the solver's own listing, rotated separately
       input/            the frozen case-config.yml, and a build's working folders
       results/
@@ -72,8 +72,8 @@ The identifier is readable and sortable on purpose: it is a directory name and a
 column, and ``f835ac7d-3e91-...`` is neither greppable nor meaningful six months later.
 
 **The directory is authoritative.** A SQLite index at
-``~/.local/share/hydromate/jobs.sqlite`` makes listing hundreds of jobs fast, but it is a
-cache: ``hydromate list --rebuild`` reconstructs it by scanning, and every index failure is
+``~/.local/share/axqua/jobs.sqlite`` makes listing hundreds of jobs fast, but it is a
+cache: ``axqua list --rebuild`` reconstructs it by scanning, and every index failure is
 swallowed so that bookkeeping can never take a job down.
 
 ``job.json`` freezes the **resolved configuration**, not a pointer to it. Editing
@@ -140,7 +140,7 @@ launcher kill the tree.
 Solver profiles
 ---------------
 
-Machine-local, in ``~/.config/hydromate/profiles.yml`` - never in a project file, because
+Machine-local, in ``~/.config/axqua/profiles.yml`` - never in a project file, because
 these are install paths and would destroy its portability:
 
 .. code-block:: yaml
@@ -151,19 +151,19 @@ these are install paths and would destroy its portability:
         environment: posix
         setup_script: /opt/telemac/v9.1/configs/pysource.sh
         mpi_processes: 16
-        working_root: /scratch/hydromate
+        working_root: /scratch/axqua
 
       openfoam_windows:            # Foundation OpenFOAM: WSL is the route
         solver: openfoam
         environment: wsl
         distro: Ubuntu-22.04
         setup_script: /opt/openfoam9/etc/bashrc   # a path INSIDE the distro
-        working_root: /scratch/hydromate          # inside the distro
+        working_root: /scratch/axqua          # inside the distro
 
 .. code-block:: bash
 
-    hydromate profiles list
-    hydromate profiles validate            # can these actually reach their solvers?
+    axqua profiles list
+    axqua profiles validate            # can these actually reach their solvers?
 
 ``validate`` is the check to run **when you write the profile**, not when you submit a
 six-hour job. It also warns when a solver variable came from your ambient shell rather than
@@ -175,15 +175,15 @@ Profiles are optional. A case that already carries ``telemac.pysource`` needs no
 Where things are kept
 ---------------------
 
-``~/.config/hydromate/``
+``~/.config/axqua/``
     ``profiles.yml`` - hand-edited, worth backing up.
 
-``~/.local/share/hydromate/``
+``~/.local/share/axqua/``
     ``jobs.sqlite`` and the default job root - derived, safe to delete.
 
 The job root, first hit wins
-    ``--job-root`` → ``$HYDROMATE_JOB_ROOT`` → the profile's ``working_root`` → the case
-    config → ``~/.local/share/hydromate/jobs``.
+    ``--job-root`` → ``$AXQUA_JOB_ROOT`` → the profile's ``working_root`` → the case
+    config → ``~/.local/share/axqua/jobs``.
 
 Platform-aware: ``%APPDATA%`` / ``%LOCALAPPDATA%`` on Windows,
 ``~/Library/Application Support`` on macOS. Point the job root at a large volume - CFD
@@ -197,15 +197,15 @@ does internally, so a failure reproduces under a terminal:
 
 .. code-block:: bash
 
-    hydromate execute <JOB_ID>          # or a job directory, or its job.json
+    axqua execute <JOB_ID>          # or a job directory, or its job.json
 
 Then read, in this order:
 
 ``runner.log``
-    hydromate's narration: state transitions, the commands it issued, exit codes. Where a
+    aXqua's narration: state transitions, the commands it issued, exit codes. Where a
     *setup* problem is explained.
 ``solver/*.log``
-    The solver talking. Where a *numerical* problem is diagnosed. ``hydromate logs
+    The solver talking. Where a *numerical* problem is diagnosed. ``aXqua logs
     <JOB_ID> --solver``.
 ``status.json``
     The structured error, with a stable ``code``, the ``subject`` at fault and a

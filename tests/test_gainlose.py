@@ -1,4 +1,4 @@
-"""Exchange faces of a gain-lose reach (:mod:`hydromate.gainlose`).
+"""Exchange faces of a gain-lose reach (:mod:`axqua.gainlose`).
 
 The point of the module is that a **polygon alone** locates the exchange: given the
 porous body and its water table, the losing and gaining faces follow from a head
@@ -12,7 +12,7 @@ than numerical:
 * a geometry that cannot support one of the faces raises instead of silently
   exchanging nothing.
 
-Run via: mamba run -n hydromate-env pytest tests/test_gainlose.py
+Run via: mamba run -n axqua-env pytest tests/test_gainlose.py
 """
 
 from __future__ import annotations
@@ -36,11 +36,11 @@ def _reach(tmp_path, *, conductivity=3.0e-4, discharge=None, zone_buffer=2.0):
     import geopandas as gpd
     from shapely.geometry import LineString, Polygon
 
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, Friction, GainLose, Geodata, GroundTruth,
         Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )
-    from hydromate.mesh import Mesh
+    from axqua.mesh import Mesh
 
     nx, ny = 61, 31
     X, Y = np.meshgrid(np.linspace(0.0, 120.0, nx), np.linspace(-15.0, 15.0, ny),
@@ -118,8 +118,8 @@ def _surface(mesh, stage_offset=0.0):
 
 
 def test_faces_are_found_disjoint_and_inside_the_zone(tmp_path):
-    from hydromate.gainlose import derive_faces, zone_mask
-    from hydromate.watertable import fit_phreatic_plane
+    from axqua.gainlose import derive_faces, zone_mask
+    from axqua.watertable import fit_phreatic_plane
 
     cfg, mesh = _reach(tmp_path)
     plane = fit_phreatic_plane(cfg, mesh)
@@ -138,8 +138,8 @@ def test_faces_are_found_disjoint_and_inside_the_zone(tmp_path):
 def test_raising_the_river_grows_the_losing_face(tmp_path):
     """The property a build-time mask cannot have, and the reason the generated
     routine re-classifies every step."""
-    from hydromate.gainlose import derive_faces
-    from hydromate.watertable import fit_phreatic_plane
+    from axqua.gainlose import derive_faces
+    from axqua.watertable import fit_phreatic_plane
 
     cfg, mesh = _reach(tmp_path)
     plane = fit_phreatic_plane(cfg, mesh)
@@ -154,8 +154,8 @@ def test_raising_the_river_grows_the_losing_face(tmp_path):
 def test_exchange_scales_with_conductivity(tmp_path):
     """kf is the knob that sets the magnitude - which is why it is exposed to
     HydroBayesCal rather than assumed."""
-    from hydromate.gainlose import derive_faces, estimate_exchange
-    from hydromate.watertable import fit_phreatic_plane
+    from axqua.gainlose import derive_faces, estimate_exchange
+    from axqua.watertable import fit_phreatic_plane
 
     cfg, mesh = _reach(tmp_path, conductivity=1.0e-5)   # low enough not to hit max_rate
     plane = fit_phreatic_plane(cfg, mesh)
@@ -171,8 +171,8 @@ def test_exchange_scales_with_conductivity(tmp_path):
 
 
 def test_prescribed_discharge_is_reported_instead_of_kf(tmp_path):
-    from hydromate.gainlose import derive_faces, estimate_exchange
-    from hydromate.watertable import fit_phreatic_plane
+    from axqua.gainlose import derive_faces, estimate_exchange
+    from axqua.watertable import fit_phreatic_plane
 
     cfg, mesh = _reach(tmp_path, discharge=0.065)
     plane = fit_phreatic_plane(cfg, mesh)
@@ -183,8 +183,8 @@ def test_prescribed_discharge_is_reported_instead_of_kf(tmp_path):
 
 
 def test_an_incomplete_face_raises_rather_than_exchanging_nothing(tmp_path):
-    from hydromate.gainlose import derive_faces
-    from hydromate.watertable import fit_phreatic_plane
+    from axqua.gainlose import derive_faces
+    from axqua.watertable import fit_phreatic_plane
 
     cfg, mesh = _reach(tmp_path)
     plane = fit_phreatic_plane(cfg, mesh)
@@ -202,7 +202,7 @@ def test_an_incomplete_face_raises_rather_than_exchanging_nothing(tmp_path):
 
 def test_zone_buffer_lets_the_losing_face_reach_the_channel(tmp_path):
     """A bar polygon outlines the bar; the water it takes in is beside it."""
-    from hydromate.gainlose import zone_mask
+    from axqua.gainlose import zone_mask
 
     cfg, mesh = _reach(tmp_path, zone_buffer=0.0)
     tight = zone_mask(cfg, mesh)

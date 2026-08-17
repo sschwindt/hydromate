@@ -1,19 +1,67 @@
-# Inn TELEMAC setup workflow (`hydromate`)
+# aXqua
 
-Automated setup of a calibration-ready **TELEMAC-2D** (optionally **+ GAIA** morphodynamics) case for a reach of the **Inn river (Bavaria)**, wired into [HydroBayesCal](https://github.com/Ecohydraulics/hydrobayescal) for surrogate-assisted Bayesian calibration with quantified uncertainty.
+**Automated setup, persistent execution and calibration of river models.**
 
-You provide geodata + hydraulics; `hydromate` produces a ready TELEMAC case (geometry `.slf`, `boundaries.cli`, steering `.cas`, friction `.tbl`) plus a `measurements-calibration.csv` and a HydroBayesCal `config_Telemac.py`. An **OpenFOAM `interFoam`** free-surface case can be built from the same configuration and the same converged 2D result.
+`aXqua` builds a calibration-ready **TELEMAC-2D/3D** case (optionally **+ GAIA** morphodynamics) or an **OpenFOAM `interFoam`** free-surface case from geodata, runs it as a job that outlives the shell that started it, and calibrates it with [HydroBayesCal](https://github.com/Ecohydraulics/hydrobayescal) for surrogate-assisted Bayesian calibration with quantified uncertainty. A **QGIS plugin** drives the whole workflow; everything also works from the command line with QGIS absent.
+
+> Formerly released as `hydromate`. The name changed for legal reasons; the software is the same, and existing cases keep working (see [Migrating from hydromate](#migrating-from-hydromate)).
+
+You provide geodata + hydraulics; `axqua` produces a ready TELEMAC case (geometry `.slf`, `boundaries.cli`, steering `.cas`, friction `.tbl`) plus a `measurements-calibration.csv` and a HydroBayesCal `config_Telemac.py`. An **OpenFOAM `interFoam`** free-surface case can be built from the same configuration and the same converged 2D result.
 
 Simulations run as **persistent jobs** that outlive the shell - or QGIS - that started them, and there is a **QGIS plugin** frontend for the whole workflow. Everything stays fully usable from the command line with QGIS absent.
 
 ```bash
-hydromate submit cases/example-Inn/case-config.yml --kind steady   # -> a job id, immediately
-hydromate list                                                     # what exists
-hydromate status <JOB_ID>                                          # where it is
-hydromate cancel <JOB_ID>                                          # stop it, and everything it started
+axqua submit cases/example-Inn/case-config.yml --kind steady   # -> a job id, immediately
+axqua list                                                     # what exists
+axqua status <JOB_ID>                                          # where it is
+axqua cancel <JOB_ID>                                          # stop it, and everything it started
 ```
 
 Close the terminal, log out, restart QGIS: the job carries on. See [`docs/jobs.rst`](docs/jobs.rst).
+
+## Migrating from hydromate
+
+The project was renamed for legal reasons. The software is unchanged; only the names are
+different, and **nothing you already have needs moving.**
+
+| was | is now |
+|---|---|
+| `pip install hydromate` | `pip install aXqua` |
+| `import hydromate` | `import axqua` |
+| `hydromate <config>` | `axqua <config>` |
+| `hydromate-case/` | `axqua-case/` |
+| `hydromate.log` | `axqua.log` |
+| `~/.config/hydromate/` | `~/.config/axqua/` |
+| `HYDROMATE_JOB_ROOT` and friends | `AXQUA_JOB_ROOT` and friends |
+| `<name>.hydromate-prj` | `<name>.axqua-prj` |
+
+The distribution is branded `aXqua` on PyPI; the importable module is plain lowercase
+`axqua`, because a mixed-case module name resolves differently on case-insensitive
+filesystems. PyPI treats the two spellings as one project, so `pip install axqua` works too.
+
+**The old names are still read** wherever ignoring them would lose your work:
+
+* an existing `hydromate-case/` is used when there is no `axqua-case/` yet, so a case with
+  tens of gigabytes of results keeps working untouched. Rename it whenever you like - it
+  is a plain move on the same filesystem, so it is instant even when it is large:
+
+  ```bash
+  mv cases/<name>/hydromate-case cases/<name>/axqua-case
+  ```
+
+  If the config names the folder explicitly (`project.sim_dir`), update that line too.
+* `HYDROMATE_*` environment variables still work, with a one-off notice - a shell profile,
+  cron entry or systemd unit written before the rename is not something to silently ignore.
+* `~/.config/hydromate/profiles.yml` and `~/.local/share/hydromate/` are still read while
+  the `axqua` ones do not exist.
+* The QGIS plugin still opens a `.hydromate-prj` project, and saves it back as
+  `.axqua-prj`. The old file is left in place rather than deleted.
+
+Every one of those is covered by `tests/test_rename_compat.py`, so the migration path is
+tested rather than assumed.
+
+Jobs submitted before the rename keep running - they are ordinary system processes and
+know nothing about the package name.
 
 ## Documentation
 
@@ -24,11 +72,11 @@ Full docs (Sphinx) live in `docs/`. Start with `docs/usage.rst` for the workflow
 | [`docs/architecture.rst`](docs/architecture.rst) | how the model builder, the job runner and the QGIS plugin fit together, and why the seams are where they are |
 | [`docs/jobs.rst`](docs/jobs.rst) | submitting, monitoring and cancelling runs that outlive their shell; solver profiles; debugging |
 | [`docs/qgis_plugin.rst`](docs/qgis_plugin.rst) | installing and using the QGIS frontend |
-| [`docs/hbc.rst`](docs/hbc.rst) | what hydromate hands to HydroBayesCal |
+| [`docs/hbc.rst`](docs/hbc.rst) | what aXqua hands to HydroBayesCal |
 
 ### Building / recompiling the docs
 
-The docs are built with Sphinx. Heavy runtime deps (gmsh, GDAL, geopandas, …) are **mocked** in `docs/conf.py` (`autodoc_mock_imports`), so you can build the docs with just Sphinx + the theme - no need for the full `hydromate-env`:
+The docs are built with Sphinx. Heavy runtime deps (gmsh, GDAL, geopandas, …) are **mocked** in `docs/conf.py` (`autodoc_mock_imports`), so you can build the docs with just Sphinx + the theme - no need for the full `axqua-env`:
 
 ```bash
 pip install -r docs/requirements-docs.txt   # one-time: Sphinx + RTD theme
@@ -55,15 +103,15 @@ inflow / outflow / measurements ───┤
                                    └─▶ 5. measurements-calibration.csv + config_Telemac.py
 ```
 
-* **Stage 1** (`hydromate/dem.py`) - reproject + clip the initial DEM (and optional target DEM) to the ROI boundary; optional **DEM-of-Difference** (`dem_of_difference.enabled`) - the `dem_target - dem_initial` bed-change raster on the ROI-clipped grid, thresholded by a minimum **level of detection** (explicit `min_lod` or the propagated survey uncertainty `t·√(u_i²+u_t²)`; sub-LoD change masked/zeroed).
-* **Stage 2** (`hydromate/mesh.py`, `selafin.py`) - triangular mesh from boundary + breaklines (anisotropic, flow-aligned in the channel) with per-MATID size fields; DEM interpolated onto nodes; friction zones written as a `FRIC_ID` variable inside the geometry SELAFIN (driven by `geodata.roughness_zones` when set - the polygon `Zone ID` becomes `FRIC_ID` and the table ks becomes the `BOTTOM FRICTION` variable). A **quality report** (`hydromate/mesh_quality.py`) is logged for every build: per-region (channel vs floodplain) internal angles, aspect ratio and skewness; the **shortest edge** (critical - it bounds the CFL-limited adaptive time step); and adjacent-cell area jumps (smooth-transition check). The channel's intended elongation is reported but exempt from shape warnings; invalid geometry (zero-area, inverted, duplicate nodes, non-manifold edges) aborts the build.
-* **Stage 3** (`hydromate/boundary.py`) - classify each contour node against the `boundaries.liquid_boundaries` lines (a line layer whose `Type (inflow/outflow)` field tags every line `inflow` or `outflow`; the lines must coincide with the mesh-zone outer bounds). Inflow nodes get a prescribed-Q boundary (`5 5 5`); outflow nodes get a prescribed-elevation boundary (`5 4 4`) whose water level comes from a fixed `boundaries.prescribed_elevation` (`outflow_condition: elevation`, the **default**) or from the `boundaries.stage_discharge` rating curve at the simulated Q (`outflow_condition: stage_discharge`), or a free/Neumann boundary (`4 4 4`, `outflow_condition: free`); every other outer node is a solid wall (`2 2 2`). If the total inflow- and outflow-node counts differ by more than ~10%, a **stability-risk warning** is logged (rebalance via mesh resolution or line lengths).
-* **Stage 4** (`hydromate/steering.py`) - friction `.tbl` (one row per friction zone, perturbed by HydroBayesCal) and the `.cas`; GAIA `.cas` when morphodynamics on. Zones come from `friction.zones` (MATID) or, for the Inn case, are derived from the roughness table (`<Zone ID> NIKU <ks> NULL`) so they match the geometry's per-node `FRIC_ID`.
-* **Stage 5** (`hydromate/calibration.py`, `targets.py`, `ground_truth.py`) - calibration CSV from measurements and the HydroBayesCal `config_Telemac.py`. The recommended way to structure the ground truth is the **calibration-target template**: `hydromate targets case-config.yml` generates a user-fillable `user-sources/ground-truth/calibration-target-data.xlsx` whose rows are keyed by **unique IDs** joining point layers (gpkg/shp, any CRS) in `user-sources/geodata/`. Its tabs: `hydraulics` (u_x/u_y/u_z, fluctuations u_x'/u_y'/u_z', auto-computed U_h/U_h'/TKE, water depth, bottom elevation - fillable from SonTek FlowTracker2 exports by the co-located `extract_flowtracker.py` script / `hydromate.flowtracker`, keyed by each point's ID; the fluctuation u' is the sample std-dev, not the `VxErr` standard error), `morphodynamics` (d16..d90 grain sizes, fine fraction < 1 mm, plus a `dz` column auto-sampled from the DEM-of-Difference when the case provides a second DEM), and `parameters` (a drop-down over a TELEMAC-2D/3D/GAIA calibration-parameter catalog - friction zones prefilled with their current ks, critical Shields stress, minimum depth, eddy viscosity/diffusivity, secondary currents, ... - with min/max test ranges and range tips; merged into `calibration.parameters`, the template winning on collisions). Reference the filled file under `ground_truth.targets` in the config.
+* **Stage 1** (`axqua/dem.py`) - reproject + clip the initial DEM (and optional target DEM) to the ROI boundary; optional **DEM-of-Difference** (`dem_of_difference.enabled`) - the `dem_target - dem_initial` bed-change raster on the ROI-clipped grid, thresholded by a minimum **level of detection** (explicit `min_lod` or the propagated survey uncertainty `t·√(u_i²+u_t²)`; sub-LoD change masked/zeroed).
+* **Stage 2** (`axqua/mesh.py`, `selafin.py`) - triangular mesh from boundary + breaklines (anisotropic, flow-aligned in the channel) with per-MATID size fields; DEM interpolated onto nodes; friction zones written as a `FRIC_ID` variable inside the geometry SELAFIN (driven by `geodata.roughness_zones` when set - the polygon `Zone ID` becomes `FRIC_ID` and the table ks becomes the `BOTTOM FRICTION` variable). A **quality report** (`axqua/mesh_quality.py`) is logged for every build: per-region (channel vs floodplain) internal angles, aspect ratio and skewness; the **shortest edge** (critical - it bounds the CFL-limited adaptive time step); and adjacent-cell area jumps (smooth-transition check). The channel's intended elongation is reported but exempt from shape warnings; invalid geometry (zero-area, inverted, duplicate nodes, non-manifold edges) aborts the build.
+* **Stage 3** (`axqua/boundary.py`) - classify each contour node against the `boundaries.liquid_boundaries` lines (a line layer whose `Type (inflow/outflow)` field tags every line `inflow` or `outflow`; the lines must coincide with the mesh-zone outer bounds). Inflow nodes get a prescribed-Q boundary (`5 5 5`); outflow nodes get a prescribed-elevation boundary (`5 4 4`) whose water level comes from a fixed `boundaries.prescribed_elevation` (`outflow_condition: elevation`, the **default**) or from the `boundaries.stage_discharge` rating curve at the simulated Q (`outflow_condition: stage_discharge`), or a free/Neumann boundary (`4 4 4`, `outflow_condition: free`); every other outer node is a solid wall (`2 2 2`). If the total inflow- and outflow-node counts differ by more than ~10%, a **stability-risk warning** is logged (rebalance via mesh resolution or line lengths).
+* **Stage 4** (`axqua/steering.py`) - friction `.tbl` (one row per friction zone, perturbed by HydroBayesCal) and the `.cas`; GAIA `.cas` when morphodynamics on. Zones come from `friction.zones` (MATID) or, for the Inn case, are derived from the roughness table (`<Zone ID> NIKU <ks> NULL`) so they match the geometry's per-node `FRIC_ID`.
+* **Stage 5** (`axqua/calibration.py`, `targets.py`, `ground_truth.py`) - calibration CSV from measurements and the HydroBayesCal `config_Telemac.py`. The recommended way to structure the ground truth is the **calibration-target template**: `axqua targets case-config.yml` generates a user-fillable `user-sources/ground-truth/calibration-target-data.xlsx` whose rows are keyed by **unique IDs** joining point layers (gpkg/shp, any CRS) in `user-sources/geodata/`. Its tabs: `hydraulics` (u_x/u_y/u_z, fluctuations u_x'/u_y'/u_z', auto-computed U_h/U_h'/TKE, water depth, bottom elevation - fillable from SonTek FlowTracker2 exports by the co-located `extract_flowtracker.py` script / `axqua.flowtracker`, keyed by each point's ID; the fluctuation u' is the sample std-dev, not the `VxErr` standard error), `morphodynamics` (d16..d90 grain sizes, fine fraction < 1 mm, plus a `dz` column auto-sampled from the DEM-of-Difference when the case provides a second DEM), and `parameters` (a drop-down over a TELEMAC-2D/3D/GAIA calibration-parameter catalog - friction zones prefilled with their current ks, critical Shields stress, minimum depth, eddy viscosity/diffusivity, secondary currents, ... - with min/max test ranges and range tips; merged into `calibration.parameters`, the template winning on collisions). Reference the filled file under `ground_truth.targets` in the config.
 
-**Logging** - each script/phase writes a compound, timestamped `hydromate.log` into its own output folder (the build by `preprocessing.py`/`initial_run.py` -> `hydromate-case/simulation/`, the mesh-convergence study -> `hydromate-case/mesh-convergence/`), capturing all actions, the elapsed time of each calculation step (`START`/`DONE ... in N.NNs`), and every warning and error. The console mirrors it; pass `-v` for DEBUG.
+**Logging** - each script/phase writes a compound, timestamped `axqua.log` into its own output folder (the build by `preprocessing.py`/`initial_run.py` -> `axqua-case/simulation/`, the mesh-convergence study -> `axqua-case/mesh-convergence/`), capturing all actions, the elapsed time of each calculation step (`START`/`DONE ... in N.NNs`), and every warning and error. The console mirrors it; pass `-v` for DEBUG.
 
-**Workflow (run in order):** 1. `preprocessing.py` builds the complete TELEMAC case into `hydromate-case/simulation/` (final mesh, `.cli`, `.tbl`, `.cas`) at the inflow Q (`boundaries.prescribed_flowrate`) and outflow stage prescription read from **this case's** config - the shared `hydromate.prepare_steady_inputs` helper synthesises a constant inflow series / outflow rating only when those inputs are missing; 1b. `initial_run.py` test-runs exactly that case once to confirm it does not crash, then runs a boundary-flux convergence analysis (`hydromate.flux_convergence`, reading the solver listing with `hydromate.sortie`) that writes four files into `simulation/` (`extracted-fluxes.csv` + `flux-convergence.png`, `convergence-rate.csv` + `convergence-rate.png`), deletes the per-processor `*_p0000N.sortie` copies of a parallel run, and - once the absolute flux imbalance stays below 1e-3 m³/s over 10 consecutive printouts (or in the 10-printout mean on a noisy steady state) - generates `hotstart2d.cas`, a continuation of `r2d.slf` capped at that steady time with the constant Q/H prescriptions kept. Balanced fluxes say nothing about *where* the water is, so it also writes `wetting-report.csv` and `outlet-profile.csv` (`hydromate.wetting`): the first splits the wetted area into actively flowing water, stagnant film and isolated puddles, says how much of each the pre-wet seed put there, and whether the film is still draining or has plateaued (water perched above the converged surface can never leave a model with no infiltration or evaporation); the second profiles the free surface approaching the outflow and reports whether the prescribed stage is backing water up, pulling it down, or neutral. This ends preprocessing; 2. `mesh_convergence_study.py` runs the grid-independence study; 3. `run_Bayes_cal.py` calibrates the built case with HydroBayesCal against the FlowTracker velocity ground truth (the velocity measured at 0.6·h ≈ depth-averaged, compared to `SCALAR VELOCITY`), writing the calibration artifacts into `hydromate-case/calibration-validation/`.
+**Workflow (run in order):** 1. `preprocessing.py` builds the complete TELEMAC case into `axqua-case/simulation/` (final mesh, `.cli`, `.tbl`, `.cas`) at the inflow Q (`boundaries.prescribed_flowrate`) and outflow stage prescription read from **this case's** config - the shared `axqua.prepare_steady_inputs` helper synthesises a constant inflow series / outflow rating only when those inputs are missing; 1b. `initial_run.py` test-runs exactly that case once to confirm it does not crash, then runs a boundary-flux convergence analysis (`axqua.flux_convergence`, reading the solver listing with `axqua.sortie`) that writes four files into `simulation/` (`extracted-fluxes.csv` + `flux-convergence.png`, `convergence-rate.csv` + `convergence-rate.png`), deletes the per-processor `*_p0000N.sortie` copies of a parallel run, and - once the absolute flux imbalance stays below 1e-3 m³/s over 10 consecutive printouts (or in the 10-printout mean on a noisy steady state) - generates `hotstart2d.cas`, a continuation of `r2d.slf` capped at that steady time with the constant Q/H prescriptions kept. Balanced fluxes say nothing about *where* the water is, so it also writes `wetting-report.csv` and `outlet-profile.csv` (`axqua.wetting`): the first splits the wetted area into actively flowing water, stagnant film and isolated puddles, says how much of each the pre-wet seed put there, and whether the film is still draining or has plateaued (water perched above the converged surface can never leave a model with no infiltration or evaporation); the second profiles the free surface approaching the outflow and reports whether the prescribed stage is backing water up, pulling it down, or neutral. This ends preprocessing; 2. `mesh_convergence_study.py` runs the grid-independence study; 3. `run_Bayes_cal.py` calibrates the built case with HydroBayesCal against the FlowTracker velocity ground truth (the velocity measured at 0.6·h ≈ depth-averaged, compared to `SCALAR VELOCITY`), writing the calibration artifacts into `axqua-case/calibration-validation/`.
 
 **Initial-run numerics** - the 2D case uses the finite-element kernel with an auto-selected turbulence model (k-epsilon / Smagorinski / Spalart-Allmaras by mesh resolution) and a CFL-adaptive time step. The steering ships **compute-stable defaults** so the wetting/drying steady march does not explode: target Courant 0.30 (`time_step: 0.25` is only the start step), `IMPLICITATION FOR DEPTH/VELOCITY 0.80`, `FREE SURFACE GRADIENT COMPATIBILITY 0.9`, `DISCRETIZATIONS IN SPACE 11;11`, `H CLIPPING : NO` and a raised k-epsilon solve budget; the graphic printout is `'U,V,S,B,H,M,Q,F'` plus `K,E` (TKE + dissipation) for k-epsilon. It is a **dry start**: only a thin water plug at the inflow line is seeded so the prescribed-Q boundary can establish (a fully dry bed makes TELEMAC's `DEBIMP` abort), and the rest of the domain wets from the inflow - set `initialization.prewet_depth` to hotstart the whole channel instead. With the variable time step the run is bounded by `DURATION` (`hydrodynamics.duration`, seconds), and **convergence is judged by the boundary-flux balance**, not by the unreliable steady-state auto-stop (off by default). All of this is emitted by `preprocessing.py` (via `pipeline.run`); the mesh-convergence study reuses the same numerics per mesh.
 
@@ -71,9 +119,9 @@ inflow / outflow / measurements ───┤
 
 **Optional 3D extension (after the 2D path):** the 2D simulation is the foundation - a 3D run is only built *once the 2D run has produced its hotstart result* (`initial_run.py` → `r2d.slf`) and *after the 2D mesh-convergence study has settled the horizontal resolution*. Then `add3d.py` writes three TELEMAC-3D cases hotstarted from the 2D result (a hydrostatic steady flux-convergence check, the non-hydrostatic steady run with in-file Q/H, and a non-hydrostatic unsteady case driven by the same hydrograph forcing files as `unsteady2d.cas`), and - because the vertical discretization `dz` (the number of sigma layers) is a **new** discretization choice that the 2D study never touched - `vertical_convergence_3d.py` runs a **second, separate grid-independence study over the number of vertical layers**, the 3D analogue of step 2.
 
-**Mesh-convergence study** (`hydromate/convergence.py`, step 2) - a grid-independence check: the same steady simulation at a constant discharge on five meshes (the configured baseline plus two coarser at +40%/+20% cell size and two finer at -20%/-40%, each with TELEMAC's variable time step for its own CFL-admissible dt), sampling water depth and scalar velocity at the ground-truth probe points and reporting the relative change between successive refinements, an observed order of convergence and a Grid Convergence Index against a tolerance (default 2%). It writes a **styled `.xlsx` report** to `hydromate-case/postprocessing/` with a **recommended cell size** balancing grid independence against compute time. Results are read back with a small SELAFIN reader (`selafin.read_slf`).
+**Mesh-convergence study** (`axqua/convergence.py`, step 2) - a grid-independence check: the same steady simulation at a constant discharge on five meshes (the configured baseline plus two coarser at +40%/+20% cell size and two finer at -20%/-40%, each with TELEMAC's variable time step for its own CFL-admissible dt), sampling water depth and scalar velocity at the ground-truth probe points and reporting the relative change between successive refinements, an observed order of convergence and a Grid Convergence Index against a tolerance (default 2%). It writes a **styled `.xlsx` report** to `axqua-case/postprocessing/` with a **recommended cell size** balancing grid independence against compute time. Results are read back with a small SELAFIN reader (`selafin.read_slf`).
 
-**3D extension & vertical-layer convergence** (`hydromate/threed.py`, `vertical_convergence.py`) - optional, and strictly *after* the 2D path. A 3D run needs the converged 2D result as its hotstart, so it follows `initial_run.py`; and you only build it on a horizontal mesh whose resolution the 2D mesh-convergence study (step 2) has already vouched for - the 3D case reuses that same horizontal mesh. `add3d.py` writes three steering files (`threed.build_3d_cases`): `hotstart3d_hydrostatic.cas` (`NON-HYDROSTATIC VERSION : NO`, constant Q/H, ~30k fixed steps with a short listing period - the steady boundary-flux convergence check), `hotstart3d_hydrodyn.cas` (non-hydrostatic steady, in-file prescribed Q and H), and `unsteady3d.cas` (non-hydrostatic, hydrograph Q(t) + outflow SL(t) via the same liquid-boundaries file as `unsteady2d.cas`; needs a varying `boundaries.inflow`). All use sigma layers, with the turbulence model and an initial layer count inferred from the 2D result and the time step sized for Courant 0.6; `--run [hydrostatic|hydrodyn|unsteady]` launches one of them. The vertical discretization `dz` is then its **own** discretization question - varying the horizontal cell size in step 2 tells you nothing about how many vertical layers you need - so `vertical_convergence_3d.py` re-runs the 3D case over a ladder of vertical-layer counts on the same horizontal mesh and reports the relative change / observed order / GCI against `dz`, recommending the **fewest grid-independent number of layers**. Outputs go to `hydromate-case/postprocessing/vertical-convergence/`.
+**3D extension & vertical-layer convergence** (`axqua/threed.py`, `vertical_convergence.py`) - optional, and strictly *after* the 2D path. A 3D run needs the converged 2D result as its hotstart, so it follows `initial_run.py`; and you only build it on a horizontal mesh whose resolution the 2D mesh-convergence study (step 2) has already vouched for - the 3D case reuses that same horizontal mesh. `add3d.py` writes three steering files (`threed.build_3d_cases`): `hotstart3d_hydrostatic.cas` (`NON-HYDROSTATIC VERSION : NO`, constant Q/H, ~30k fixed steps with a short listing period - the steady boundary-flux convergence check), `hotstart3d_hydrodyn.cas` (non-hydrostatic steady, in-file prescribed Q and H), and `unsteady3d.cas` (non-hydrostatic, hydrograph Q(t) + outflow SL(t) via the same liquid-boundaries file as `unsteady2d.cas`; needs a varying `boundaries.inflow`). All use sigma layers, with the turbulence model and an initial layer count inferred from the 2D result and the time step sized for Courant 0.6; `--run [hydrostatic|hydrodyn|unsteady]` launches one of them. The vertical discretization `dz` is then its **own** discretization question - varying the horizontal cell size in step 2 tells you nothing about how many vertical layers you need - so `vertical_convergence_3d.py` re-runs the 3D case over a ladder of vertical-layer counts on the same horizontal mesh and reports the relative change / observed order / GCI against `dz`, recommending the **fewest grid-independent number of layers**. Outputs go to `axqua-case/postprocessing/vertical-convergence/`.
 
 ## Install
 
@@ -103,11 +151,11 @@ source ~/.bashrc
 
 ## Install environment
 
-The case-build pipeline runs in its **own** environment (`hydromate-env`); it does *not* import TELEMAC's Python. Instead it **sources** the TELEMAC `pysource.*.sh` (set in the config) whenever the solver or SELAFIN tooling is needed.
+The case-build pipeline runs in its **own** environment (`axqua-env`); it does *not* import TELEMAC's Python. Instead it **sources** the TELEMAC `pysource.*.sh` (set in the config) whenever the solver or SELAFIN tooling is needed.
 
 ```bash
 mamba env create -f environment.yml
-mamba activate hydromate-env
+mamba activate axqua-env
 pip install -e .
 ```
 
@@ -117,39 +165,39 @@ Instead of hand-editing the YAML you can fill the configuration in as a browser 
 
 ```bash
 pip install -e ".[gui]"
-hydromate-gui                 # opens a local app in your browser; nothing leaves your machine
-# hydromate-gui --server.port 8600   # extra args are forwarded to Streamlit
+axqua-gui                 # opens a local app in your browser; nothing leaves your machine
+# axqua-gui --server.port 8600   # extra args are forwarded to Streamlit
 ```
 
 The form mirrors every config section (Project, TELEMAC, Inputs, Mesh, Friction, Hydrodynamics, Morphodynamics, Calibration) plus a **Workflow** tab summarising the steps; friction zones, calibration parameters, ground-truth sources and sediment classes are edited as tables. You can load an existing YAML, preview/download the generated YAML, save it, and run **Validate** (`--check`) or **Build** (the case build = workflow step 1) directly - the later steps (test run, mesh convergence, calibration, the 3D extension) are run from the per-case scripts.
 
 ## The QGIS plugin
 
-`qgis_plugin/hydromate/` is a QGIS 3.44+/4.x plugin that drives all of the above from a
+`qgis_plugin/axqua/` is a QGIS 3.44+/4.x plugin that drives all of the above from a
 dock: choose a case, submit a run, watch it, and load the results as styled layers.
 
-**It never imports `hydromate`.** QGIS ships its own Python and hydromate needs gmsh,
-rasterio, geopandas and a solver environment, so the plugin talks to the `hydromate`
+**It never imports `axqua`.** QGIS ships its own Python and aXqua needs gmsh,
+rasterio, geopandas and a solver environment, so the plugin talks to the `axqua`
 command-line tool as a subprocess and reads the files it writes. Either side can be
 reinstalled without touching the other - and, because the plugin does not own the solver
 process, closing QGIS does not stop your simulation.
 
-The tabs between *Setup* and *Jobs* are **generated from what hydromate reports the case
-can do** (`hydromate case-status --json`), so a capability added to hydromate appears in
+The tabs between *Setup* and *Jobs* are **generated from what aXqua reports the case
+can do** (`axqua case-status --json`), so a capability added to aXqua appears in
 the plugin with no plugin change.
 
 For development, link it into your QGIS profile:
 
 ```bash
-ln -s "$PWD/qgis_plugin/hydromate" \
-      ~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/hydromate
+ln -s "$PWD/qgis_plugin/axqua" \
+      ~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/axqua
 ```
 
-Then enable *HydroMate* in **Plugins > Manage and Install Plugins**. See
+Then enable *aXqua* in **Plugins > Manage and Install Plugins**. See
 [`docs/qgis_plugin.rst`](docs/qgis_plugin.rst) and
-[`qgis_plugin/hydromate/README.md`](qgis_plugin/hydromate/README.md).
+[`qgis_plugin/axqua/README.md`](qgis_plugin/axqua/README.md).
 
-The plugin is GPL-2.0-or-later, because it links PyQGIS; `hydromate` itself stays
+The plugin is GPL-2.0-or-later, because it links PyQGIS; `axqua` itself stays
 BSD-3-Clause and remains usable on its own.
 
 ## Case layout
@@ -168,9 +216,9 @@ cases/example-Inn/
   openfoam_preprocessing.py   # optional (after 1b): build the OpenFOAM interFoam case (tracked)
   openfoam_run.py             # optional: two-stage interFoam run + discharge report (tracked)
   user-sources/        # your large source data - DEMs, GeoPackages, ground truth (gitignored)
-  hydromate-case/       # produced artifacts, by workflow phase (gitignored):
-    preprocessing/         # DEM clips, meshes, ground-truth table + its hydromate.log
-    simulation/            # the TELEMAC case (geometry.slf, .cli, .cas, .tbl, results) + its hydromate.log
+  axqua-case/       # produced artifacts, by workflow phase (gitignored):
+    preprocessing/         # DEM clips, meshes, ground-truth table + its axqua.log
+    simulation/            # the TELEMAC case (geometry.slf, .cli, .cas, .tbl, results) + its axqua.log
     postprocessing/        # general post-processing
     mesh-convergence/      # convergence study: mesh-convergence.xlsx/.txt, per-mesh runs, log
     vertical-convergence/  # 3D vertical-layer (dz) study: vertical-convergence.xlsx/.txt, per-level runs
@@ -178,30 +226,30 @@ cases/example-Inn/
     openfoam/              # optional OpenFOAM case: 0/ constant/polyMesh/ system/ + discharge-convergence.csv/.png
 ```
 
-Config paths resolve relative to `case-config.yml`, so `user-sources/...` points at your data and the build writes into `hydromate-case/`. Each script logs into its own output folder (`preprocessing/`, `simulation/`, `postprocessing/`). Only the config, scripts and docs are version-controlled; `user-sources/` and `hydromate-case/` stay out of git (they run to gigabytes - see the 20 MB CI guard in `.github/workflows/`).
+Config paths resolve relative to `case-config.yml`, so `user-sources/...` points at your data and the build writes into `axqua-case/`. Each script logs into its own output folder (`preprocessing/`, `simulation/`, `postprocessing/`). Only the config, scripts and docs are version-controlled; `user-sources/` and `axqua-case/` stay out of git (they run to gigabytes - see the 20 MB CI guard in `.github/workflows/`).
 
 ## Use
 
 1. Edit `cases/example-Inn/case-config.yml` - point `telemac.pysource` at your TELEMAC env, set the input paths, mesh sizes, friction zones, and calibration parameters/ranges.
 2. Provide a **ROI boundary polygon** (`geodata.boundary`): a closed polygon (or closed polyline) delineating the maximum wetted extent, in EPSG:25832.
 3. Provide the **liquid boundaries** (`boundaries.liquid_boundaries`): a line layer in EPSG:25832 whose `Type (inflow/outflow)` field tags each line `inflow` or `outflow` (several of each are allowed). Draw them **exactly along the mesh-zone outer bounds** so contour nodes land on them. Keep the inflow and outflow lines a similar length relative to the mesh resolution so they carry comparable node counts (within ~10%), or the build logs a stability-risk warning.
-4. **Outflow water level** (`boundaries.outflow_condition`, default `elevation`): by default the downstream water level is a fixed `boundaries.prescribed_elevation` (m a.s.l.). Alternatively set `outflow_condition: stage_discharge` with a `boundaries.stage_discharge` `Q,WSE` CSV that sets the water level at the simulated discharge (one Q-h pair at the steady Q is enough); you don't have to make one - `preprocessing.py`/`mesh_convergence_study.py` **synthesise it** from the geodata if it is missing (width from the outflow boundary line, bed + reach slope from the DEM, trapezoidal banks, roughness from `friction.boundary_*`), or make your own with `hydromate rating -o user-sources/geodata/rating-curve.csv --strickler 38 --slope <S0> --width <b> --side-slope 1 --bed-elevation <z> --q 47`. Or set `free` for a Neumann outflow (nothing prescribed).
+4. **Outflow water level** (`boundaries.outflow_condition`, default `elevation`): by default the downstream water level is a fixed `boundaries.prescribed_elevation` (m a.s.l.). Alternatively set `outflow_condition: stage_discharge` with a `boundaries.stage_discharge` `Q,WSE` CSV that sets the water level at the simulated discharge (one Q-h pair at the steady Q is enough); you don't have to make one - `preprocessing.py`/`mesh_convergence_study.py` **synthesise it** from the geodata if it is missing (width from the outflow boundary line, bed + reach slope from the DEM, trapezoidal banks, roughness from `friction.boundary_*`), or make your own with `axqua rating -o user-sources/geodata/rating-curve.csv --strickler 38 --slope <S0> --width <b> --side-slope 1 --bed-elevation <z> --q 47`. Or set `free` for a Neumann outflow (nothing prescribed).
 5. **Ground truth + calibration ranges** (recommended): generate the calibration-target template, fill it in, and reference it in the config:
 
 ```bash
-hydromate targets cases/example-Inn/case-config.yml   # writes calibration-target-data.xlsx + extract_flowtracker.py
+axqua targets cases/example-Inn/case-config.yml   # writes calibration-target-data.xlsx + extract_flowtracker.py
 ```
 
    Enter each measurement with a **unique ID** matching the `ID` field of a point layer in `user-sources/geodata/` (declared as `ground_truth.targets.hydraulics_positions` / `sediment_positions`; any CRS - reprojected on ingest), or with explicit x/y. The `hydraulics` tab takes velocities, fluctuations, depth and bed elevation (U_h, U_h' and TKE compute themselves); the `morphodynamics` tab takes d16..d90 + fine fraction, and its `dz` column is auto-filled from the DEM-of-Difference; the `parameters` tab picks calibration parameters from a drop-down (with range tips) and feeds `calibration.parameters`. To fill the `hydraulics` tab straight from SonTek FlowTracker2 exports, run the `extract_flowtracker.py` script dropped next to the template (each point keyed by its ID):
 
 ```bash
-mamba run -n hydromate-env python cases/example-Inn/user-sources/ground-truth/extract_flowtracker.py FlowTracker2-day1.xlsx FlowTracker2-day2.xlsx
+mamba run -n axqua-env python cases/example-Inn/user-sources/ground-truth/extract_flowtracker.py FlowTracker2-day1.xlsx FlowTracker2-day2.xlsx
 ```
 
 6. Run the workflow, in order:
 
 ```bash
-# step 1 - build the complete TELEMAC case into hydromate-case/simulation/
+# step 1 - build the complete TELEMAC case into axqua-case/simulation/
 python cases/example-Inn/preprocessing.py
 # step 1b - test-run the built case once (confirms it does not crash; ends preprocessing)
 python cases/example-Inn/initial_run.py
@@ -229,7 +277,7 @@ OpenFOAM `etc/bashrc` and add an `openfoam:` block (see `cases/case-template/cas
 
 ```bash
 # how many cells would the current settings give? (no build)
-hydromate openfoam cases/example-Inn/case-config.yml --check
+axqua openfoam cases/example-Inn/case-config.yml --check
 # build the case: a terrain-following ALL-HEXAHEDRAL mesh written straight to
 # constant/polyMesh (no snappyHexMesh), fields seeded from the converged r2d.slf
 python cases/example-Inn/openfoam_preprocessing.py
@@ -250,17 +298,17 @@ centre *above* the roughness crests, and on a gravel bed `ks` can be a large fra
 the depth. Where it is not satisfied the solver does not fail - it clamps and carries on -
 so read such a result as bulk flow, not as a resolved bed boundary layer.
 
-   (A one-shot build without the scripts: `hydromate cases/example-Inn/case-config.yml` - or `--check` to validate, `--dry-run` to also run the solver once.)
+   (A one-shot build without the scripts: `axqua cases/example-Inn/case-config.yml` - or `--check` to validate, `--dry-run` to also run the solver once.)
 7. **Step 3 - calibrate** (in the HydroBayesCal clone, with its env):
 
 ```bash
-cd cases/example-Inn/hydromate-case/calibration-validation
+cd cases/example-Inn/axqua-case/calibration-validation
 python /home/schwindt/github/hydrobayescal/bal_telemac.py --config config_Telemac.py
 ```
 
 ## One case, two solvers
 
-hydromate describes a reach **once** - ROI, liquid boundaries, mesh zones and
+aXqua describes a reach **once** - ROI, liquid boundaries, mesh zones and
 centerline, roughness zones, structures, discharge, ground truth - and builds either
 or both simulation backends from it. Each solver adds only the knobs that are
 genuinely its own.
@@ -275,7 +323,7 @@ genuinely its own.
 
 ```bash
 # shared: describe the reach, then see what is set up
-hydromate status cases/example-Inn/case-config.yml
+axqua status cases/example-Inn/case-config.yml
 
 # TELEMAC
 python cases/example-Inn/preprocessing.py            # build
@@ -284,7 +332,7 @@ python cases/example-Inn/mesh_convergence_study.py   # grid independence
 python cases/example-Inn/run_Bayes_cal.py            # Bayesian calibration
 
 # OpenFOAM (after the 2D run has converged)
-hydromate openfoam cases/example-Inn/case-config.yml --check   # cell count, no build
+axqua openfoam cases/example-Inn/case-config.yml --check   # cell count, no build
 python cases/example-Inn/openfoam_preprocessing.py             # build
 python cases/example-Inn/openfoam_run.py                       # spin-up, run, report
 ```
@@ -292,7 +340,7 @@ python cases/example-Inn/openfoam_run.py                       # spin-up, run, r
 ## Structures: dams, weirs, walls and buildings
 
 A structure is an **ordinary QGIS vector layer**, not a triangulated surface. STL is a
-`snappyHexMesh` requirement; hydromate writes its own mesh, so a structure only has to
+`snappyHexMesh` requirement; aXqua writes its own mesh, so a structure only has to
 say **where its footprint is** and **how high it stands**. No CAD step, nothing QGIS
 cannot author.
 
@@ -329,12 +377,12 @@ structures:
 ## What a case can do
 
 Every case carries one marker file per solver at its top level, refreshed by any build
-and by `hydromate status`:
+and by `axqua status`:
 
 ```bash
-hydromate status cases/example-Inn/case-config.yml          # summary + refresh markers
-hydromate status cases/example-Inn/case-config.yml --full   # the whole table
-hydromate status cases/example-Inn/case-config.yml --check-env   # also probe the solvers
+axqua status cases/example-Inn/case-config.yml          # summary + refresh markers
+axqua status cases/example-Inn/case-config.yml --full   # the whole table
+axqua status cases/example-Inn/case-config.yml --check-env   # also probe the solvers
 ```
 
 ```
@@ -347,12 +395,12 @@ The body reports each capability on three axes, which answer three different que
 
 | axis | question | example |
 |---|---|---|
-| `implemented` | does hydromate support this **for this solver**? | `yes` / `no` (not yet) / `n/a` (never - OpenFOAM has no depth-averaged mode) |
+| `implemented` | does aXqua support this **for this solver**? | `yes` / `no` (not yet) / `n/a` (never - OpenFOAM has no depth-averaged mode) |
 | `configured` | does **this case** ask for it? | a varying inflow series implies `unsteady2d` |
 | `built` / `run` | do the **artifacts** exist? | `steady2d.cas` written, `r2d.slf` produced |
 
 The files are generated, so they are gitignored - they describe the *currently available*
-setup, which is local state like `hydromate-case/`. `cases/case-template/` keeps a
+setup, which is local state like `axqua-case/`. `cases/case-template/` keeps a
 committed example.
 
 ## Configuration reference
@@ -374,7 +422,7 @@ All inputs/outputs are **EPSG:25832 (ETRS89 / UTM 32N)**, metres - see `CLAUDE.m
 
 ## Cases (Backup)
 
-`cases/*/user-sources/` (raw DEMs, orthos, gauge/FlowTracker/GSD data) and `cases/*/hydromate-case/` (produced TELEMAC artifacts) are gitignored and local-only - some of that data (field campaign exports, DGPS shapefiles, gauge CSVs) is irreplaceable raw field data, not just reproducible output. `scripts/backup_cases_to_drive.sh` mirrors both folders for every case to Google Drive via [rclone](https://rclone.org/):
+`cases/*/user-sources/` (raw DEMs, orthos, gauge/FlowTracker/GSD data) and `cases/*/axqua-case/` (produced TELEMAC artifacts) are gitignored and local-only - some of that data (field campaign exports, DGPS shapefiles, gauge CSVs) is irreplaceable raw field data, not just reproducible output. `scripts/backup_cases_to_drive.sh` mirrors both folders for every case to Google Drive via [rclone](https://rclone.org/):
 
 ```bash
 sudo apt install rclone
@@ -386,7 +434,7 @@ rclone lsd gdrive:                         # sanity check
                                             #   files, mirroring local - review the dry run first)
 ```
 
-Remote layout mirrors local: `gdrive:HydroMate-Cases/<case-name>/user-sources/` and `.../hydromate-case/`. Restore a case with `rclone copy gdrive:HydroMate-Cases/<case-name> cases/<case-name>`. It's manual/on-demand (no cron) - rerun it yourself after a case produces new heavy data. Each run logs to `scripts/backup-logs/` (gitignored).
+Remote layout mirrors local: `gdrive:aXqua-Cases/<case-name>/user-sources/` and `.../axqua-case/`. Restore a case with `rclone copy gdrive:aXqua-Cases/<case-name> cases/<case-name>`. It's manual/on-demand (no cron) - rerun it yourself after a case produces new heavy data. Each run logs to `scripts/backup-logs/` (gitignored).
 
 ## Status
 

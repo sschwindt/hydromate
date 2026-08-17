@@ -1,11 +1,11 @@
 # =============================================================================
-# hydromate case configuration - Isar river (Bavaria), 2025
+# axqua case configuration - Isar river (Bavaria), 2025
 # =============================================================================
 # All relative paths resolve against THIS file's directory. The co-development
 # dataset lives under user-sources/ (kept out of version control).
 # Build with:
-#   hydromate cases/isar-2025/case-config.yml --check    # validate first
-#   hydromate cases/isar-2025/case-config.yml            # build the case
+#   axqua cases/isar-2025/case-config.yml --check    # validate first
+#   axqua cases/isar-2025/case-config.yml            # build the case
 #
 # Sections: project / telemac / geodata / boundaries / initialization / mesh /
 #           friction / hydrodynamics / morphodynamics / ground_truth / calibration
@@ -16,8 +16,8 @@ project:
   crs_epsg: 25832              # [REQUIRED] project CRS, metric. 25832 = ETRS89/UTM32N
   sim_dir: hydromate-case
   # Scenario A (PRESCRIBED exchange). Each percolation scenario gets its own tree
-  # under hydromate-case/scenarios/ so the two can be compared side by side and
-  # neither disturbs the legacy hydromate-case/simulation/ (the failed Jul-2026 run,
+  # under axqua-case/scenarios/ so the two can be compared side by side and
+  # neither disturbs the legacy axqua-case/simulation/ (the failed Jul-2026 run,
   # kept as the evidence behind test-approaches.md).
   preprocessing_dir: hydromate-case/scenarios/prescribed-q/preprocessing
   model_dir: hydromate-case/scenarios/prescribed-q/simulation
@@ -322,7 +322,7 @@ openfoam:
     reuse: true            # this case's converged r2d.slf beats a fresh coarse run
     # 3d would also seed a vertical velocity PROFILE per column - but NOT on this
     # reach: 0.26 m deep against a 0.62 m mesh leaves room for only 2 sigma planes
-    # (one layer), so hydromate refuses it and says so rather than spending the run.
+    # (one layer), so axqua refuses it and says so rather than spending the run.
     dimension: 2d
     # Only used when there is no r2d.slf to reuse: how much coarser the dedicated
     # pre-run is meshed. x4 on this reach builds AND runs in 54 s and gives a mesh
@@ -340,7 +340,7 @@ openfoam:
   cell_size: 0.5           # plan dx [m]; ~ the 0.3 m channel zone of the 2D mesh
   n_layers: 14             # sigma layers per column
   # 0.5 m x 14 over the wetted corridor gives ~1.6 M cells (~28,200 m2 of footprint).
-  # `hydromate openfoam case-config.yml --check` reports the count without building.
+  # `axqua openfoam case-config.yml --check` reports the count without building.
 
   # ---- what is actually solved: vof | rigid-lid ---------------------------
   # `vof` (default) is the real two-phase interFoam model: the free surface is found
@@ -422,7 +422,7 @@ openfoam:
 
 ground_truth:
   # Calibration ground truth: a tidy multi-tab table (measurements) OR raw sources
-  # hydromate compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
+  # axqua compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
   # `measurements` gives an explicit output path.
   # measurements: path/to/ground-truth.xlsx    # (a) user-authored tidy table
   sources:                                      # (b) raw sources -> compiled tidy table

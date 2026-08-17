@@ -29,7 +29,7 @@ through every inlet and outlet patch and their relative imbalance, judged agains
 same ``hydrodynamics.flux_tolerance`` the 2D run is judged by - so a 2D and a 3D run
 of this reach are held to one standard.
 
-Run: mamba run -n hydromate-env python cases/<your-case>/openfoam_run.py
+Run: mamba run -n axqua-env python cases/<your-case>/openfoam_run.py
 """
 
 from __future__ import annotations
@@ -37,9 +37,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hydromate import setup_logging
-from hydromate.config import load_config
-from hydromate.solvers.openfoam import OpenFoamRuntime, report
+from axqua import setup_logging
+from axqua.config import load_config
+from axqua.solvers.openfoam import OpenFoamRuntime, report
 
 # optional CLI arg selects the scenario config
 CONFIG = Path(__file__).resolve().parent / (
@@ -96,7 +96,7 @@ def main() -> None:
         print(f"\ndecomposing over {nprocs} subdomains ...")
         runtime.decompose(case_dir)
 
-    from hydromate.solvers.openfoam.dicts import stages
+    from axqua.solvers.openfoam.dicts import stages
 
     for stage in stages(cfg):
         if stage.name not in STAGES:

@@ -1,7 +1,7 @@
 """Multi-discharge Bayesian calibration of the KB15 case (workflow step 3, multi).
 
-Thin wrapper around :func:`hydromate.run_multiflow_calibration` - all the logic
-lives in ``hydromate.bayescal`` / ``hydromate.campaigns``. Calibrates one shared
+Thin wrapper around :func:`axqua.run_multiflow_calibration` - all the logic
+lives in ``axqua.bayescal`` / ``axqua.campaigns``. Calibrates one shared
 channel roughness against velocity ground truth from several steady-discharge
 FlowTracker campaigns at once (each campaign = one TELEMAC run per collocation
 point, joined into one Bayesian inference by the additive
@@ -26,9 +26,9 @@ Campaigns (see user-sources/ground-truth/hydraulics/discharge-info.md):
 Modes: ``--smoke`` (isolated plumbing test), ``--run`` (full: initial design +
 BAL), ``--resume`` (reuse completed per-flow initial designs, only_bal_mode);
 default writes everything without launching. HydroBayesCal is a pip
-dependency (pip install 'hydromate[calibration]').
+dependency (pip install 'axqua[calibration]').
 
-Run: mamba run -n hydromate-env python cases/inn-KB15-2025-hydro/run_Bayes_cal_multiflow.py [--smoke|--run|--resume]
+Run: mamba run -n axqua-env python cases/inn-KB15-2025-hydro/run_Bayes_cal_multiflow.py [--smoke|--run|--resume]
 """
 
 from __future__ import annotations
@@ -36,8 +36,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from hydromate import FlowSpec, run_multiflow_calibration
-from hydromate.config import load_config
+from axqua import FlowSpec, run_multiflow_calibration
+from axqua.config import load_config
 
 HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "case-config.yml"
@@ -51,7 +51,7 @@ GEO = HERE / "user-sources/geodata"
 # see README.md "Data particularities". Run that script first after any
 # ground-truth change. (The raw adapter/transect specs are kept below for
 # reference, commented out.)
-PREP = HERE / "hydromate-case/preprocessing"
+PREP = HERE / "axqua-case/preprocessing"
 FLOWS = [
     FlowSpec(name="q47-3", discharge=47.3, kind="csv", duration=1500.0,
              values=PREP / "measurements-corrected-q47-3.csv"),

@@ -2,7 +2,7 @@
 
 Runs strictly after the 2D path (``initial_run.py`` -> ``r2d.slf``; settle the
 horizontal mesh with ``mesh_convergence_study.py`` first). Delegates everything to
-:func:`hydromate.build_3d_cases`, which writes exactly three steering files:
+:func:`axqua.build_3d_cases`, which writes exactly three steering files:
 
 1. ``hotstart3d_hydrostatic.cas`` - hydrostatic, constant Q/H, ~30k fixed steps
    with a short listing period: the steady **boundary-flux convergence check**.
@@ -13,13 +13,13 @@ horizontal mesh with ``mesh_convergence_study.py`` first). Delegates everything 
 
 All three hotstart from ``r2d.slf`` (v9 2D->3D continuation) and share the vertical
 discretisation, turbulence closure and Courant-sized time step inferred from one
-read of the 2D result - see ``hydromate.threed`` for the how and why.
+read of the 2D result - see ``axqua.threed`` for the how and why.
 
 Pass ``--run [hydrostatic|hydrodyn|unsteady]`` to also launch ``telemac3d.py`` on
 one case (default: hydrostatic, the flux-convergence check) with the live listing
 + simulated-time progress bar.
 
-Run: mamba run -n hydromate-env python cases/<your-case>/add3d.py [--run [which]]
+Run: mamba run -n axqua-env python cases/<your-case>/add3d.py [--run [which]]
 """
 
 from __future__ import annotations
@@ -27,16 +27,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hydromate import (build_3d_cases, format_3d_cases, run_solver_streaming,
+from axqua import (build_3d_cases, format_3d_cases, run_solver_streaming,
                        setup_logging)
-from hydromate.config import load_config
-from hydromate.env import TelemacRuntime
+from axqua.config import load_config
+from axqua.env import TelemacRuntime
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)
 
 # Step count / listing spacing of the hydrostatic flux-convergence run. None ->
-# hydromate defaults (threed.HYDROSTATIC_N_STEPS = 30000, ..._LISTING_PERIOD = 100).
+# axqua defaults (threed.HYDROSTATIC_N_STEPS = 30000, ..._LISTING_PERIOD = 100).
 HYDROSTATIC_STEPS: int | None = None
 HYDROSTATIC_LISTING: int | None = None
 

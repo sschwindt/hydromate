@@ -8,7 +8,7 @@
   the solver.
 
 Pure-python (numpy/scipy). Run via:
-    mamba run -n hydromate-env pytest tests/test_convergence.py
+    mamba run -n axqua-env pytest tests/test_convergence.py
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ import json
 
 import numpy as np
 
-from hydromate import convergence, percent_levels, ratio_levels, selafin
-from hydromate.convergence import LevelResult, build_report, estimate_next_runtime
+from axqua import convergence, percent_levels, ratio_levels, selafin
+from axqua.convergence import LevelResult, build_report, estimate_next_runtime
 
 
 def _rt_level(label, cell, depth, vel, rt):
@@ -272,7 +272,7 @@ def test_default_ask_timeout_assumes_yes(monkeypatch):
     import io
     import select
 
-    from hydromate import convergence
+    from axqua import convergence
 
     class _TTY(io.StringIO):
         def isatty(self):
@@ -441,7 +441,7 @@ def test_write_readme_from_report(tmp_path):
     assert "geometry.slf" in text and "r2d.slf" in text
     assert "- `model/`" not in text and "  - `geometry.slf`" not in text
     # the README is deliberately tool-agnostic
-    assert "hydromate" not in text.lower()
+    assert "axqua" not in text.lower()
 
 
 def test_write_readme_scan_mode(tmp_path):
@@ -468,7 +468,7 @@ def test_write_readme_scan_mode(tmp_path):
         < text.index("| finer x1.30 |")
     assert "Spalart-Allmaras turbulence closure" in text
     assert "`old/`: a superseded earlier study run" in text
-    assert "hydromate" not in text.lower()
+    assert "axqua" not in text.lower()
 
 
 if __name__ == "__main__":

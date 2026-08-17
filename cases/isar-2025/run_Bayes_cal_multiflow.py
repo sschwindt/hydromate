@@ -1,10 +1,10 @@
 """Multi-discharge Bayesian calibration (workflow step 3, multi-flow) - TEMPLATE.
 
-Thin wrapper around :func:`hydromate.run_multiflow_calibration`. Calibrates one
+Thin wrapper around :func:`axqua.run_multiflow_calibration`. Calibrates one
 shared roughness against velocity ground truth from SEVERAL steady-discharge
 field campaigns jointly (each campaign = one TELEMAC run per collocation point).
-All logic lives in ``hydromate.bayescal`` / ``hydromate.campaigns``; this script
-only declares the case's list of :class:`~hydromate.FlowSpec`.
+All logic lives in ``axqua.bayescal`` / ``axqua.campaigns``; this script
+only declares the case's list of :class:`~axqua.FlowSpec`.
 
 Delete this file if the case has a single discharge (use run_Bayes_cal.py). Fill
 FLOWS with one entry per campaign; each ``kind`` picks the FlowTracker layout:
@@ -30,8 +30,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from hydromate import FlowSpec, run_multiflow_calibration
-from hydromate.config import load_config
+from axqua import FlowSpec, run_multiflow_calibration
+from axqua.config import load_config
 
 HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "case-config.yml"

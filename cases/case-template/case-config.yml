@@ -1,10 +1,10 @@
 # =============================================================================
-# hydromate case configuration - TEMPLATE
+# axqua case configuration - TEMPLATE
 # =============================================================================
 # Copy the whole cases/case-template/ folder to cases/<your-case>/, drop your
 # data into user-sources/, edit the paths/values below, then:
-#   hydromate cases/<your-case>/case-config.yml --check    # validate first
-#   hydromate cases/<your-case>/case-config.yml            # build the case
+#   axqua cases/<your-case>/case-config.yml --check    # validate first
+#   axqua cases/<your-case>/case-config.yml            # build the case
 # or run the example scripts (see USAGE.info).
 #
 # Conventions:
@@ -22,16 +22,16 @@ project:
   name: my-case                # case name; used in titles and file headers
   crs_epsg: 25832              # [REQUIRED] project CRS, metric (e.g. UTM). 25832 = ETRS89/UTM32N
   # all produced artifacts live under sim_dir, split by workflow phase. Each
-  # phase's script writes its outputs and its hydromate.log into its own folder.
-  sim_dir: hydromate-case
-  preprocessing_dir: hydromate-case/preprocessing          # preprocessing.py products (DEM clips, meshes, ground truth)
-  model_dir: hydromate-case/simulation                     # the TELEMAC case (build): geometry/cli/cas/tbl + results
-  postprocessing_dir: hydromate-case/postprocessing        # mesh-convergence study and other post-processing
-  calibration_dir: hydromate-case/calibration-validation   # HydroBayesCal artifacts (calibration CSV, config_Telemac.py)
+  # phase's script writes its outputs and its axqua.log into its own folder.
+  sim_dir: axqua-case
+  preprocessing_dir: axqua-case/preprocessing          # preprocessing.py products (DEM clips, meshes, ground truth)
+  model_dir: axqua-case/simulation                     # the TELEMAC case (build): geometry/cli/cas/tbl + results
+  postprocessing_dir: axqua-case/postprocessing        # mesh-convergence study and other post-processing
+  calibration_dir: axqua-case/calibration-validation   # HydroBayesCal artifacts (calibration CSV, config_Telemac.py)
 
 telemac:
   # ---- WHERE TELEMAC IS, AND HOW TO ENTER IT ------------------------------
-  # `environment:` is optional. Omitted, hydromate sources `pysource` in a POSIX
+  # `environment:` is optional. Omitted, axqua sources `pysource` in a POSIX
   # shell - which is what every Linux case wants and what older configs did.
   #
   #   environment: posix              # bash -lc 'source <pysource>; ...'   (Linux/macOS)
@@ -48,7 +48,7 @@ telemac:
   #
   # `shell:` points at a bundled bash where a distribution ships one (blueCFD-Core
   # and the ESI OpenFOAM package both do). Check any of this with:
-  #     hydromate status case-config.yml --check-env
+  #     axqua status case-config.yml --check-env
 
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported)
   # whenever the solver or SELAFIN tooling is needed. Machine-specific.
@@ -119,7 +119,7 @@ boundaries:
   # outlet rating curve (only for outflow_condition: stage_discharge): a CSV with
   # Q [m3/s] and WSE [m] columns. One Q-h pair at the steady discharge is enough.
   # Generate one from a Manning/Strickler value and the channel geometry with:
-  #   hydromate rating -o user-sources/geodata/rating-curve.csv \
+  #   axqua rating -o user-sources/geodata/rating-curve.csv \
   #       --manning 0.035 --slope 0.0012 --width 80 --side-slope 2 \
   #       --bed-elevation <outflow bed z> --q <steady Q>
   # stage_discharge: user-sources/geodata/rating-curve.csv
@@ -224,7 +224,7 @@ hydrodynamics:
   # `duration` seconds of simulated time (decoupled from the small start step) while
   # TELEMAC holds desired_courant. These, plus implicitation 0.80, free-surface
   # gradient compatibility 0.9, H CLIPPING NO, DISCRETIZATIONS IN SPACE 11;11 and the
-  # k-epsilon solve budget, are the explosion-safe solver settings hydromate writes.
+  # k-epsilon solve budget, are the explosion-safe solver settings axqua writes.
   time_step: 0.25              # conservative CFL start step [s]; CFL-adapted thereafter
   duration: 5000.0             # simulated time [s] for the steady march to convergence
   n_time_steps: 15000          # only bounds a FIXED-step run (variable_timestep: false)
@@ -315,7 +315,7 @@ hydrodynamics:
 #   #   conductivity (kf) drives it by default: Green-Ampt's saturated limit at the
 #   #     local head, so the exchange responds to water level. Riverbed kf spans
 #   #     orders of magnitude with grain size and colmation, so CALIBRATE it rather
-#   #     than assume: hydromate exposes it to HydroBayesCal as `f.HMP_KF` (add
+#   #     than assume: axqua exposes it to HydroBayesCal as `f.HMP_KF` (add
 #   #     "POROUS ZONE kf (gain-lose)" to calibration.parameters).
 #   #     Look values up in Calver, A. (2001), "Riverbed Permeabilities: Information
 #   #     from Pooled Data", Ground Water 39(4), 546-553,
@@ -381,7 +381,7 @@ dem_of_difference:
 # OPTIONAL: structures - dams, weirs, walls, buildings
 # =============================================================================
 # A structure is an ORDINARY QGIS VECTOR LAYER, not a triangulated surface. STL is a
-# snappyHexMesh requirement; hydromate writes its own mesh, so a structure only has to
+# snappyHexMesh requirement; axqua writes its own mesh, so a structure only has to
 # say where its footprint is and how high it stands. No CAD step, nothing QGIS cannot
 # author. Read by BOTH solvers from the same layer.
 #
@@ -421,7 +421,7 @@ dem_of_difference:
 # OPTIONAL: OpenFOAM free-surface (interFoam) extension
 # =============================================================================
 # Delete this whole block and nothing about the TELEMAC case changes - it is read
-# only by openfoam_preprocessing.py / openfoam_run.py / `hydromate openfoam`.
+# only by openfoam_preprocessing.py / openfoam_run.py / `axqua openfoam`.
 #
 # Use it when you need the VERTICAL structure of the flow AND the water surface has
 # a gradient. The second half is why simpleFoam is not an option: a steady
@@ -467,7 +467,7 @@ dem_of_difference:
 #   cell_size: 0.5          # plan dx [m]
 #   n_layers: 14            # sigma layers per column
 #   # Check the cost before building:
-#   #   hydromate openfoam case-config.yml --check
+#   #   axqua openfoam case-config.yml --check
 #
 #   # ---- what is actually solved: vof | rigid-lid --------------------------
 #   # `vof` (default) is the real two-phase model: the free surface is FOUND. That
@@ -541,7 +541,7 @@ ground_truth:
   # CRS), then quantity columns. Provide it one of three ways:
   #
   #   (a) RECOMMENDED - the calibration-target template: run
-  #           hydromate targets case-config.yml
+  #           axqua targets case-config.yml
   #       to generate user-sources/ground-truth/calibration-target-data.xlsx (plus
   #       a co-located extract_flowtracker.py helper), fill it in, and reference it
   #       under `targets` below. Its tabs:
@@ -562,7 +562,7 @@ ground_truth:
   #       Rows are keyed by a UNIQUE ID joining the point layers below (any CRS;
   #       reprojected on ingest), or carry explicit x/y.
   #   (b) author the tidy table yourself and point `measurements` at the .xlsx;
-  #   (c) declare raw sources under `sources` and hydromate compiles the tidy table
+  #   (c) declare raw sources under `sources` and axqua compiles the tidy table
   #       for you. Compiled to preprocessing/ground-truth.xlsx unless `measurements`
   #       gives an explicit output path.
   #

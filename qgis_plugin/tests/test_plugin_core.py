@@ -26,10 +26,10 @@ import pytest
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 # Loaded under an alias by conftest, because the plugin folder and the installed library
-# share the name ``hydromate`` and only one of them can own it in a pytest process.
-from hydromate_plugin.core import job_model, project as project_io  # noqa: E402
-from hydromate_plugin.core import runner_client  # noqa: E402
-from hydromate_plugin.gui.capability_tabs import CaseView  # noqa: E402
+# share the name ``axqua`` and only one of them can own it in a pytest process.
+from axqua_plugin.core import job_model, project as project_io  # noqa: E402
+from axqua_plugin.core import runner_client  # noqa: E402
+from axqua_plugin.gui.capability_tabs import CaseView  # noqa: E402
 
 
 # ------------------------------------------------------------------ metadata
@@ -38,7 +38,7 @@ from hydromate_plugin.gui.capability_tabs import CaseView  # noqa: E402
 def test_metadata_declares_both_qgis_generations():
     """QGIS 4 is Qt6-only and decides compatibility from ``qgisMaximumVersion``; the old
     ``supportsQt6`` flag was removed from core and is ignored."""
-    text = (PLUGIN_ROOT / "hydromate" / "metadata.txt").read_text(encoding="utf-8")
+    text = (PLUGIN_ROOT / "axqua" / "metadata.txt").read_text(encoding="utf-8")
     fields = dict(line.split("=", 1) for line in text.splitlines()
                   if "=" in line and not line.startswith(" "))
     assert fields["qgisMinimumVersion"].strip() == "3.44"
@@ -53,7 +53,7 @@ def test_metadata_declares_both_qgis_generations():
 def test_no_compiled_resources_are_shipped():
     """A ``.qrc``-compiled module is built against one Qt major version and fails to
     import on the other - the most common reason a plugin loads on 3.x and not on 4."""
-    offenders = [p.name for p in (PLUGIN_ROOT / "hydromate").rglob("*")
+    offenders = [p.name for p in (PLUGIN_ROOT / "axqua").rglob("*")
                  if p.suffix == ".qrc" or p.name.endswith("_rc.py")]
     assert offenders == []
 
@@ -62,20 +62,20 @@ def test_nothing_imports_pyqt5_or_pyqt6_directly():
     """``qgis.PyQt`` is the shim that makes one codebase work on both."""
     import re
     pattern = re.compile(r"^\s*(?:from|import)\s+PyQt[56]\b", re.M)
-    offenders = [p.relative_to(PLUGIN_ROOT) for p in (PLUGIN_ROOT / "hydromate").rglob("*.py")
+    offenders = [p.relative_to(PLUGIN_ROOT) for p in (PLUGIN_ROOT / "axqua").rglob("*.py")
                  if pattern.search(p.read_text("utf-8"))]
     assert offenders == []
 
 
-def test_the_plugin_never_imports_hydromate():
+def test_the_plugin_never_imports_axqua():
     """The rule the whole architecture rests on: QGIS's Python is not the solver's."""
     import re
-    # `from hydromate...` inside the plugin package refers to the plugin itself, so the
+    # `from axqua...` inside the plugin package refers to the plugin itself, so the
     # test looks for the two spellings that would reach the *installed* package.
-    pattern = re.compile(r"^\s*import\s+hydromate\s*$|^\s*from\s+hydromate\s+import\s+"
+    pattern = re.compile(r"^\s*import\s+axqua\s*$|^\s*from\s+axqua\s+import\s+"
                          r"(?!annotations)", re.M)
     offenders = []
-    for path in (PLUGIN_ROOT / "hydromate").rglob("*.py"):
+    for path in (PLUGIN_ROOT / "axqua").rglob("*.py"):
         text = path.read_text("utf-8")
         if pattern.search(text):
             offenders.append(path.relative_to(PLUGIN_ROOT))
@@ -85,10 +85,10 @@ def test_the_plugin_never_imports_hydromate():
 # ----------------------------------------------------------- executable discovery
 
 
-def _fake_hydromate(tmp_path: Path, *, version: str = "hydromate 0.2.0",
+def _fake_axqua(tmp_path: Path, *, version: str = "axqua 0.2.0",
                     exit_code: int = 0) -> Path:
     tmp_path.mkdir(parents=True, exist_ok=True)
-    script = tmp_path / "hydromate"
+    script = tmp_path / "axqua"
     script.write_text(f"#!/bin/sh\necho '{version}'\nexit {exit_code}\n", encoding="utf-8")
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     return script
@@ -96,9 +96,9 @@ def _fake_hydromate(tmp_path: Path, *, version: str = "hydromate 0.2.0",
 
 @pytest.mark.skipif(os.name == "nt", reason="shell script stub")
 def test_discovery_order_prefers_the_setting(tmp_path, monkeypatch):
-    configured = _fake_hydromate(tmp_path / "a", version="hydromate 9.9.9")
+    configured = _fake_axqua(tmp_path / "a", version="axqua 9.9.9")
     (tmp_path / "b").mkdir(parents=True, exist_ok=True)
-    other = _fake_hydromate(tmp_path / "b", version="hydromate 0.0.1")
+    other = _fake_axqua(tmp_path / "b", version="axqua 0.0.1")
     monkeypatch.setenv(runner_client.ENV_VAR, str(other))
 
     info = runner_client.find_executable(str(configured))
@@ -108,7 +108,7 @@ def test_discovery_order_prefers_the_setting(tmp_path, monkeypatch):
 @pytest.mark.skipif(os.name == "nt", reason="shell script stub")
 def test_discovery_falls_back_to_the_environment_then_path(tmp_path, monkeypatch):
     (tmp_path / "b").mkdir(parents=True, exist_ok=True)
-    from_env = _fake_hydromate(tmp_path / "b")
+    from_env = _fake_axqua(tmp_path / "b")
     monkeypatch.setenv(runner_client.ENV_VAR, str(from_env))
     monkeypatch.setattr("shutil.which", lambda name: None)
     assert runner_client.find_executable(None).source == "environment"
@@ -128,18 +128,18 @@ def test_a_missing_executable_names_every_place_it_looked(monkeypatch):
     assert "plugin setting" in message
     assert runner_client.ENV_VAR in message
     assert "PATH" in message
-    assert "pip install hydromate" in message
+    assert "pip install axqua" in message
 
 
 @pytest.mark.skipif(os.name == "nt", reason="shell script stub")
-def test_something_that_is_not_hydromate_is_rejected(tmp_path, monkeypatch):
+def test_something_that_is_not_axqua_is_rejected(tmp_path, monkeypatch):
     """A wrong binary must be caught at configuration time, not at submit time."""
-    impostor = _fake_hydromate(tmp_path, version="Python 3.12.1")
+    impostor = _fake_axqua(tmp_path, version="Python 3.12.1")
     monkeypatch.delenv(runner_client.ENV_VAR, raising=False)
     monkeypatch.setattr("shutil.which", lambda name: None)
     with pytest.raises(runner_client.RunnerNotFound) as excinfo:
         runner_client.find_executable(str(impostor))
-    assert "does not look like hydromate" in str(excinfo.value)
+    assert "does not look like axqua" in str(excinfo.value)
 
 
 # ------------------------------------------------------------------ the envelope
@@ -174,19 +174,19 @@ class _StubClient(runner_client.RunnerClient):
 
 def test_a_structured_failure_reaches_the_user_with_its_remedy():
     client = _StubClient({"ok": False, "error": {
-        "code": "hydromate.environment",
+        "code": "axqua.environment",
         "message": "the telemac environment is not available",
         "remedy": "Check the setup script in the solver profile."}}, returncode=4)
     with pytest.raises(runner_client.RunnerError) as excinfo:
         client.list_jobs()
-    assert excinfo.value.code == "hydromate.environment"
+    assert excinfo.value.code == "axqua.environment"
     assert "setup script" in excinfo.value.user_text()
 
 
 def test_output_that_is_not_json_is_reported_as_such(tmp_path, monkeypatch):
-    script = tmp_path / "hydromate"
+    script = tmp_path / "axqua"
     script.write_text("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo "
-                      "'hydromate 0.2.0'; else echo 'Segmentation fault'; fi\n",
+                      "'axqua 0.2.0'; else echo 'Segmentation fault'; fi\n",
                       encoding="utf-8")
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
     client = runner_client.RunnerClient(str(script))
@@ -226,29 +226,29 @@ def test_arguments_are_passed_as_a_list_never_a_shell_string(tmp_path, monkeypat
 
 
 def test_the_project_file_round_trips(tmp_path):
-    project = project_io.HydromateProject(name="inn")
-    project.path = tmp_path / "inn.hydromate-prj"
+    project = project_io.AxquaProject(name="inn")
+    project.path = tmp_path / "inn.axqua-prj"
     project.add_case(tmp_path / "cases" / "case-config.yml")
     project.profile = "telemac_linux"
-    project.job_root = "/scratch/hydromate"
+    project.job_root = "/scratch/axqua"
     written = project_io.save(project)
 
     reloaded = project_io.load(written)
     assert reloaded.name == "inn"
     assert reloaded.profile == "telemac_linux"
-    assert reloaded.job_root == "/scratch/hydromate"
+    assert reloaded.job_root == "/scratch/axqua"
     assert reloaded.active_case_path() == (tmp_path / "cases" / "case-config.yml")
 
 
 def test_a_case_beside_the_project_is_stored_relatively(tmp_path):
     """So the project directory can be moved or shared without every path breaking."""
-    project = project_io.HydromateProject(path=tmp_path / "p.hydromate-prj")
+    project = project_io.AxquaProject(path=tmp_path / "p.axqua-prj")
     stored = project.add_case(tmp_path / "cases" / "case-config.yml")
     assert stored == str(Path("cases") / "case-config.yml")
 
 
 def test_a_case_elsewhere_stays_absolute(tmp_path):
-    project = project_io.HydromateProject(path=tmp_path / "p.hydromate-prj")
+    project = project_io.AxquaProject(path=tmp_path / "p.axqua-prj")
     stored = project.add_case("/elsewhere/case-config.yml")
     assert stored == "/elsewhere/case-config.yml"
 
@@ -256,7 +256,7 @@ def test_a_case_elsewhere_stays_absolute(tmp_path):
 def test_status_in_a_project_file_is_ignored_not_trusted(tmp_path):
     """Older drafts carried job state. The job directories are authoritative, and a
     stale copy here would show a state that has not been true for days."""
-    path = tmp_path / "old.hydromate-prj"
+    path = tmp_path / "old.axqua-prj"
     path.write_text(json.dumps({"schema_version": 1, "cases": [],
                                 "status": {"job-1": "RUNNING"},
                                 "jobs": ["job-1"]}), encoding="utf-8")
@@ -266,7 +266,7 @@ def test_status_in_a_project_file_is_ignored_not_trusted(tmp_path):
 
 
 def test_a_newer_project_file_is_refused_clearly(tmp_path):
-    path = tmp_path / "future.hydromate-prj"
+    path = tmp_path / "future.axqua-prj"
     path.write_text(json.dumps({"schema_version": 99}), encoding="utf-8")
     with pytest.raises(ValueError) as excinfo:
         project_io.load(path)
@@ -274,9 +274,9 @@ def test_a_newer_project_file_is_refused_clearly(tmp_path):
 
 
 def test_saving_is_atomic(tmp_path):
-    project = project_io.HydromateProject(path=tmp_path / "p.hydromate-prj", name="p")
+    project = project_io.AxquaProject(path=tmp_path / "p.axqua-prj", name="p")
     project_io.save(project)
-    assert [p.name for p in tmp_path.iterdir()] == ["p.hydromate-prj"]
+    assert [p.name for p in tmp_path.iterdir()] == ["p.axqua-prj"]
 
 
 # ---------------------------------------------------------------- polling policy
@@ -389,7 +389,7 @@ def test_an_unimplemented_capability_is_shown_disabled_with_a_reason():
     capability = view.solver("openfoam").capability("morphodynamics")
     assert capability.visible is True
     assert capability.enabled is False
-    assert "gap in hydromate" in capability.reason
+    assert "gap in axqua" in capability.reason
 
 
 def test_a_capability_the_case_does_not_ask_for_says_so():
@@ -415,7 +415,7 @@ def test_only_declared_solvers_get_tabs():
 
 
 def test_a_capability_this_plugin_has_never_heard_of_still_gets_a_tab():
-    """The point of generating tabs: hydromate can grow one without a plugin release."""
+    """The point of generating tabs: axqua can grow one without a plugin release."""
     payload = {"solvers": [{"solver": "telemac", "enabled": True, "capabilities": [
         {"capability": "ice_jam", "implemented": "yes", "configured": True}]}]}
     capability = CaseView.from_payload(payload).solver("telemac").capability("ice_jam")

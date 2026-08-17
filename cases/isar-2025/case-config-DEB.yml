@@ -1,11 +1,11 @@
 # =============================================================================
-# hydromate case configuration - Isar river (Bavaria), 2025
+# axqua case configuration - Isar river (Bavaria), 2025
 # =============================================================================
 # All relative paths resolve against THIS file's directory. The co-development
 # dataset lives under user-sources/ (kept out of version control).
 # Build with:
-#   hydromate cases/isar-2025/case-config.yml --check    # validate first
-#   hydromate cases/isar-2025/case-config.yml            # build the case
+#   axqua cases/isar-2025/case-config.yml --check    # validate first
+#   axqua cases/isar-2025/case-config.yml            # build the case
 #
 # Sections: project / telemac / geodata / boundaries / initialization / mesh /
 #           friction / hydrodynamics / morphodynamics / ground_truth / calibration
@@ -14,11 +14,11 @@
 project:
   name: isar-mar-2025                    # case name; used in titles and file headers
   crs_epsg: 25832              # [REQUIRED] project CRS, metric. 25832 = ETRS89/UTM32N
-  sim_dir: hydromate-case
-  preprocessing_dir: hydromate-case/preprocessing
-  model_dir: hydromate-case/simulation
-  postprocessing_dir: hydromate-case/postprocessing
-  calibration_dir: hydromate-case/calibration-validation
+  sim_dir: axqua-case
+  preprocessing_dir: axqua-case/preprocessing
+  model_dir: axqua-case/simulation
+  postprocessing_dir: axqua-case/postprocessing
+  calibration_dir: axqua-case/calibration-validation
 
 telemac:
   # [REQUIRED] the pysource.*.sh of YOUR TELEMAC install; sourced (not imported).
@@ -134,7 +134,7 @@ dem_of_difference:
 
 ground_truth:
   # Calibration ground truth: a tidy multi-tab table (measurements) OR raw sources
-  # hydromate compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
+  # axqua compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
   # `measurements` gives an explicit output path.
   # measurements: path/to/ground-truth.xlsx    # (a) user-authored tidy table
   sources:                                      # (b) raw sources -> compiled tidy table

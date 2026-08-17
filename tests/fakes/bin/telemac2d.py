@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """A stand-in for TELEMAC's ``telemac2d.py`` / ``telemac3d.py`` launcher.
 
-Python, not shell, because hydromate runs the launcher **through an interpreter**
+Python, not shell, because axqua runs the launcher **through an interpreter**
 (``python "$(command -v telemac2d.py)" case.cas``) - so a shell fake would be handed to
 python and fail with a syntax error, testing nothing.
 
-The listing is real-shaped: ``hydromate.progress.SolverProgress`` parses the
-``ITERATION n TIME: ... ( n S)`` header and ``hydromate.sortie`` reads the volume-balance
+The listing is real-shaped: ``axqua.progress.SolverProgress`` parses the
+``ITERATION n TIME: ... ( n S)`` header and ``axqua.sortie`` reads the volume-balance
 block, so a fake printing anything else would leave both parsers untested.
 
     FAKE_STEPS  iterations to emit  (default 5)

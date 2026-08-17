@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from hydromate import selafin
-from hydromate import threed
+from axqua import selafin
+from axqua import threed
 
 
 def _fake_2d_data(edge: float, depth: float):
@@ -85,7 +85,7 @@ def test_build_3d_cas_from_2d_result(tmp_path):
 
 
 def _cfg(tmp_path):
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
         Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )

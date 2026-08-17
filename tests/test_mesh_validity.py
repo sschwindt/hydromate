@@ -1,7 +1,7 @@
 """Mesh-validity maths (y+ / ks+ / dx-vs-ks / turbulence consistency).
 
 Pure python - no solver, no geodata. Run via:
-    mamba run -n hydromate-env pytest tests/test_mesh_validity.py
+    mamba run -n axqua-env pytest tests/test_mesh_validity.py
 """
 
 from __future__ import annotations
@@ -9,8 +9,8 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 
-from hydromate import mesh_validity
-from hydromate.mesh_validity import (
+from axqua import mesh_validity
+from axqua.mesh_validity import (
     channel_ks, check_level, manning_to_ks, roughness_reynolds,
     shear_velocity_loglaw, wall_y_plus,
 )
@@ -54,7 +54,7 @@ def test_check_level_flags_dx_below_ks():
 
 
 def test_turbulence_pick_and_regime_change():
-    from hydromate.steering import turbulence_pick_for_dx
+    from axqua.steering import turbulence_pick_for_dx
 
     cfg = _hydro_cfg()                       # L = 1 m
     assert turbulence_pick_for_dx(cfg, 0.05)[0] == 4    # dx/L <= 0.0894 -> LES

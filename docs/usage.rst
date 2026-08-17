@@ -1,7 +1,7 @@
 Usage
 =====
 
-``hydromate`` is driven by a single YAML configuration file pointing at your
+``axqua`` is driven by a single YAML configuration file pointing at your
 :doc:`input files <input_files>`. **One case description, two simulation backends**:
 the geodata, the boundary conditions, the roughness, the structures and the ground
 truth are shared, and each solver adds only the knobs that are genuinely its own.
@@ -10,13 +10,13 @@ What a case can do
 ------------------
 
 Every case carries one marker file per solver at its top level, refreshed by any
-build and by ``hydromate status``:
+build and by ``axqua status``:
 
 .. code-block:: bash
 
-   hydromate status cases/example-Inn/case-config.yml          # summary + refresh
-   hydromate status cases/example-Inn/case-config.yml --full   # the whole table
-   hydromate status cases/example-Inn/case-config.yml --check-env   # probe the solvers
+   axqua status cases/example-Inn/case-config.yml          # summary + refresh
+   axqua status cases/example-Inn/case-config.yml --full   # the whole table
+   axqua status cases/example-Inn/case-config.yml --check-env   # probe the solvers
 
 .. code-block:: text
 
@@ -35,7 +35,7 @@ have three different fixes:
      - question
      - values
    * - ``implemented``
-     - does hydromate support this **for this solver**?
+     - does axqua support this **for this solver**?
      - ``yes`` / ``no`` (not yet) / ``n/a`` (never - OpenFOAM has no depth-averaged mode)
    * - ``configured``
      - does **this case** ask for it?
@@ -46,7 +46,7 @@ have three different fixes:
 
 Cells that cannot arise render ``-``, never a confident ``no``. The files are
 generated, so they are gitignored - they describe the *currently available* setup,
-which is local state like ``hydromate-case/``.
+which is local state like ``axqua-case/``.
 
 The general workflow
 --------------------
@@ -56,13 +56,13 @@ end up running.
 
 #. **Prepare the input files** - the :ref:`geodata <input-geodata>`, the
    :ref:`ground truth <input-ground-truth>` (generate the
-   :ref:`calibration-target template <input-target-template>` with ``hydromate
+   :ref:`calibration-target template <input-target-template>` with ``aXqua
    targets <config>`` and fill it in), and the :ref:`config YAML <input-config>`.
 #. **Describe the reach once** - the ROI polygon, the liquid boundaries, the mesh
    zones and centerline, the roughness zones, the discharge and the outflow
    condition, and any :ref:`structures <usage-structures>` (dams, weirs, walls,
    buildings). Both meshers read exactly these.
-#. **Check what is set up** - ``hydromate status <config>``.
+#. **Check what is set up** - ``axqua status <config>``.
 
 From there the two backends diverge, because they answer different questions:
 
@@ -99,7 +99,7 @@ The TELEMAC workflow
    python cases/example-Inn/mesh_convergence_study.py   # grid-independence study
    python cases/example-Inn/run_Bayes_cal.py            # Bayesian calibration
 
-#. **Preprocessing / build** (``preprocessing.py``, or ``hydromate <config>``) -
+#. **Preprocessing / build** (``preprocessing.py``, or ``axqua <config>``) -
    clip the DEM(s), build the mesh + bathymetry, classify the liquid boundaries,
    and write the complete TELEMAC case (``geometry.slf``, ``boundaries.cli``,
    ``friction.tbl``, ``steady2d.cas``) plus the calibration CSV and HydroBayesCal
@@ -156,7 +156,7 @@ by the hydraulics, which nothing else in the output would reveal.
 
 .. code-block:: bash
 
-   hydromate openfoam cases/example-Inn/case-config.yml --check   # cell count, no build
+   axqua openfoam cases/example-Inn/case-config.yml --check   # cell count, no build
    python cases/example-Inn/openfoam_preprocessing.py             # build the case
    python cases/example-Inn/openfoam_run.py                       # spin-up, run, report
 
@@ -181,7 +181,7 @@ surface. That is the one case where prescribing vertical structure beats startin
 flat: it was computed by a solver on this reach's own bathymetry, not assumed from a
 log law whose normalisation is inadmissible on a gravel bed anyway.
 
-**It is not available on every reach, and hydromate checks before it spends the run.**
+**It is not available on every reach, and aXqua checks before it spends the run.**
 TELEMAC-3D has only sigma planes, and their count is sized from the flow depth against
 the horizontal cell size, refusing cells more than four times taller than wide. A
 reach that is shallow relative to its plan mesh therefore has no room for an interior
@@ -268,7 +268,7 @@ here for the same reason: pinning a thick bed layer into a shallow column is wha
 turns the layers above it into folded slivers.
 
 Prefer a form to hand-editing the YAML? Launch the browser-based configuration
-editor with ``hydromate-gui`` (see :ref:`the graphical configurator <input-config>`);
+editor with ``axqua-gui`` (see :ref:`the graphical configurator <input-config>`);
 its **Build** button is the same build step as above.
 
 .. _usage-structures:
@@ -277,7 +277,7 @@ Structures: dams, weirs, walls and buildings
 --------------------------------------------
 
 A structure is an **ordinary QGIS vector layer**, not a triangulated surface. STL is
-a ``snappyHexMesh`` requirement; hydromate writes its mesh itself, so a structure only
+a ``snappyHexMesh`` requirement; axqua writes its mesh itself, so a structure only
 has to say **where its footprint is** and **how high it stands** - both ordinary
 attributes. There is no CAD step and no format QGIS cannot author or round-trip.
 
@@ -347,8 +347,8 @@ convergence check; see :doc:`hbc`):
   variable-time-step march reaches when no stop criterion fires. Because the
   CFL-adaptive step makes the *number* of time steps unknown in advance, progress is
   measured against that simulated-time cap, with the live iteration count shown
-  alongside (:class:`hydromate.progress.SolverProgress`, wired by
-  :func:`hydromate.run_solver_streaming`). **Every** solver launch in the workflow
+  alongside (:class:`axqua.progress.SolverProgress`, wired by
+  :func:`axqua.run_solver_streaming`). **Every** solver launch in the workflow
   streams the same way: the per-mesh runs of the mesh-convergence study, the
   per-layer runs of the vertical convergence study, and the ``--run`` modes of
   ``add3d.py`` / ``unsteady_run.py``.
@@ -359,7 +359,7 @@ convergence check; see :doc:`hbc`):
   ``telemac2d.py steady2d.cas --ncsize=<N> -s --nozip``, so the wrapper adds no
   compute overhead versus launching TELEMAC by hand.
 * **Flux convergence + the generated hotstart case.** After the run,
-  :func:`hydromate.analyze_flux_convergence` reads the
+  :func:`axqua.analyze_flux_convergence` reads the
   ``.sortie`` listing and writes ``extracted-fluxes.csv`` / ``flux-convergence.png``
   (the per-boundary fluxes) and ``convergence-rate.csv`` / ``convergence-rate.png``
   (the relative imbalance and its rate) into ``simulation/``; the per-processor
@@ -369,8 +369,8 @@ convergence check; see :doc:`hbc`):
   steady state, in the 10-printout mean), a ``hotstart2d.cas`` is generated next to
   the steady case: it continues from ``r2d.slf`` with that steady time as
   ``DURATION`` and the constant Q/H prescriptions unchanged
-  (:func:`hydromate.steering.write_hotstart_cas`).
-* **Where the water is** (:func:`hydromate.report_wetting`). A balanced flux budget
+  (:func:`axqua.steering.write_hotstart_cas`).
+* **Where the water is** (:func:`axqua.report_wetting`). A balanced flux budget
   says nothing about wetted *extent*, and the two are independent failure modes: a
   run can close its budget to 1e-4 and still show water standing where the reach has
   none. ``wetting-report.csv`` splits the wetted area into **active** flow, stagnant
@@ -392,7 +392,7 @@ convergence check; see :doc:`hbc`):
   flowing over it. Filter the result in ParaView at the same depth so the picture and
   the report agree. To remove such water from the model instead, see the ``drying``
   block.
-* **Discharge across your own cross-sections** (:func:`hydromate.report_sections`).
+* **Discharge across your own cross-sections** (:func:`axqua.report_sections`).
   With ``geodata.control_sections`` set, each line of that layer is integrated from
   the result (``Q = int (H*U).n ds``) into ``baffle-XS-q.csv``. Because it reads the
   *result* rather than the steering file, sections can be drawn and moved in GIS
@@ -408,7 +408,7 @@ A 3D simulation builds on the 2D one and is run **only after it**: it needs the 
 whose resolution the mesh-convergence study has already validated.
 
 #. **3D cases** (``add3d.py``) - write exactly **three** TELEMAC-3D steering files
-   hotstarted from the 2D result (:func:`hydromate.build_3d_cases`); the number of
+   hotstarted from the 2D result (:func:`axqua.build_3d_cases`); the number of
    sigma layers and the turbulence model are inferred from ``r2d.slf`` and the fixed
    time step is sized for a Courant number of 0.6:
 
@@ -445,7 +445,7 @@ Gain-lose reaches (flow through a porous body)
 ----------------------------------------------
 
 Some reaches lose flow into a porous body - a gravel bar, an alluvial patch - and
-regain it downstream. A 2D depth-averaged model has no subsurface, so ``hydromate``
+regain it downstream. A 2D depth-averaged model has no subsurface, so ``axqua``
 represents the underflow as an internal **withdrawal** where water infiltrates plus
 an **injection** where it resurfaces, generated into a TELEMAC ``USER_RAIN`` routine
 (``FORTRAN FILE``; TELEMAC compiles it at run time). Enable it by pointing
@@ -474,7 +474,7 @@ under the relative flux imbalance, so no hotstart case would ever be written aga
 ``water-table`` (the default)
    The faces follow the physics and **nothing has to be drawn**. The body's saturated
    zone is bounded by the two channel levels it exchanges with, so its water table is
-   known (:mod:`hydromate.watertable` fits it as a plane, taking those levels from
+   known (:mod:`axqua.watertable` fits it as a plane, taking those levels from
    the channel surface at each end of the zone's reach extent). A node then **loses**
    where it is wet and its free surface stands above the table, and **gains** where
    the table stands above the bed. The classification runs *inside* the generated
@@ -528,7 +528,7 @@ marching the wetting front from the inflow and is what the mesh-convergence stud
 uses.
 
 How the pre-wet surface is built matters more than it looks. With
-``prewet_mode: normal-depth`` (the default) ``hydromate`` cuts a real cross-section
+``prewet_mode: normal-depth`` (the default) ``axqua`` cuts a real cross-section
 every ``prewet_bin_spacing`` metres along the centerline and seeds the **stage that
 conveys the case discharge** through it, using the same Keulegan conveyance inversion
 that builds the outflow rating. The seeded surface then tracks the surface the run
@@ -598,10 +598,10 @@ The build step is also a one-shot CLI (the scripts wrap the same pipeline):
 
 .. code-block:: bash
 
-   hydromate cases/example-Inn/case-config.yml --check     # validate config + TELEMAC env only
-   hydromate cases/example-Inn/case-config.yml             # build the full case
-   hydromate cases/example-Inn/case-config.yml --dry-run   # build, then run the solver once to validate
-   hydromate cases/example-Inn/case-config.yml -v          # verbose (per-stage) logging
+   axqua cases/example-Inn/case-config.yml --check     # validate config + TELEMAC env only
+   axqua cases/example-Inn/case-config.yml             # build the full case
+   axqua cases/example-Inn/case-config.yml --dry-run   # build, then run the solver once to validate
+   axqua cases/example-Inn/case-config.yml -v          # verbose (per-stage) logging
 
 Useful flags:
 
@@ -622,36 +622,36 @@ Building and inspecting a case:
 
 .. code-block:: bash
 
-   hydromate <config.yml> [--check|--dry-run|--no-validate-env|-v]  # build the case
-   hydromate case-status <config.yml> [--full] [--check-env] [--json]
-   hydromate openfoam <config.yml> [--check] [--cell-size <m>] [--layers <n>]
-   hydromate targets <config.yml> [-o <out.xlsx>] [--force]
-   hydromate clip <raster> -b <boundary> -o <out>
-   hydromate rating -o <out.csv> --manning <n> --slope <S0> --width <b> --q <Q...>
-   hydromate migrate <config> [-o <out.yml> | --in-place]
+   axqua <config.yml> [--check|--dry-run|--no-validate-env|-v]  # build the case
+   axqua case-status <config.yml> [--full] [--check-env] [--json]
+   axqua openfoam <config.yml> [--check] [--cell-size <m>] [--layers <n>]
+   axqua targets <config.yml> [-o <out.xlsx>] [--force]
+   axqua clip <raster> -b <boundary> -o <out>
+   axqua rating -o <out.csv> --manning <n> --slope <S0> --width <b> --q <Q...>
+   axqua migrate <config> [-o <out.yml> | --in-place]
 
 Running work that outlives this shell (see :doc:`jobs`):
 
 .. code-block:: bash
 
-   hydromate submit <config.yml> --kind <kind> [--profile P] [--np N] [--option k=v]
-   hydromate execute <JOB_ID>            # synchronously, here - the debugging path
-   hydromate status  <JOB_ID> [--watch]
-   hydromate cancel  <JOB_ID>
-   hydromate logs    <JOB_ID> [--follow] [--solver] [--path]
-   hydromate list    [--state S] [--rebuild]
-   hydromate profiles [list | show N | validate [N] | path]
+   axqua submit <config.yml> --kind <kind> [--profile P] [--np N] [--option k=v]
+   axqua execute <JOB_ID>            # synchronously, here - the debugging path
+   axqua status  <JOB_ID> [--watch]
+   axqua cancel  <JOB_ID>
+   axqua logs    <JOB_ID> [--follow] [--solver] [--path]
+   axqua list    [--state S] [--rebuild]
+   axqua profiles [list | show N | validate [N] | path]
 
 Every command takes ``--json``, which emits one envelope
-(``{"ok", "command", "hydromate", "data", "error"}``) on **stdout** with all narration on
+(``{"ok", "command", "axqua", "data", "error"}``) on **stdout** with all narration on
 stderr - so a caller can parse stdout unconditionally. That is what the QGIS plugin reads.
 
 .. note::
 
-   ``hydromate status`` is overloaded, and the argument decides. An existing **path** means
+   ``axqua status`` is overloaded, and the argument decides. An existing **path** means
    the *case* (the historic meaning, which keeps working) and a job-id-shaped argument
    means the *job*. The two cannot be confused - a job id is never a path - and the case
-   form is also spelled ``hydromate case-status`` if you would rather be explicit.
+   form is also spelled ``axqua case-status`` if you would rather be explicit.
 
 Exit codes are per error category, so a script can branch without parsing messages:
 ``2`` config, ``3`` geodata, ``4`` environment, ``5`` solver, ``6`` mesh, ``1`` anything
@@ -667,8 +667,8 @@ and DoD status:
 
 .. code-block:: bash
 
-   hydromate targets cases/example-Inn/case-config.yml            # -> user-sources/ground-truth/
-   hydromate targets cases/example-Inn/case-config.yml -o out.xlsx --force
+   axqua targets cases/example-Inn/case-config.yml            # -> user-sources/ground-truth/
+   axqua targets cases/example-Inn/case-config.yml -o out.xlsx --force
 
 Fill in the ``hydraulics`` / ``morphodynamics`` measurement tabs (the
 ``extract_flowtracker.py`` script populates the hydraulics tab straight from SonTek
@@ -686,7 +686,7 @@ boundary's CRS is assumed and written onto the output.
 
 .. code-block:: bash
 
-   hydromate clip path/to/dem.tif -b path/to/roi.gpkg -o path/to/dem-roi-clip.tif
+   axqua clip path/to/dem.tif -b path/to/roi.gpkg -o path/to/dem-roi-clip.tif
 
 Options: ``--epsg <code>`` reprojects the raster to that EPSG before clipping;
 ``--all-touched`` keeps pixels touched by the polygon edge (the default keeps
@@ -786,8 +786,8 @@ the ``initialization`` block):
   by ``DURATION`` - the explicit ``hydrodynamics.duration`` (seconds), else the
   ``n_time_steps * time_step`` fallback, so the small CFL start step no longer shrinks
   the simulated time; ``NUMBER OF TIME STEPS`` does **not** terminate a variable-dt run. Convergence is judged afterwards from the **boundary-flux
-  balance** (``initial_run.py``, :mod:`hydromate.sortie` +
-  :mod:`hydromate.flux_convergence`), not by the solver. The **steady-state
+  balance** (``initial_run.py``, :mod:`axqua.sortie` +
+  :mod:`axqua.flux_convergence`), not by the solver. The **steady-state
   auto-stop** (``stop_if_steady``) is **off by default** and only honoured with a fixed
   time step: TELEMAC's ``STOP CRITERIA`` is an *absolute per-step* change, which with the
   tiny CFL dt false-fires during a slow transient (a still-filling reach) long before the
@@ -809,20 +809,20 @@ or a water level from the rating curve / a free outflow per ``outflow_condition`
 The pipeline
 ------------
 
-``hydromate`` runs five stages (see :doc:`codedocs`):
+``axqua`` runs five stages (see :doc:`codedocs`):
 
-#. **DEM → ROI** (:mod:`hydromate.dem`) - reproject and clip the DEM(s) to the
+#. **DEM → ROI** (:mod:`axqua.dem`) - reproject and clip the DEM(s) to the
    boundary.
-#. **Mesh + bathymetry** (:mod:`hydromate.mesh`, :mod:`hydromate.selafin`) - a gmsh
+#. **Mesh + bathymetry** (:mod:`axqua.mesh`, :mod:`axqua.selafin`) - a gmsh
    triangular mesh (flow-aligned and anisotropic in the channel - see `Meshing`_),
    the DEM interpolated onto the nodes, written as a TELEMAC geometry ``.slf`` with
    friction zones embedded as a per-node ``FRIC_ID`` variable.
-#. **Boundary conditions** (:mod:`hydromate.boundary`) - classify the mesh contour
+#. **Boundary conditions** (:mod:`axqua.boundary`) - classify the mesh contour
    against the liquid-boundary lines and write the ``.cli``.
-#. **Steering + friction** (:mod:`hydromate.steering`) - the TELEMAC-2D ``.cas``
+#. **Steering + friction** (:mod:`axqua.steering`) - the TELEMAC-2D ``.cas``
    (see `Numerics`_) and the zonal friction ``.tbl`` (and a GAIA ``.cas`` when
    morphodynamics is enabled).
-#. **Calibration** (:mod:`hydromate.calibration`, :mod:`hydromate.ground_truth`) -
+#. **Calibration** (:mod:`axqua.calibration`, :mod:`axqua.ground_truth`) -
    compile the ground-truth sources into the tidy table, turn it into the
    calibration-points CSV, and emit a ready HydroBayesCal ``config_Telemac.py``.
 

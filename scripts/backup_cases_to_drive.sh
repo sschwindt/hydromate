@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Mirror cases/*/user-sources/ and cases/*/hydromate-case/ to Google Drive via rclone.
+# Mirror cases/*/user-sources/ and cases/*/axqua-case/ to Google Drive via rclone.
 #
 # One-time setup (not done by this script):
 #   sudo apt install rclone
@@ -12,14 +12,14 @@
 #   ./scripts/backup_cases_to_drive.sh --run    # actually syncs (uploads AND deletes
 #                                                #   remote-only files, mirroring local)
 #
-# Remote layout: gdrive:HydroMate-Cases/<case-name>/user-sources/
-#                gdrive:HydroMate-Cases/<case-name>/hydromate-case/
-# Restore a case with: rclone copy gdrive:HydroMate-Cases/<case-name> cases/<case-name>
+# Remote layout: gdrive:aXqua-Cases/<case-name>/user-sources/
+#                gdrive:aXqua-Cases/<case-name>/axqua-case/
+# Restore a case with: rclone copy gdrive:aXqua-Cases/<case-name> cases/<case-name>
 
 set -euo pipefail
 
 REMOTE="gdrive"
-REMOTE_ROOT="HydroMate-Cases"
+REMOTE_ROOT="aXqua-Cases"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CASES_DIR="${REPO_ROOT}/cases"
 LOG_DIR="${REPO_ROOT}/scripts/backup-logs"
@@ -69,11 +69,11 @@ for case_dir in "${CASES_DIR}"/*/; do
     if [[ "${case_name}" == "case-template" || "${case_name}" == "__pycache__" ]]; then
         continue
     fi
-    if [[ ! -d "${case_dir}user-sources" && ! -d "${case_dir}hydromate-case" ]]; then
+    if [[ ! -d "${case_dir}user-sources" && ! -d "${case_dir}axqua-case" ]]; then
         continue
     fi
 
-    for sub in user-sources hydromate-case; do
+    for sub in user-sources axqua-case; do
         local_path="${case_dir}${sub}"
         if [[ -d "${local_path}" ]]; then
             echo ""

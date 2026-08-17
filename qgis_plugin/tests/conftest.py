@@ -1,12 +1,12 @@
-"""Make the plugin importable alongside the installed ``hydromate`` package.
+"""Make the plugin importable alongside the installed ``axqua`` package.
 
-Both are called ``hydromate`` - the plugin because that is the folder name QGIS installs
+Both are called ``axqua`` - the plugin because that is the folder name QGIS installs
 and shows, the library because that is its name on PyPI. Inside QGIS they never meet: the
 plugin runs in QGIS's Python and the library in the solver's, which is the entire point of
 the CLI boundary. In a single pytest process they *would* meet, and the installed package
 would win.
 
-So the plugin is loaded here under the alias **``hydromate_plugin``**, from its own
+So the plugin is loaded here under the alias **``axqua_plugin``**, from its own
 directory. That keeps one ``pytest`` at the repository root able to run both suites, and
 it costs nothing at runtime because QGIS imports the real folder by its real name.
 """
@@ -18,8 +18,8 @@ import sys
 from pathlib import Path
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_DIR = PLUGIN_ROOT / "hydromate"
-ALIAS = "hydromate_plugin"
+PACKAGE_DIR = PLUGIN_ROOT / "axqua"
+ALIAS = "axqua_plugin"
 
 
 def _load_alias() -> None:

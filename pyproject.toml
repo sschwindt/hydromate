@@ -3,9 +3,12 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hydromate"
-version = "0.2.0"
-description = "Automated setup of calibration-ready TELEMAC-2D/3D + GAIA cases for the Inn river, feeding HydroBayesCal."
+# Branded on PyPI; the import package is plain lowercase `axqua`, because a mixed-case
+# module name resolves differently on case-insensitive filesystems. PyPI normalises the
+# two to the same project, so `pip install aXqua` and `pip install axqua` both work.
+name = "aXqua"
+version = "0.3.0"
+description = "Automated setup, persistent execution and calibration of river models - TELEMAC-2D/3D with GAIA, and OpenFOAM interFoam - with a QGIS frontend."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "BSD-3-Clause" }
@@ -22,7 +25,7 @@ dependencies = [
     "gmsh>=4.13",
     "openpyxl>=3.1",
     # flux-convergence + cross-section plots and the P1 triangle interpolation
-    # (hydromate.flux_convergence, hydromate.sections); previously pulled in
+    # (axqua.flux_convergence, axqua.sections); previously pulled in
     # transitively by pythomac, which the flux analysis no longer uses.
     "matplotlib",
 ]
@@ -30,45 +33,45 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
 gui = ["streamlit>=1.30"]
-# Surrogate-assisted Bayesian calibration (hydromate.bayescal / hydromate.calibration).
+# Surrogate-assisted Bayesian calibration (axqua.bayescal / axqua.calibration).
 # An EXTRA rather than a core dependency: it pulls in bayesvalidrox, gpytorch and
 # scikit-learn, none of which is needed to build or run a TELEMAC case, which is what
-# most of hydromate does.
+# most of axqua does.
 # >=1.4.2 is required, not merely preferred: that is the release that ships the
 # calibration drivers *with the package* (hydroBayesCal.copy_driver). Before it, the
-# drivers lived only in a source checkout, so hydromate had to be told where that
+# drivers lived only in a source checkout, so axqua had to be told where that
 # checkout was via an environment variable - which broke whenever it moved or was
 # absent on a machine.
 # >=1.4.3 additionally hoists save_calibration_data into HydroSimulations, so the
 # "truth value of an array is ambiguous" crash on BAL's first iteration is fixed once
 # for every binding rather than per-binding, and the restart collocation-points CSV
-# that only_bal_mode reads is written by the shared path (hydromate's --resume relies
+# that only_bal_mode reads is written by the shared path (axqua's --resume relies
 # on that restart data).
 # >=1.4.4 makes the MULTI-FLOW driver honour the config's `extraction` block. Before
 # it, that driver took run_complex_model's "mean_last" default regardless of the
 # configuration, so a multi-flow calibration averaged the last frames while a
 # single-flow one on the same config did not - the two were fitted to different data.
-# hydromate emits `extraction` in config_Telemac.py (see calibration.emit_hbc_config),
+# axqua emits `extraction` in config_Telemac.py (see calibration.emit_hbc_config),
 # which only reaches the multi-flow path from this release on.
 calibration = ["hydrobayescal>=1.4.4"]
 
 [project.scripts]
-hydromate = "hydromate.cli:main"
-hydromate-gui = "hydromate.gui.launch:main"
+axqua = "axqua.cli:main"
+axqua-gui = "axqua.gui.launch:main"
 
 # Solver backends are discovered through this group, so a third solver is a
-# `pip install hydromate-<name>` rather than a fork. The built-ins register through the
+# `pip install axqua-<name>` rather than a fork. The built-ins register through the
 # same mechanism they document, with a hard-coded fallback in core/registry.py for a
 # source checkout that has not been re-installed.
-[project.entry-points."hydromate.solvers"]
-telemac = "hydromate.solvers.telemac.spec:SPEC"
-openfoam = "hydromate.solvers.openfoam.spec:SPEC"
+[project.entry-points."axqua.solvers"]
+telemac = "axqua.solvers.telemac.spec:SPEC"
+openfoam = "axqua.solvers.openfoam.spec:SPEC"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-hydromate = ["templates/*.cas", "templates/*.tbl"]
+axqua = ["templates/*.cas", "templates/*.tbl"]
 
 [tool.ruff]
 line-length = 100

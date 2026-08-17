@@ -3,11 +3,11 @@
 Three pieces added after the 2026-08-02 review of the isar-2025 results, none of
 which involve the TELEMAC solver:
 
-* :func:`hydromate.sections.line_discharges` - the discharge across a GIS line,
+* :func:`axqua.sections.line_discharges` - the discharge across a GIS line,
   integrated from a result SELAFIN (the "baffle" cross-sections);
-* :func:`hydromate.steering.spill_elevations` - the priority-flood sweep behind
+* :func:`axqua.steering.spill_elevations` - the priority-flood sweep behind
   drainable pre-wetting;
-* :func:`hydromate.rating.section_rating` - stage-discharge from a surveyed
+* :func:`axqua.rating.section_rating` - stage-discharge from a surveyed
   cross-section instead of a trapezoid.
 """
 
@@ -18,7 +18,7 @@ import csv
 import numpy as np
 import pytest
 
-from hydromate import selafin
+from axqua import selafin
 
 
 def _uniform_channel(nx=21, ny=15, length=20.0, width=14.0, depth=0.5, u=1.0):
@@ -56,7 +56,7 @@ def test_line_discharge_recovers_uniform_flow(tmp_path):
     import geopandas as gpd
     from shapely.geometry import LineString
 
-    from hydromate.sections import line_discharges
+    from axqua.sections import line_discharges
 
     depth, speed, width = 0.5, 1.2, 14.0
     x, y, ikle, h, u, v = _uniform_channel(depth=depth, u=speed, width=width)
@@ -91,7 +91,7 @@ def test_line_discharge_rejects_mismatched_geometry(tmp_path):
     import geopandas as gpd
     from shapely.geometry import LineString
 
-    from hydromate.sections import line_discharges
+    from axqua.sections import line_discharges
 
     x, y, ikle, h, *_ = _uniform_channel(nx=21, ny=11)
     res = tmp_path / "r2d.slf"
@@ -116,7 +116,7 @@ class _Mesh:
 
 def test_spill_elevation_finds_the_rim_of_a_closed_pit():
     """A pit surrounded by higher ground spills at the lowest rim, not at its bed."""
-    from hydromate.steering import spill_elevations
+    from axqua.steering import spill_elevations
 
     x, y, ikle, *_ = _uniform_channel(nx=21, ny=11)
     tri = ikle - 1
@@ -142,7 +142,7 @@ def test_spill_elevation_finds_the_rim_of_a_closed_pit():
 def test_section_rating_beats_the_trapezoid_on_a_v_shaped_section(tmp_path):
     """On a V-shaped section the trapezoid over-states the area and so returns too
     low a stage - the mechanism behind the supercritical outlet drawdown."""
-    from hydromate.rating import normal_depth, section_rating
+    from axqua.rating import normal_depth, section_rating
 
     width, slope, ks = 10.0, 0.004, 0.1
     station = np.linspace(0.0, width, 201)

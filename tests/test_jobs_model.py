@@ -9,10 +9,10 @@ import datetime as dt
 
 import pytest
 
-from hydromate.core.capabilities import Capability
-from hydromate.core.errors import ConfigError
-from hydromate.jobs import ids
-from hydromate.jobs.model import (KIND_META, TRANSITIONS, IllegalTransition, JobKind,
+from axqua.core.capabilities import Capability
+from axqua.core.errors import ConfigError
+from axqua.jobs import ids
+from axqua.jobs.model import (KIND_META, TRANSITIONS, IllegalTransition, JobKind,
                                   JobSpec, JobState, JobStatus, Progress,
                                   SolverRunProgress, SteadyRunOptions, parse_kind)
 
@@ -59,7 +59,7 @@ def test_illegal_transitions_raise_rather_than_being_coerced(start, target):
     status = JobStatus(job_id="j", state=start)
     with pytest.raises(IllegalTransition) as excinfo:
         status.transition(target)
-    assert excinfo.value.code == "hydromate.job.transition"
+    assert excinfo.value.code == "axqua.job.transition"
     assert excinfo.value.details["target"] == target.value
 
 
@@ -185,7 +185,7 @@ def test_progress_is_typed_per_kind_and_survives_a_round_trip():
 
 
 def test_an_unknown_progress_kind_is_kept_rather_than_discarded():
-    """Forward compatibility: a plugin reading a newer hydromate's status must degrade
+    """Forward compatibility: a plugin reading a newer axqua's status must degrade
     to showing nothing useful, not to losing the field."""
     payload = {"kind": "something_new", "widgets": 7}
     restored = Progress.from_dict(payload)

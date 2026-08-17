@@ -1,8 +1,8 @@
 ==============================================================================
- hydromate case template - USAGE
+ axqua case template - USAGE
 ==============================================================================
 This folder is a ready-to-copy scaffold for one TELEMAC-2D (+ optional GAIA)
-simulation case driven by the `hydromate` package. Copy the whole folder to
+simulation case driven by the `axqua` package. Copy the whole folder to
 cases/<your-case>/, drop your data into user-sources/, edit case-config.yml,
 then run the three workflow scripts. A worked example is in cases/example-Inn/.
 
@@ -35,7 +35,7 @@ cases/<your-case>/
 
   tm-simulation/       ALL produced artifacts (created on first run; gitignored),
                        split by workflow phase - each phase also writes its own
-                       hydromate.log here:
+                       axqua.log here:
     preprocessing/         DEM clips, mesh-raw.slf, mesh-elevations.slf,
                            ground-truth.xlsx
     simulation/            the TELEMAC case: geometry.slf, boundaries.cli,
@@ -50,7 +50,7 @@ cases/<your-case>/
  PRINCIPAL WORK STEPS
 ------------------------------------------------------------------------------
 0. Install the env and activate it (see docs/installation.rst):
-     mamba env create -f environment.yml && mamba activate hydromate-env
+     mamba env create -f environment.yml && mamba activate axqua-env
      pip install -e .
 
 1. Put your data in user-sources/ (EPSG:25832 / a metric CRS; see
@@ -61,11 +61,11 @@ cases/<your-case>/
      - inputs.*          -> your files under user-sources/
      - mesh / friction / hydrodynamics / calibration -> your values
    No measured outlet rating curve? Synthesise one from normal-flow hydraulics:
-     hydromate rating -o user-sources/geodata/rating-curve.csv \
+     axqua rating -o user-sources/geodata/rating-curve.csv \
        --manning 0.035 --slope <S0> --width <b> --bed-elevation <z> --q <Q>
 
 3. Validate the configuration:
-     hydromate cases/<your-case>/case-config.yml --check
+     axqua cases/<your-case>/case-config.yml --check
 
 4. Step 1 - build the complete TELEMAC case into tm-simulation/simulation/
    (final mesh, .cli, .tbl, .cas; the inflow + outflow rating are synthesised
@@ -119,9 +119,9 @@ tm-simulation/postprocessing/vertical-convergence/). Runs telemac3d once per cou
 and is slow:
      python cases/<your-case>/vertical_convergence_3d.py
 
-   (A one-shot build without the scripts: hydromate cases/<your-case>/case-config.yml)
+   (A one-shot build without the scripts: axqua cases/<your-case>/case-config.yml)
 
-Logging: every script writes a compound, timestamped hydromate.log into the
+Logging: every script writes a compound, timestamped axqua.log into the
 folder it outputs to, with the elapsed time of each calculation step plus all
 warnings and errors.
 
@@ -134,5 +134,5 @@ warnings and errors.
   CLAUDE.md                 in-depth design notes (meshing, boundaries,
                             friction, ground truth, conventions)
   cases/example-Inn/        a complete, filled-in worked example
-  hydromate <config> -h     command-line help (also: hydromate rating -h)
+  axqua <config> -h     command-line help (also: axqua rating -h)
 ==============================================================================

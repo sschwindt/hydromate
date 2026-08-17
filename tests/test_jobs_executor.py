@@ -15,13 +15,13 @@ from pathlib import Path
 
 import pytest
 
-from hydromate.core import registry
-from hydromate.core.capabilities import Capability, Support
-from hydromate.core.errors import SolverError
-from hydromate.core.registry import BackendSpec, BaseBackend, CapabilitySpec
-from hydromate.jobs import executor, submit as submit_mod
-from hydromate.jobs.model import JobKind, JobState
-from hydromate.jobs.store import read_status
+from axqua.core import registry
+from axqua.core.capabilities import Capability, Support
+from axqua.core.errors import SolverError
+from axqua.core.registry import BackendSpec, BaseBackend, CapabilitySpec
+from axqua.jobs import executor, submit as submit_mod
+from axqua.jobs.model import JobKind, JobState
+from axqua.jobs.store import read_status
 
 
 class RecordingBackend(BaseBackend):
@@ -173,7 +173,7 @@ def test_a_solver_failure_is_recorded_with_its_stable_code(fake_case, fake_backe
     assert executor.execute(jd) == 1
     status = read_status(jd)
     assert status.state is JobState.FAILED
-    assert status.error["code"] == "hydromate.solver"
+    assert status.error["code"] == "axqua.solver"
     assert status.error["remedy"] == "Read the listing."
     assert status.exit_code == 1
 
@@ -188,12 +188,12 @@ def test_the_failure_is_in_the_runner_log_as_well(fake_case, fake_backend):
 
 
 def test_an_unexpected_exception_is_labelled_honestly(fake_case, fake_backend):
-    """Not mislabelled as a solver error - 'hydromate did not anticipate this' is the
+    """Not mislabelled as a solver error - 'axqua did not anticipate this' is the
     truthful code."""
     fake_backend.fail_with = KeyError("surprise")
     jd = _create(fake_case, JobKind.STEADY_RUN)
     executor.execute(jd)
-    assert read_status(jd).error["code"] == "hydromate.unexpected"
+    assert read_status(jd).error["code"] == "axqua.unexpected"
 
 
 def test_a_missing_file_gets_a_config_code_and_a_remedy(fake_case, fake_backend):
@@ -201,7 +201,7 @@ def test_a_missing_file_gets_a_config_code_and_a_remedy(fake_case, fake_backend)
     jd = _create(fake_case, JobKind.STEADY_RUN)
     executor.execute(jd)
     error = read_status(jd).error
-    assert error["code"] == "hydromate.config"
+    assert error["code"] == "axqua.config"
     assert "case-config.yml" in error["remedy"]
 
 
@@ -285,7 +285,7 @@ def test_a_run_kind_stays_in_the_case_folders(fake_case, fake_backend):
 def test_a_study_never_reads_stdin(fake_case, fake_backend, monkeypatch):
     """The executor always injects ``ask``, so the study's own stdin prompt is
     unreachable inside a job. Monkeypatched to raise, so a regression is loud."""
-    import hydromate.convergence as convergence
+    import axqua.convergence as convergence
 
     def forbidden(*args, **kwargs):
         raise AssertionError("a detached job asked stdin a question")
@@ -318,8 +318,8 @@ def test_the_frozen_config_reloads_to_the_same_case(fake_case, fake_backend):
     lives outside the job directory therefore has to come out absolute, or the frozen
     config would point at files inside the job that were never copied there.
     """
-    from hydromate.config import load_config
-    from hydromate.jobs.store import read_spec
+    from axqua.config import load_config
+    from axqua.jobs.store import read_spec
 
     jd = _create(fake_case, JobKind.STEADY_RUN)
     reloaded = load_config(jd.frozen_config)
@@ -361,8 +361,8 @@ def test_nothing_in_jobs_imports_a_solver_except_the_executor():
     """The job system is solver-agnostic; only the executor may dispatch to one, and
     only through the registry. Checked by reading the source, so a function-local
     import cannot slip through."""
-    pattern = re.compile(r"(from|import)\s+hydromate\.solvers")
-    root = Path(sys.modules["hydromate"].__file__).parent / "jobs"
+    pattern = re.compile(r"(from|import)\s+axqua\.solvers")
+    root = Path(sys.modules["axqua"].__file__).parent / "jobs"
     offenders = [p.relative_to(root) for p in root.rglob("*.py")
                  if p.name != "executor.py" and pattern.search(p.read_text("utf-8"))]
     assert offenders == []

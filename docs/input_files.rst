@@ -1,7 +1,7 @@
 Input Files
 ===========
 
-``hydromate`` is driven by a single YAML **configuration file** that points, by
+``axqua`` is driven by a single YAML **configuration file** that points, by
 path, at the input data. There are three kinds of input:
 
 #. **Geodata** - the rasters and vector layers describing the terrain, the model
@@ -14,7 +14,7 @@ path, at the input data. There are three kinds of input:
 All paths in the config are resolved **relative to the configuration file's own
 directory**. Every vector/raster layer may be in any coordinate system: it is
 **reprojected to the project CRS** (``project.crs_epsg``, metres) on ingest. Keep
-raw inputs immutable - produced artifacts are written under ``hydromate-case/``.
+raw inputs immutable - produced artifacts are written under ``axqua-case/``.
 
 .. _input-geodata:
 
@@ -31,7 +31,7 @@ config points at them by path); what matters is the **geometry type** and the
 **attribute fields** listed below.
 
 Required user files (summary)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Field names are matched **case-insensitively**; vector layers may be GeoPackage
 (``.gpkg``), Shapefile (``.shp``) or anything GDAL/OGR reads, in any CRS
@@ -98,7 +98,7 @@ attribute table is not read (only its geometry).
        are **solid** (OpenFOAM removes the footprint; TELEMAC raises the bed to
        crest + ``solid_freeboard_2d``) - and a ``Mode`` column overrides it per
        feature. **No STL is needed**: that is a ``snappyHexMesh`` requirement, and
-       hydromate writes its mesh itself. See :ref:`usage-structures`.
+       axqua writes its mesh itself. See :ref:`usage-structures`.
    * - ``geodata.control_sections`` *(optional)*
      - ``cross-sections.gpkg``
      - **lines**
@@ -134,14 +134,14 @@ Tabular geodata (CSV):
     CSV ``zone_id,ks`` mapping each ``roughness-zones.gpkg`` ``Zone ID`` to a
     roughness value (e.g. a Nikuradse :math:`k_s` in metres); one row per zone.
 ``boundaries.stage_discharge`` *(optional; e.g.* ``rating-curve.csv`` *)*
-    the outlet rating curve as a ``Q,WSE`` CSV (discharge [m³/s], water-surface elevation [m]); extra rows are interpolated. One pair at the steady discharge suffices. Only used when ``outflow_condition: stage_discharge``; auto-synthesised from a Manning/Strickler value + channel geometry by ``hydromate rating`` (or ``preprocessing.py``) when absent.
+    the outlet rating curve as a ``Q,WSE`` CSV (discharge [m³/s], water-surface elevation [m]); extra rows are interpolated. One pair at the steady discharge suffices. Only used when ``outflow_condition: stage_discharge``; auto-synthesised from a Manning/Strickler value + channel geometry by ``axqua rating`` (or ``preprocessing.py``) when absent.
 
 Measurement **positions** (point layers joined to the ground-truth value files or the :ref:`calibration-target template <input-target-template>` by ``ID`` / row order) also live in geodata and are reprojected on ingest; see :ref:`Ground truth <input-ground-truth>`.
 
 .. _digitising-geodata:
 
 Drawing user vector layers (QGIS)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The mesh zones (``mesh-zones.gpkg``), roughness zones (``roughness-zones.gpkg``), liquid boundaries (``liquid-boundaries.gpkg``) and channel centerline (``channel-centerline.gpkg``) are digitised by hand in a GIS, over the ROI polygon (``roi-<reach>.gpkg``). They must line up: the liquid-boundary lines span the inflow / outflow cross-sections and coincide with the outer bounds of the mesh zones, and the centerline runs down the channel. Give each layer the **attribute fields** listed in the table above (``Zone Name`` + ``Max Edge Length (m)`` on the
 mesh zones, ``Zone ID`` on the roughness zones, the ``inflow`` / ``outflow`` *type* field on the liquid boundaries).
@@ -151,7 +151,7 @@ special: no 3D geometry, no STL, no CAD. Trace a dam crest or a wall as a **line
 give it a ``Width (m)``, or digitise a building as a **polygon**; then type in a
 ``Crest (m)`` (a level crest) or a ``Height (m)`` (above the local ground). QGIS's 3D
 map view will even extrude the footprints by the height attribute for a visual check,
-but hydromate reads only the geometry and the attributes.
+but aXqua reads only the geometry and the attributes.
 
 
 
@@ -202,7 +202,7 @@ The configuration is a single YAML file with these top-level sections:
 
 ``project``
     case ``name``, ``crs_epsg`` (project coordinate system, metric), and the
-    per-phase output directories under ``hydromate-case/`` (``preprocessing_dir``,
+    per-phase output directories under ``axqua-case/`` (``preprocessing_dir``,
     ``model_dir``, ``postprocessing_dir``, ``calibration_dir``).
 ``telemac``
     ``pysource`` (the TELEMAC environment script, *sourced* - not imported -
@@ -255,7 +255,7 @@ The configuration is a single YAML file with these top-level sections:
 ``ground_truth``
     the calibration ground truth: the :ref:`calibration-target template
     <input-target-template>` (``targets``), a tidy ``measurements`` table, or the
-    raw ``sources`` hydromate compiles into it.
+    raw ``sources`` aXqua compiles into it.
 ``calibration``
     the calibration and extraction quantities, the calibration parameters with
     their ranges, and the sampling settings forwarded to HydroBayesCal.
@@ -296,7 +296,7 @@ The full, commented reference is ``cases/case-template/case-config.yml`` (copy t
 whole ``cases/case-template/`` folder to start a new case).
 
 Calibration parameter naming
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Parameter names follow HydroBayesCal's prefix convention:
 
@@ -314,17 +314,17 @@ tab produces these names for you from a drop-down catalog, so you rarely type th
 by hand.
 
 Graphical configurator
-~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~
 
 Instead of hand-editing YAML you can fill in the configuration as a browser form
 (built with Streamlit). Install the ``gui`` extra and launch it with the
-``hydromate-gui`` console script:
+``axqua-gui`` console script:
 
 .. code-block:: bash
 
    pip install -e ".[gui]"
-   hydromate-gui                      # opens a local app in your browser
-   # hydromate-gui --server.port 8600 # extra arguments are forwarded to Streamlit
+   axqua-gui                      # opens a local app in your browser
+   # axqua-gui --server.port 8600 # extra arguments are forwarded to Streamlit
 
 This opens a local app in your browser (nothing leaves your machine). The form has
 one tab per configuration section - **Project, TELEMAC, Geodata, Boundaries, Mesh,
@@ -339,7 +339,7 @@ parameters, ground-truth sources and sediment classes are edited as tables.
 You can load an existing YAML, preview and download the generated YAML, save it to a
 path, and run **Validate** (``--check``) or **Build** directly - the same actions as
 the command line, operating on the saved file so its relative input paths resolve.
-The **Build** button runs the case build (``hydromate <config>``), i.e. workflow
+The **Build** button runs the case build (``axqua <config>``), i.e. workflow
 **step 1**; the later steps (``initial_run.py`` test run, the mesh-convergence study,
 HydroBayesCal, and the optional 3D extension) are run from the per-case scripts - see
 :doc:`usage`.
@@ -374,7 +374,7 @@ columns are missing is reported as an error rather than silently skipped.
 
 There are three ways to provide the table:
 
-#. **The calibration-target template** (recommended). ``hydromate targets
+#. **The calibration-target template** (recommended). ``aXqua targets
    <config>`` generates a user-fillable
    ``user-sources/ground-truth/calibration-target-data.xlsx`` (plus a co-located
    ``extract_flowtracker.py`` helper). You fill it in and point
@@ -382,7 +382,7 @@ There are three ways to provide the table:
    <input-target-template>`.
 #. **Author the tidy table yourself** (the general case): create the ``.xlsx``
    with the structure above and point ``ground_truth.measurements`` at it.
-#. **Let hydromate compile it** from raw field exports: declare the raw sources
+#. **Let aXqua compile it** from raw field exports: declare the raw sources
    under ``ground_truth.sources`` and the tidy table is generated for you (written
    to ``preprocessing/ground-truth.xlsx`` unless ``ground_truth.measurements``
    sets an explicit output path). Each source names a ``category``, an adapter
@@ -406,7 +406,7 @@ There are three ways to provide the table:
 .. _input-target-template:
 
 The calibration-target template
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The template gives ground truth a **consistent, user-friendly structure** whose
 rows are keyed by **unique IDs** that link to a point layer in
@@ -414,7 +414,7 @@ rows are keyed by **unique IDs** that link to a point layer in
 
 .. code-block:: bash
 
-   hydromate targets cases/<your-case>/case-config.yml
+   axqua targets cases/<your-case>/case-config.yml
 
 This writes ``calibration-target-data.xlsx`` (and ``extract_flowtracker.py``) into
 ``user-sources/ground-truth/``. The workbook has these tabs:
@@ -464,7 +464,7 @@ the layer):
    (``u std`` / ``Std Dev v'(x)`` / σ).
 
 Filling the hydraulics tab from FlowTracker2
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The co-located ``extract_flowtracker.py`` script populates the ``hydraulics`` tab
 straight from SonTek FlowTracker2 exports, one row per point keyed by the point's
@@ -473,7 +473,7 @@ own ID:
 .. code-block:: bash
 
    cd cases/<your-case>/user-sources/ground-truth
-   mamba run -n hydromate-env python extract_flowtracker.py FlowTracker2-day1.xlsx FlowTracker2-day2.xlsx
+   mamba run -n axqua-env python extract_flowtracker.py FlowTracker2-day1.xlsx FlowTracker2-day2.xlsx
 
 It auto-detects the three real export layouts - the SonTek ``.ft.sum`` summary, a
 TKE-stats export, and the multi-sheet ``FT_TKE_Summary`` (raw per-sample sheets are
@@ -482,7 +482,7 @@ fluctuations from the sample standard deviation (``u std`` / ``Std Dev v'(x)`` /
 where present, otherwise **reconstructed** as ``u' ≈ VxErr·√Npts``; ``U_h``,
 ``U_h'`` and ``TKE`` recompute in the sheet (or a measured ``TKE`` is used when the
 file provides one). The same logic is available programmatically as
-:func:`hydromate.read_flowtracker` / :func:`hydromate.fill_template_hydraulics`.
+:func:`axqua.read_flowtracker` / :func:`axqua.fill_template_hydraulics`.
 
 .. note::
 

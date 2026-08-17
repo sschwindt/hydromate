@@ -24,10 +24,10 @@ particularities"):
 Outputs (schema: id, x, y, z, SCALAR VELOCITY_DATA/_ERROR,
 WATER DEPTH_DATA/_ERROR, label):
 
-* ``hydromate-case/preprocessing/measurements-corrected-q47-3.csv``
-* ``hydromate-case/preprocessing/measurements-corrected-q48-45.csv``
+* ``axqua-case/preprocessing/measurements-corrected-q47-3.csv``
+* ``axqua-case/preprocessing/measurements-corrected-q48-45.csv``
 
-Run: mamba run -n hydromate-env python cases/inn-KB15-2025-hydro/prepare_corrected_targets.py
+Run: mamba run -n axqua-env python cases/inn-KB15-2025-hydro/prepare_corrected_targets.py
 """
 from __future__ import annotations
 
@@ -38,16 +38,16 @@ import matplotlib.tri as mtri
 import numpy as np
 import pandas as pd
 
-from hydromate.campaigns import compile_adapter, compile_transect, read_xlsx_sheet
-from hydromate.selafin import read_slf
+from axqua.campaigns import compile_adapter, compile_transect, read_xlsx_sheet
+from axqua.selafin import read_slf
 
 HERE = Path(__file__).resolve().parent
 GEO = HERE / "user-sources/geodata"
 GT = HERE / "user-sources/ground-truth/hydraulics"
-OUT = HERE / "hydromate-case/preprocessing"
+OUT = HERE / "axqua-case/preprocessing"
 
 DGPS_CORRECTED = GEO / "flowtracker2/dgps-flowtracker-kb15-sept25-zcorrected.gpkg"
-GEOMETRY = HERE / "hydromate-case/simulation/geometry.slf"
+GEOMETRY = HERE / "axqua-case/simulation/geometry.slf"
 
 WSE_ERROR_SEPT = 0.05   # m: RTK z (3 cm) + depth reading (2 cm) + pool flatness
 WSE_ERROR_NOV = 0.10    # m: unresolved z/depth inconsistency across the transect

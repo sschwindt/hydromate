@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from hydromate import campaigns
+from axqua import campaigns
 
 
 def test_velocity_magnitude_and_error_floor():

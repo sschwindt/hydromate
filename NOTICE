@@ -1,4 +1,4 @@
-hydromate
+axqua
 Copyright (c) 2026, Sebastian Schwindt
 Licensed under the BSD 3-Clause License (see LICENSE).
 
@@ -6,11 +6,11 @@ Licensed under the BSD 3-Clause License (see LICENSE).
 Third-party acknowledgements
 --------------------------------------------------------------------------------
 
-hydromate.sortie / hydromate.flux_convergence
+axqua.sortie / axqua.flux_convergence
 ---------------------------------------------
 The TELEMAC listing (".sortie") reader and the boundary-flux convergence analysis
 were adopted from the `pythomac` package (https://github.com/hydro-informatics/
-pythomac), lead author Sebastian Schwindt, who is also the author of hydromate and
+pythomac), lead author Sebastian Schwindt, who is also the author of axqua and
 authorised the adoption. The analysis reproduces pythomac's behaviour and writes the
 same four output files (extracted-fluxes.csv, flux-convergence.png,
 convergence-rate.csv, convergence-rate.png).
@@ -19,11 +19,11 @@ The implementation here is an independent one written against TELEMAC's output
 format, not a copy. That is deliberate: pythomac's own listing parser
 (`parser_output.py`) and its `utils/files.py` / `utils/exceptions.py` are adapted
 from TELEMAC-MASCARET's `HOMETEL/scripts/python3/postel` under the GNU GPL v3 and
-carry the TELEMAC-MASCARET Consortium's copyright, which is not hydromate's or
-pythomac's to relicense. hydromate therefore reimplements the parsing rather than
+carry the TELEMAC-MASCARET Consortium's copyright, which is not axqua's or
+pythomac's to relicense. axqua therefore reimplements the parsing rather than
 vendoring those files, and the GAIA / tracer mass-balance field lists in
-hydromate.sortie were re-derived from the FORTRAN FORMAT statements in TELEMAC
+axqua.sortie were re-derived from the FORTRAN FORMAT statements in TELEMAC
 v9.1.1 (`sources/gaia/mass_balance.f`, `sources/telemac3d/bil3d.f`).
 
 TELEMAC-MASCARET (http://www.opentelemac.org) is a separate program, invoked by
-hydromate as an external solver; none of its source is included or linked here.
+axqua as an external solver; none of its source is included or linked here.

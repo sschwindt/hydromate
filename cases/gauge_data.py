@@ -2,7 +2,7 @@
 
 A small, self-contained **Streamlit** helper that pulls **discharge** time series and
 the **stage-discharge relation** (rating curve) for a river gauge and exports them as
-CSVs that drop straight into a hydromate ``case-config.yml``:
+CSVs that drop straight into a axqua ``case-config.yml``:
 
 * the discharge series -> ``boundaries.inflow`` (a ``datetime,Q`` CSV, m³/s);
 * the stage-discharge table -> ``boundaries.stage_discharge`` (a ``Q,WSE`` CSV; enter
@@ -20,11 +20,11 @@ Two data sources, auto-detected from what you paste:
   Instantaneous- or Daily-Values JSON web service and the rating from the USGS rating
   depot (native units ft³/s and ft; **converted to metric** on ingest).
 
-Everything is normalised to **metric** (m³/s, m) so the exports feed hydromate directly.
+Everything is normalised to **metric** (m³/s, m) so the exports feed axqua directly.
 
 Run it (from the repository root)::
 
-    mamba run -n hydromate-env python cases/gauge_data.py
+    mamba run -n axqua-env python cases/gauge_data.py
     # equivalently:  streamlit run cases/gauge_data.py
 
 Running it with plain ``python`` re-launches it under Streamlit automatically; extra
@@ -385,7 +385,7 @@ def run_app() -> None:
     st.set_page_config(page_title="Gauge data fetch", page_icon="🌊", layout="wide")
     st.title("🌊 River-gauge data fetch")
     st.caption("Discharge series + stage-discharge relation from **HND Bayern** or "
-               "**USGS NWIS**, normalised to metric and exported for hydromate.")
+               "**USGS NWIS**, normalised to metric and exported for axqua.")
 
     load_cached = st.cache_data(ttl=600, show_spinner=False)(load_gauge)
 
@@ -452,7 +452,7 @@ def run_app() -> None:
             st.markdown(
                 "**Absolute water-surface elevation.** The stage is metres above the "
                 "gauge zero (HND *Pegelnullpunkt* / USGS *gage datum*), which the "
-                "services do not always publish. Enter it to export a hydromate "
+                "services do not always publish. Enter it to export a axqua "
                 "`Q,WSE` rating; leave 0 to export the stage relative to the gauge zero.")
             zero = st.number_input("gauge-zero elevation [m a.s.l.]", value=0.0,
                                    step=0.001, format="%.3f")
@@ -505,8 +505,8 @@ def _relaunch() -> int:
         from streamlit.web import cli as stcli
     except ModuleNotFoundError:
         sys.stderr.write(
-            "Streamlit is not installed. Run in the hydromate GUI env, e.g.:\n"
-            "    mamba run -n hydromate-env streamlit run cases/gauge_data.py\n")
+            "Streamlit is not installed. Run in the axqua GUI env, e.g.:\n"
+            "    mamba run -n axqua-env streamlit run cases/gauge_data.py\n")
         return 1
     sys.argv = ["streamlit", "run", __file__, *sys.argv[1:]]
     return stcli.main()

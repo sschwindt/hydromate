@@ -7,16 +7,16 @@ of the channel roughness).
 
 ## Structure and workflow
 
-Standard hydromate case layout (see the repository `README.md` and
+Standard aXqua case layout (see the repository `README.md` and
 `CLAUDE.md`); everything is driven by `case-config.yml` (all paths relative to
 this folder). Ordered steps:
 
-1. `preprocessing.py` - full case build into `hydromate-case/simulation/`
+1. `preprocessing.py` - full case build into `axqua-case/simulation/`
    (mesh `geometry.slf`, `boundaries.cli`, `friction.tbl`, `steady2d.cas`).
 2. `initial_run.py` - steady test run + boundary-flux convergence check.
 3. `mesh_convergence_study.py` - horizontal grid independence.
 4. `prepare_corrected_targets.py` - **case-specific**: compiles the corrected
-   calibration-target CSVs into `hydromate-case/preprocessing/` (see "Data
+   calibration-target CSVs into `axqua-case/preprocessing/` (see "Data
    particularities" - run this before any calibration re-run).
 5. `run_Bayes_cal_multiflow.py [--smoke|--run|--resume]` - multi-discharge
    Bayesian calibration (one shared channel `ks` against all campaigns
@@ -25,8 +25,8 @@ this folder). Ordered steps:
    `unsteady_run.py` (hydrograph-driven run).
 
 Inputs live in `user-sources/` (gitignored), produced artifacts in
-`hydromate-case/` (gitignored), split by phase. Calibration artifacts land in
-`hydromate-case/calibration-validation/multiflow/` (per-flow trees
+`axqua-case/` (gitignored), split by phase. Calibration artifacts land in
+`axqua-case/calibration-validation/multiflow/` (per-flow trees
 `flow-<name>/`, combined surrogate + posterior under
 `auto-saved-results-HydroBayesCal/`).
 
@@ -95,7 +95,7 @@ measurement, same x-y per vertical). They are used two ways:
   single 0.6h proxy (mean shift -0.015 m/s, up to 0.08 m/s). Implemented in
   `prepare_corrected_targets.py`; single-point verticals keep the 0.6h value.
 * **Vertical-profile evidence:** log-law fits `u(z') = (u*/kappa) ln(z'/z0)`
-  per vertical (see `hydromate-case/preprocessing/kb15-loglaw-profiles.csv`)
+  per vertical (see `axqua-case/preprocessing/kb15-loglaw-profiles.csv`)
   give `ks = 30 z0` with median **0.089 m** (IQR 0.05-0.41 m, very noisy at
   these low wadeable velocities) - i.e. the profiles support a roughness well
   inside the prior `[0.05, 0.45]` m and clearly below its upper bound. They
@@ -162,11 +162,11 @@ velocities the FlowTracker sampled. The **20 multi-depth ADV verticals**
 **non-hydrostatic TELEMAC-3D** model - which resolves the vertical velocity
 structure and secondary currents - is calibrated against the velocity **at
 each measured depth** rather than a depth-averaged proxy. The 3D case reuses
-the 2D horizontal mesh, hotstarts from `r2d.slf`, and (per hydromate's 3D
+the 2D horizontal mesh, hotstarts from `r2d.slf`, and (per aXqua's 3D
 extension) uses a single representative `FRICTION COEFFICIENT FOR THE BOTTOM`
 (3D has no zonal friction file), sigma layers sized to `dz ~ dx/2`, and MURD
 PSI advection for wetting/drying robustness. See `add3d.py` /
-`hydromate/threed.py`.
+`axqua/threed.py`.
 
 ## Boundary conditions
 
