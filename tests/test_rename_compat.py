@@ -195,6 +195,41 @@ def test_nothing_ships_the_old_name_any_more():
         "\n".join(stray[:20])
 
 
+def test_no_tracked_filename_carries_the_old_name():
+    """The guard above reads file *contents* and cannot see a filename.
+
+    That gap was real: the plugin icon stayed ``hydromate.svg`` while every reference to
+    it had become ``axqua.svg``, so ``metadata.txt`` named an icon that was not there and
+    the plugin would have shipped without one. The zip validator caught it; this makes
+    sure the test suite does too.
+    """
+    import pathlib
+    import subprocess
+
+    from axqua.jobs import paths as _paths
+
+    root = pathlib.Path(_paths.__file__).parents[3]
+    tracked = subprocess.run(["git", "ls-files"], cwd=root,
+                             capture_output=True, text=True).stdout.splitlines()
+    offenders = [name for name in tracked if "hydromate" in name.lower()]
+    assert offenders == [], f"these filenames still carry the old name: {offenders}"
+
+
+def test_the_plugin_package_is_publishable():
+    """Runs the same validation the release workflow does, so a packaging problem fails
+    here rather than at a tag."""
+    import pathlib
+    import subprocess
+    import sys
+
+    from axqua.jobs import paths as _paths
+
+    root = pathlib.Path(_paths.__file__).parents[3]
+    proc = subprocess.run([sys.executable, "scripts/build_plugin_zip.py", "--check"],
+                          cwd=root, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
 def test_the_readme_actually_documents_the_migration():
     """README.md is exempted above, so this makes sure it earns the exemption."""
     import pathlib
