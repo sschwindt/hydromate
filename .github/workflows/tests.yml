@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The floor hydromate declares, and current. The floor is the one that catches
+        # The floor axqua declares, and current. The floor is the one that catches
         # accidental use of newer syntax.
         python-version: ["3.10", "3.13"]
 
@@ -28,7 +28,7 @@ jobs:
       - uses: conda-incubator/setup-miniconda@v3
         with:
           miniforge-version: latest
-          activate-environment: hydromate-env
+          activate-environment: axqua-env
           python-version: ${{ matrix.python-version }}
           channels: conda-forge
           auto-activate-base: false
@@ -45,7 +45,7 @@ jobs:
           # CI image does not carry it.
           pip install 'gmsh>=4.13'
 
-      - name: Install hydromate
+      - name: Install axqua
         shell: bash -el {0}
         run: pip install -e ".[dev]" --no-deps && pip install pytest ruff
 
@@ -56,7 +56,7 @@ jobs:
       - name: Test
         shell: bash -el {0}
         # Both suites in one process: the plugin package is loaded under an alias by
-        # qgis_plugin/tests/conftest.py, since it shares the name `hydromate`.
+        # qgis_plugin/tests/conftest.py, since it shares the name `axqua`.
         run: pytest tests/ qgis_plugin/tests -q
 
       - name: The plugin package is publishable

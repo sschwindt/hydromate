@@ -8,8 +8,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from hydromate import boundary, selafin, threed, unsteady
-from hydromate.boundary import LiquidBoundary
+from axqua import boundary, selafin, threed, unsteady
+from axqua.boundary import LiquidBoundary
 
 
 def _cli_row(code, n_global, rank, comment):
@@ -174,7 +174,7 @@ def test_build_unsteady_3d_case(tmp_path):
 
 
 def _cfg(tmp_path):
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
         Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )

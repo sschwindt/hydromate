@@ -11,10 +11,10 @@ from __future__ import annotations
 import json
 
 
-from hydromate.cli import main
-from hydromate.jobs.model import JobKind, JobState
-from hydromate.jobs.paths import JobDir
-from hydromate.jobs.store import read_status
+from axqua.cli import main
+from axqua.jobs.model import JobKind, JobState
+from axqua.jobs.paths import JobDir
+from axqua.jobs.store import read_status
 
 
 def _json(capsys) -> dict:
@@ -24,7 +24,7 @@ def _json(capsys) -> dict:
 
 
 def _make_job(cfg, kind=JobKind.STEADY_RUN, **kwargs) -> JobDir:
-    from hydromate.jobs import submit as submit_mod
+    from axqua.jobs import submit as submit_mod
     spec = submit_mod.build_spec(cfg, kind, **kwargs)
     return submit_mod.create_job(cfg, spec)
 
@@ -33,7 +33,7 @@ def _make_job(cfg, kind=JobKind.STEADY_RUN, **kwargs) -> JobDir:
 
 
 def test_the_bare_config_form_still_builds(fake_case, capsys):
-    """``hydromate <config> --check`` is quoted in the docs and in every case runbook."""
+    """``axqua <config> --check`` is quoted in the docs and in every case runbook."""
     assert main([str(fake_case.config_dir / "case-config.yml"), "--check"]) == 0
 
 
@@ -46,7 +46,7 @@ def test_case_status_still_works_under_its_old_spelling(fake_case, capsys):
 def test_the_old_spelling_says_where_the_new_one_is(fake_case, caplog):
     import logging
     config = str(fake_case.config_dir / "case-config.yml")
-    with caplog.at_level(logging.WARNING, logger="hydromate"):
+    with caplog.at_level(logging.WARNING, logger="axqua"):
         main(["status", config])
     assert "case-status" in caplog.text
 
@@ -91,7 +91,7 @@ def test_every_json_result_uses_one_envelope(fake_case, capsys):
     for argv in (["list", "--json"], ["status", jd.job_id, "--json"]):
         main(argv)
         payload = _json(capsys)
-        assert set(payload) == {"ok", "command", "hydromate", "data", "error"}
+        assert set(payload) == {"ok", "command", "axqua", "data", "error"}
         assert payload["ok"] is True and payload["error"] is None
 
 
@@ -99,7 +99,7 @@ def test_a_json_failure_carries_the_structured_error(capsys):
     main(["status", "2026-01-01-nothing-steady-aaaaaa", "--json"])
     payload = _json(capsys)
     assert payload["ok"] is False
-    assert payload["error"]["code"].startswith("hydromate.")
+    assert payload["error"]["code"].startswith("axqua.")
     assert payload["error"]["remedy"]
 
 
@@ -133,7 +133,7 @@ def test_narration_never_pollutes_the_json_document(fake_case, capsys):
 
 
 def test_exit_codes_distinguish_the_error_categories(fake_case, capsys, tmp_path):
-    from hydromate import jobcli
+    from axqua import jobcli
     # A bad job reference is a config error.
     assert main(["status", "2026-01-01-x-steady-aaaaaa"]) == jobcli.EXIT_CONFIG
     # An unknown kind, likewise.
@@ -163,7 +163,7 @@ def test_list_filters(fake_case, capsys):
 
 
 def test_list_rebuild_reconstructs_from_the_directories(fake_case, capsys, tmp_path):
-    from hydromate.jobs.index import JobIndex
+    from axqua.jobs.index import JobIndex
     jd = _make_job(fake_case)
     JobIndex().rebuild(jd.root.parent)          # populate, then wipe
     JobIndex()._connect
@@ -190,7 +190,7 @@ def test_submit_needs_a_kind(fake_case, capsys):
 
 
 def test_submit_dry_run_creates_nothing(fake_case, capsys, tmp_path):
-    from hydromate.jobs import paths
+    from axqua.jobs import paths
     config = str(fake_case.config_dir / "case-config.yml")
     assert main(["submit", config, "--kind", "steady", "--dry-run", "--json"]) == 0
     spec = _json(capsys)["data"]
@@ -221,9 +221,9 @@ def test_execute_runs_the_job_here_and_now(fake_case, capsys, monkeypatch):
     # sys.path, not its parent, so the package spelling only works when the
     # repository root happens to be importable too.
     from test_jobs_executor import _FakeSpec, RecordingBackend
-    from hydromate.core import registry
-    from hydromate.core.capabilities import Capability, Support
-    from hydromate.core.registry import CapabilitySpec
+    from axqua.core import registry
+    from axqua.core.capabilities import Capability, Support
+    from axqua.core.registry import CapabilitySpec
 
     backend = RecordingBackend()
     _FakeSpec.instances["telemac"] = backend
@@ -265,7 +265,7 @@ def test_logs_says_so_when_there_is_nothing_yet(fake_case, capsys):
 
 
 def test_the_solver_listing_is_a_separate_stream(fake_case, capsys):
-    """Plan §23: hydromate's narration and the solver's own output are different
+    """Plan §23: axqua's narration and the solver's own output are different
     artifacts with different rotation policies."""
     jd = _make_job(fake_case)
     jd.runner_log.write_text("runner narration\n", encoding="utf-8")
@@ -289,7 +289,7 @@ def test_cancelling_a_finished_job_changes_nothing(fake_case, capsys):
     status.transition(JobState.STARTING)
     status.transition(JobState.RUNNING)
     status.transition(JobState.COMPLETED)
-    from hydromate.jobs.store import write_status
+    from axqua.jobs.store import write_status
     write_status(jd, status)
 
     assert main(["cancel", jd.job_id, "--json"]) == 0
@@ -312,7 +312,7 @@ def test_profiles_path_points_into_the_config_dir(capsys):
 def test_the_plan_example_profiles_parse_verbatim(tmp_path, monkeypatch, capsys):
     """The four profiles in plan §6, unchanged. If the schema drifted from what the
     plan documents, this is what would notice."""
-    monkeypatch.setenv("HYDROMATE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("AXQUA_CONFIG_DIR", str(tmp_path))
     (tmp_path / "profiles.yml").write_text("""
 profiles:
   telemac_linux:
@@ -322,21 +322,21 @@ profiles:
     config_name: ubuntu
     mpi_launcher: mpirun
     mpi_processes: 16
-    working_root: /scratch/hydromate
+    working_root: /scratch/axqua
   telemac_windows:
     solver: telemac
     environment: windows
     setup_script: C:\\telemac\\v9.1\\configs\\pysource.bat
     mpi_launcher: mpiexec
     mpi_processes: 8
-    working_root: D:\\scratch\\hydromate
+    working_root: D:\\scratch\\axqua
   openfoam_linux:
     solver: openfoam
     environment: posix
     setup_script: /opt/openfoam9/etc/bashrc
     mpi_launcher: mpirun
     mpi_processes: 32
-    working_root: /scratch/hydromate
+    working_root: /scratch/axqua
     postprocess:
       - foamToVTK
   openfoam_windows:
@@ -346,9 +346,9 @@ profiles:
     setup_script: /opt/openfoam9/etc/bashrc
     mpi_launcher: mpirun
     mpi_processes: 16
-    working_root: /scratch/hydromate
+    working_root: /scratch/axqua
 """, encoding="utf-8")
-    from hydromate.jobs.profiles import load_profiles
+    from axqua.jobs.profiles import load_profiles
     profiles = load_profiles()
     assert set(profiles) == {"telemac_linux", "telemac_windows", "openfoam_linux",
                              "openfoam_windows"}
@@ -367,7 +367,7 @@ profiles:
 def test_a_profile_derived_from_the_case_config_needs_no_profiles_file(fake_case):
     """Every existing case already carries telemac.pysource, so the profile system is
     an addition rather than a new prerequisite."""
-    from hydromate.jobs.profiles import from_config
+    from axqua.jobs.profiles import from_config
     profile = from_config(fake_case, "telemac")
     assert profile.solver == "telemac"
     assert profile.validate().ok

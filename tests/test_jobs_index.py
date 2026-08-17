@@ -12,11 +12,11 @@ import sqlite3
 
 import pytest
 
-from hydromate.jobs import paths as jobpaths
-from hydromate.jobs.index import JobIndex, list_jobs, row_for, scan
-from hydromate.jobs.model import JobKind, JobSpec, JobState, JobStatus
-from hydromate.jobs.paths import JobDir
-from hydromate.jobs.store import write_spec, write_status
+from axqua.jobs import paths as jobpaths
+from axqua.jobs.index import JobIndex, list_jobs, row_for, scan
+from axqua.jobs.model import JobKind, JobSpec, JobState, JobStatus
+from axqua.jobs.paths import JobDir
+from axqua.jobs.store import write_spec, write_status
 
 
 def _make_job(root, name: str, *, state: JobState = JobState.QUEUED) -> JobDir:
@@ -93,7 +93,7 @@ def test_a_corrupt_database_falls_back_to_a_scan(populated, monkeypatch):
     a corrupt file all land here."""
     db = populated.parent / "jobs.sqlite"
     db.write_bytes(b"this is not a database" * 100)
-    monkeypatch.setenv("HYDROMATE_DATA_DIR", str(populated.parent))
+    monkeypatch.setenv("AXQUA_DATA_DIR", str(populated.parent))
     rows = list_jobs(job_root=populated)
     assert len(rows) == 3
 
@@ -132,5 +132,5 @@ def test_listing_refreshes_a_non_terminal_row_from_disk(populated):
 
 
 def test_the_index_lives_under_the_data_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("HYDROMATE_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("AXQUA_DATA_DIR", str(tmp_path / "data"))
     assert jobpaths.index_path() == tmp_path / "data" / "jobs.sqlite"

@@ -15,10 +15,10 @@ outflow), then checks:
   discharge, vertex cap, enclosed-node check), and ``percolation.mode: region``
   swaps the losing strip for the percolation patch polygon.
 
-Requires the ``hydromate-env`` environment (geopandas). No TELEMAC needed.
+Requires the ``axqua-env`` environment (geopandas). No TELEMAC needed.
 
-Run directly:  mamba run -n hydromate-env python tests/test_boundary.py
-Or via pytest: mamba run -n hydromate-env pytest tests/test_boundary.py
+Run directly:  mamba run -n axqua-env python tests/test_boundary.py
+Or via pytest: mamba run -n axqua-env pytest tests/test_boundary.py
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ def _rect_mesh(n_left: int, n_right: int, n_horiz: int = 9, roll: int = 0):
     *roll* rotates the loop start by that many nodes, so a single liquid edge can
     be made to straddle the loop start (boundary_nodes index 0) - the wrap-around
     that used to split one boundary into two."""
-    from hydromate.mesh import Mesh
+    from axqua.mesh import Mesh
 
     bottom = [(x, Y0) for x in np.linspace(X0, X0 + W, n_horiz)[1:-1]]
     right = [(X0 + W, y) for y in np.linspace(Y0, Y0 + H, n_right)]
@@ -91,8 +91,8 @@ boundaries:
 
 
 def run_boundary_test(tmp: Path) -> None:
-    from hydromate import boundary
-    from hydromate.config import load_config
+    from axqua import boundary
+    from axqua.config import load_config
 
     cfg = load_config(_write_cfg(tmp, "free"))
     cfg.ensure_dirs()
@@ -133,8 +133,8 @@ def test_wraparound_not_split(tmp_path):
     and was emitted as two liquid boundaries (PRESCRIBED FLOWRATES with a spurious
     third value), so TELEMAC - which numbers cyclically (FRONT2) - saw a different
     count and no inflow established."""
-    from hydromate import boundary
-    from hydromate.config import load_config
+    from axqua import boundary
+    from axqua.config import load_config
 
     cfg = load_config(_write_cfg(tmp_path, "free"))
     cfg.ensure_dirs()
@@ -155,19 +155,19 @@ def test_wraparound_not_split(tmp_path):
 
 
 def test_node_balance_warning(tmp_path, caplog):
-    from hydromate import boundary
-    from hydromate.config import load_config
+    from axqua import boundary
+    from axqua.config import load_config
 
     cfg = load_config(_write_cfg(tmp_path, "free"))
 
     # balanced: no stability warning
-    with caplog.at_level(logging.WARNING, logger="hydromate"):
+    with caplog.at_level(logging.WARNING, logger="axqua"):
         boundary.classify_nodes(cfg, _rect_mesh(n_left=8, n_right=8))
     assert "STABILITY RISK" not in caplog.text
 
     # imbalanced (>10%): 9 inflow vs 5 outflow -> warning
     caplog.clear()
-    with caplog.at_level(logging.WARNING, logger="hydromate"):
+    with caplog.at_level(logging.WARNING, logger="axqua"):
         boundary.classify_nodes(cfg, _rect_mesh(n_left=9, n_right=5))
     assert "STABILITY RISK" in caplog.text, "expected a node-imbalance warning"
     print("NODE-BALANCE WARNING TEST PASSED")
@@ -178,7 +178,7 @@ def _internal_lines_cfg(tmp_path, extra_yaml: str = ""):
     import geopandas as gpd
     from shapely.geometry import LineString
 
-    from hydromate.config import load_config
+    from axqua.config import load_config
 
     geo = tmp_path / "geo"
     geo.mkdir(parents=True, exist_ok=True)
@@ -215,7 +215,7 @@ def test_internal_source_regions(tmp_path):
     signed discharges, a bounded vertex count, and verified enclosed mesh nodes."""
     import pytest
 
-    from hydromate import boundary
+    from axqua import boundary
 
     cfg = _internal_lines_cfg(tmp_path)
     mesh = _internal_lines_mesh()
@@ -243,7 +243,7 @@ def test_internal_source_regions(tmp_path):
     with pytest.raises(ValueError, match="contains no mesh node"):
         boundary.load_internal_source_regions(cfg, far)
 
-    from hydromate import steering
+    from axqua import steering
 
     cfg.ensure_dirs()
     text = steering.write_source_regions(cfg, regions).read_text()
@@ -280,7 +280,7 @@ def test_percolation_region_mode(tmp_path):
     import pytest
     from shapely.geometry import Polygon
 
-    from hydromate import boundary
+    from axqua import boundary
 
     geo = tmp_path / "geo"
     geo.mkdir(parents=True, exist_ok=True)

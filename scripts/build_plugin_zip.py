@@ -15,7 +15,7 @@ here rather than discovered when an upload is rejected:
 
 Usage::
 
-    python scripts/build_plugin_zip.py                 # -> dist/hydromate-qgis-<ver>.zip
+    python scripts/build_plugin_zip.py                 # -> dist/axqua-qgis-<ver>.zip
     python scripts/build_plugin_zip.py --check         # validate only, build nothing
     python scripts/build_plugin_zip.py -o somewhere.zip
 """
@@ -28,7 +28,7 @@ import zipfile
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-PLUGIN_DIR = REPO / "qgis_plugin" / "hydromate"
+PLUGIN_DIR = REPO / "qgis_plugin" / "axqua"
 DEFAULT_OUT = REPO / "dist"
 
 #: plugins.qgis.org rejects a package over this.
@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return 0
 
-    out = args.out or (DEFAULT_OUT / f"hydromate-qgis-{version}.zip")
+    out = args.out or (DEFAULT_OUT / f"axqua-qgis-{version}.zip")
     build(args.plugin_dir, out)
     size = out.stat().st_size
     print(f"  wrote {out} ({size / 1024:.0f} KiB)")

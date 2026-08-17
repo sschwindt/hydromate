@@ -1,6 +1,6 @@
 """DEM-of-Difference (DoD) with a minimum level of detection (LoD).
 
-Checks the propagated-uncertainty LoD maths and that :func:`hydromate.dem.dem_of_difference`
+Checks the propagated-uncertainty LoD maths and that :func:`axqua.dem.dem_of_difference`
 thresholds the bed-change raster: changes below the LoD are masked to nodata (or set to
 0), supra-LoD changes are kept.
 """
@@ -14,7 +14,7 @@ rasterio = pytest.importorskip("rasterio")
 
 
 def _minimal_cfg(tmp_path, **dod_kwargs):
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, DemOfDifference, Friction, Geodata,
         GroundTruth, Hydrodynamics, Initialization, MeshConfig, Morphodynamics,
         TelemacEnv,
@@ -50,7 +50,7 @@ def _write_raster(path, array, nodata=-9999.0, res=1.0):
 
 
 def test_propagated_lod_matches_formula():
-    from hydromate.dem import propagated_lod
+    from axqua.dem import propagated_lod
 
     lod = propagated_lod(0.10, 0.05, confidence_level=0.95)
     assert lod == pytest.approx(1.959963985 * math.hypot(0.10, 0.05), rel=1e-6)
@@ -68,7 +68,7 @@ def _diff_field():
 
 
 def test_dod_masks_below_lod(tmp_path):
-    from hydromate.dem import ClippedDEM, dem_of_difference
+    from axqua.dem import ClippedDEM, dem_of_difference
 
     base = np.full((20, 20), 100.0, dtype="float32")
     delta = _diff_field()
@@ -91,7 +91,7 @@ def test_dod_masks_below_lod(tmp_path):
 
 
 def test_dod_zero_below_lod_when_not_masking(tmp_path):
-    from hydromate.dem import ClippedDEM, dem_of_difference
+    from axqua.dem import ClippedDEM, dem_of_difference
 
     base = np.full((20, 20), 100.0, dtype="float32")
     delta = _diff_field()
@@ -109,7 +109,7 @@ def test_dod_zero_below_lod_when_not_masking(tmp_path):
 
 
 def test_explicit_min_lod_overrides_propagated(tmp_path):
-    from hydromate.dem import ClippedDEM, dem_of_difference, resolve_lod
+    from axqua.dem import ClippedDEM, dem_of_difference, resolve_lod
 
     cfg = _minimal_cfg(tmp_path, uncertainty_initial=0.10, uncertainty_target=0.05,
                        min_lod=0.4)

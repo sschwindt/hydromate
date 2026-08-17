@@ -3,11 +3,11 @@
 Generates a small ROI (a square channel), breaklines, MATID region points, a
 sloping DEM, an inflow series and measurements, then runs the full pipeline and
 checks every artifact is produced and structurally sane. Requires the
-``hydromate-env`` environment (gmsh, geopandas, rasterio). The TELEMAC solver is
+``axqua-env`` environment (gmsh, geopandas, rasterio). The TELEMAC solver is
 NOT invoked here (``validate_env=False``), so this runs without TELEMAC.
 
-Run directly:  mamba run -n hydromate-env python tests/test_integration.py
-Or via pytest: mamba run -n hydromate-env pytest tests/
+Run directly:  mamba run -n axqua-env python tests/test_integration.py
+Or via pytest: mamba run -n axqua-env pytest tests/
 """
 
 from __future__ import annotations
@@ -128,8 +128,8 @@ calibration:
 
 
 def run_pipeline_test(tmp: Path) -> None:
-    from hydromate.config import load_config
-    from hydromate import pipeline
+    from axqua.config import load_config
+    from axqua import pipeline
 
     cfg_yaml = _write_fixtures(tmp)
     cfg = load_config(cfg_yaml)
@@ -160,7 +160,7 @@ def run_pipeline_test(tmp: Path) -> None:
     # are the inflow plug (so DEBIMP can establish the inflow), dry everywhere else.
     assert "PREVIOUS COMPUTATION FILE" in cas, "dry start should continue from the IC"
     assert art.initial_conditions and Path(art.initial_conditions).exists()
-    from hydromate import selafin
+    from axqua import selafin
     ic = selafin.read_slf(art.initial_conditions)
     wet = ic["values"]["WATER DEPTH"] > 0
     assert wet.any(), "dry start must wet the inflow plug"

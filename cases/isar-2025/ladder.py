@@ -1,7 +1,7 @@
 """Stability test ladder for the internal loss/gain (percolation) setup.
 
 Runs one rung of the ladder documented in ``test-approaches.md``. Each rung builds
-into its OWN folder (``hydromate-case/ladder-<rung>/``) so the rungs can be compared
+into its OWN folder (``axqua-case/ladder-<rung>/``) so the rungs can be compared
 side by side and nothing clobbers the production ``simulation/`` case.
 
     T1  baseline, NO internal sources   (does the pre-wet fix alone converge?)
@@ -30,16 +30,16 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from hydromate import (
+from axqua import (
     format_flux_convergence,
     pipeline,
     prepare_steady_inputs,
     run_solver_streaming,
     setup_logging,
 )
-from hydromate.config import load_config
-from hydromate.env import TelemacRuntime
-from hydromate.flux_convergence import HOTSTART_TOLERANCE, analyze_flux_convergence
+from axqua.config import load_config
+from axqua.env import TelemacRuntime
+from axqua.flux_convergence import HOTSTART_TOLERANCE, analyze_flux_convergence
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 
@@ -98,7 +98,7 @@ def _strip_internal_lines(src: Path, dest: Path) -> Path:
     """
     import geopandas as gpd
 
-    from hydromate.boundary import _is_internal, _type_column
+    from axqua.boundary import _is_internal, _type_column
 
     gdf = gpd.read_file(src)
     type_col = _type_column(gdf)
@@ -120,8 +120,8 @@ def check_side_channel(cfg, model_dir: Path, radius: float = 40.0) -> None:
     import numpy as np
     import shapely
 
-    from hydromate.boundary import _internal_sign, _is_internal, _type_column
-    from hydromate.selafin import read_slf
+    from axqua.boundary import _internal_sign, _is_internal, _type_column
+    from axqua.selafin import read_slf
 
     res = model_dir / cfg.results_slf
     if not res.exists():
@@ -162,7 +162,7 @@ def check_side_channel(cfg, model_dir: Path, radius: float = 40.0) -> None:
 def summarize_sortie(model_dir: Path) -> dict:
     """Boundary-flux verdict parsed straight from the TELEMAC listing.
 
-    ``hydromate.analyze_flux_convergence`` needs several listing printouts, which is not
+    ``axqua.analyze_flux_convergence`` needs several listing printouts, which is not
     installed everywhere; this fallback needs nothing but the `.sortie`. It reads
     every ``BALANCE OF WATER VOLUME`` block and reports how the domain volume, the
     gross in/out fluxes and their relative imbalance evolve - which is the actual

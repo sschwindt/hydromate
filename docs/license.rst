@@ -4,7 +4,7 @@ License and disclaimer
 License
 -------
 
-``hydromate`` is distributed under the **BSD 3-Clause License**. The full text:
+``axqua`` is distributed under the **BSD 3-Clause License**. The full text:
 
 .. literalinclude:: ../LICENSE
    :language: text
@@ -12,7 +12,7 @@ License
 Disclaimer
 ----------
 
-``hydromate`` automates the *setup* of numerical hydro- and morphodynamic models; it does not validate the physical correctness of any model it produces. The software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and non-infringement (see the license text above).
+``axqua`` automates the *setup* of numerical hydro- and morphodynamic models; it does not validate the physical correctness of any model it produces. The software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and non-infringement (see the license text above).
 
 In particular, users remain responsible for:
 
@@ -26,4 +26,4 @@ Numerical model results can be sensitive to choices made during setup. Generated
 Third-party software
 --------------------
 
-``hydromate`` orchestrates and depends on independent third-party software - including TELEMAC, GAIA, gmsh, GDAL and HydroBayesCal - each distributed under its own license and terms. Installing and using those tools is subject to their respective licenses.
+``axqua`` orchestrates and depends on independent third-party software - including TELEMAC, GAIA, gmsh, GDAL and HydroBayesCal - each distributed under its own license and terms. Installing and using those tools is subject to their respective licenses.

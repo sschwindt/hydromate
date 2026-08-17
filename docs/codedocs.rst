@@ -1,78 +1,78 @@
 Code documentation
 ==================
 
-This page is generated automatically from the docstrings in the ``hydromate`` package. Each section documents one module. The package is layered: ``hydromate.core`` is solver-agnostic, and ``hydromate.solvers.<name>`` is one subpackage per simulation code.
+This page is generated automatically from the docstrings in the ``axqua`` package. Each section documents one module. The package is layered: ``axqua.core`` is solver-agnostic, and ``axqua.solvers.<name>`` is one subpackage per simulation code.
 
 Configuration
--------------------------------------------------------------------------------
+-------------
 
-.. automodule:: hydromate.config
+.. automodule:: axqua.config
    :members:
 
 Solver-agnostic core
--------------------------------------------------------------------------------
+--------------------
 
-``hydromate.core`` holds everything that describes the river and the modelling intent
+``axqua.core`` holds everything that describes the river and the modelling intent
 rather than a particular simulation code. **Nothing here imports a solver** - backends
 depend on the core, never the other way round - which is what lets a second simulation
 code be an addition rather than a rewrite.
 
-.. automodule:: hydromate.core.geodata
+.. automodule:: axqua.core.geodata
    :members:
 
-.. automodule:: hydromate.core.raster
+.. automodule:: axqua.core.raster
    :members:
 
-.. automodule:: hydromate.core.boundaries
+.. automodule:: axqua.core.boundaries
    :members:
 
-.. automodule:: hydromate.core.structures
+.. automodule:: axqua.core.structures
    :members:
 
-.. automodule:: hydromate.core.capabilities
+.. automodule:: axqua.core.capabilities
    :members:
 
-.. automodule:: hydromate.core.registry
+.. automodule:: axqua.core.registry
    :members:
 
 The OpenFOAM backend
--------------------------------------------------------------------------------
+--------------------
 
-.. automodule:: hydromate.solvers.openfoam.polymesh
+.. automodule:: axqua.solvers.openfoam.polymesh
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.mesh
+.. automodule:: axqua.solvers.openfoam.mesh
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.hotstart
+.. automodule:: axqua.solvers.openfoam.hotstart
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.fields
+.. automodule:: axqua.solvers.openfoam.fields
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.dicts
+.. automodule:: axqua.solvers.openfoam.dicts
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.case
+.. automodule:: axqua.solvers.openfoam.case
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.quality
+.. automodule:: axqua.solvers.openfoam.quality
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.runtime
+.. automodule:: axqua.solvers.openfoam.runtime
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.report
+.. automodule:: axqua.solvers.openfoam.report
    :members:
 
 Compile docs
--------------------------------------------------------------------------------
+------------
 
-These docs are built locally with Sphinx; nothing leaves your machine, so this works regardless of whether the repository is public or private. The build needs only Sphinx and the theme (the heavy runtime dependencies are mocked in ``conf.py``); install them into the ``hydromate-env`` environment once with:
+These docs are built locally with Sphinx; nothing leaves your machine, so this works regardless of whether the repository is public or private. The build needs only Sphinx and the theme (the heavy runtime dependencies are mocked in ``conf.py``); install them into the ``axqua-env`` environment once with:
 
 .. code-block:: bash
 
-   mamba run -n hydromate-env pip install -r docs/requirements-docs.txt
+   mamba run -n axqua-env pip install -r docs/requirements-docs.txt
 
 Build the HTML site with the provided Makefile (run from the ``docs/`` directory) and open it in your browser:
 
@@ -92,235 +92,235 @@ While editing the documentation, ``sphinx-autobuild`` rebuilds and refreshes the
 
 .. code-block:: bash
 
-   mamba run -n hydromate-env pip install sphinx-autobuild
-   mamba run -n hydromate-env sphinx-autobuild docs docs/_build/html
+   mamba run -n axqua-env pip install sphinx-autobuild
+   mamba run -n axqua-env sphinx-autobuild docs docs/_build/html
 
 The build output (``docs/_build/``) is git-ignored, so compiling never dirties the repository.
 
 TELEMAC environment bridge
--------------------------------------------------------------------------------
+--------------------------
 
-.. automodule:: hydromate.env
+.. automodule:: axqua.env
    :members:
 
 Live solver progress
--------------------------------------------------------------------------------
+--------------------
 
-.. automodule:: hydromate.progress
+.. automodule:: axqua.progress
    :members:
 
 Stage 1 -- DEM ingest and clipping
--------------------------------------------------------------------------------
+----------------------------------
 
-.. automodule:: hydromate.dem
+.. automodule:: axqua.dem
    :members:
 
 Stage 2 -- mesh, bathymetry and SELAFIN geometry
--------------------------------------------------------------------------------
+------------------------------------------------
 
-.. automodule:: hydromate.solvers.telemac.mesh
+.. automodule:: axqua.solvers.telemac.mesh
    :members:
 
-.. automodule:: hydromate.core.selafin
+.. automodule:: axqua.core.selafin
    :members:
 
-.. automodule:: hydromate.solvers.telemac.mesh_quality
+.. automodule:: axqua.solvers.telemac.mesh_quality
    :members:
 
 Stage 3 -- boundary conditions
--------------------------------------------------------------------------------
+------------------------------
 
-.. automodule:: hydromate.solvers.telemac.boundary
+.. automodule:: axqua.solvers.telemac.boundary
    :members:
 
 Stage 4 -- steering and friction files
--------------------------------------------------------------------------------
+--------------------------------------
 
-.. automodule:: hydromate.solvers.telemac.steering
+.. automodule:: axqua.solvers.telemac.steering
    :members:
 
 Hydraulic input readers
--------------------------------------------------------------------------------
+-----------------------
 
-.. automodule:: hydromate.hydraulics
+.. automodule:: axqua.hydraulics
    :members:
 
 Stage-discharge rating synthesis
--------------------------------------------------------------------------------
+--------------------------------
 
-.. automodule:: hydromate.rating
+.. automodule:: axqua.rating
    :members:
 
 Ground-truth ingestion
--------------------------------------------------------------------------------
+----------------------
 
-.. automodule:: hydromate.ground_truth
+.. automodule:: axqua.ground_truth
    :members:
 
 Calibration-target template
--------------------------------------------------------------------------------
+---------------------------
 
-.. automodule:: hydromate.targets
+.. automodule:: axqua.targets
    :members:
 
 FlowTracker2 velocity extraction
--------------------------------------------------------------------------------
+--------------------------------
 
-.. automodule:: hydromate.flowtracker
+.. automodule:: axqua.flowtracker
    :members:
 
 Stage 5 -- calibration CSV and HydroBayesCal config
--------------------------------------------------------------------------------
+---------------------------------------------------
 
-.. automodule:: hydromate.calibration
+.. automodule:: axqua.calibration
    :members:
 
 Pipeline orchestration
--------------------------------------------------------------------------------
+----------------------
 
-.. automodule:: hydromate.solvers.telemac.pipeline
+.. automodule:: axqua.solvers.telemac.pipeline
    :members:
 
 Shared per-case workflow helpers
--------------------------------------------------------------------------------
+--------------------------------
 
-.. automodule:: hydromate.workflow
+.. automodule:: axqua.workflow
    :members:
 
 Boundary-flux convergence (hotstart check)
--------------------------------------------------------------------------------
+------------------------------------------
 
-.. automodule:: hydromate.solvers.telemac.flux_convergence
+.. automodule:: axqua.solvers.telemac.flux_convergence
    :members:
 
 Mesh-convergence study
--------------------------------------------------------------------------------
+----------------------
 
-.. automodule:: hydromate.convergence
+.. automodule:: axqua.convergence
    :members:
 
 Mesh-resolution validity checks
--------------------------------------------------------------------------------
+-------------------------------
 
-.. automodule:: hydromate.mesh_validity
+.. automodule:: axqua.mesh_validity
    :members:
 
 TELEMAC-3D extension
--------------------------------------------------------------------------------
+--------------------
 
-.. automodule:: hydromate.solvers.telemac.threed
+.. automodule:: axqua.solvers.telemac.threed
    :members:
 
 Vertical-layer (3D) convergence study
--------------------------------------------------------------------------------
+-------------------------------------
 
-.. automodule:: hydromate.vertical_convergence
+.. automodule:: axqua.vertical_convergence
    :members:
 
 Unsteady (hydrograph) extension
--------------------------------------------------------------------------------
+-------------------------------
 
-.. automodule:: hydromate.solvers.telemac.unsteady
+.. automodule:: axqua.solvers.telemac.unsteady
    :members:
 
 Logging
--------------------------------------------------------------------------------
+-------
 
-.. automodule:: hydromate.logsetup
+.. automodule:: axqua.logsetup
    :members:
 
 Command-line interface
--------------------------------------------------------------------------------
+----------------------
 
-.. automodule:: hydromate.cli
+.. automodule:: axqua.cli
    :members:
 
 The job system
--------------------------------------------------------------------------------
+--------------
 
 Job identity, persistence, execution and detachment. A sibling of ``core`` and
 ``solvers`` rather than part of ``core``, because the executor dispatches to a solver
 backend - which nothing in ``core`` may do. ``model``, ``ids`` and ``paths`` are
 standard-library only, so a job verb costs no more than a capability listing.
 
-.. automodule:: hydromate.jobs.model
+.. automodule:: axqua.jobs.model
    :members:
 
-.. automodule:: hydromate.jobs.ids
+.. automodule:: axqua.jobs.ids
    :members:
 
-.. automodule:: hydromate.jobs.paths
+.. automodule:: axqua.jobs.paths
    :members:
 
-.. automodule:: hydromate.jobs.store
+.. automodule:: axqua.jobs.store
    :members:
 
-.. automodule:: hydromate.jobs.lock
+.. automodule:: axqua.jobs.lock
    :members:
 
-.. automodule:: hydromate.jobs.procs
+.. automodule:: axqua.jobs.procs
    :members:
 
-.. automodule:: hydromate.jobs.index
+.. automodule:: axqua.jobs.index
    :members:
 
-.. automodule:: hydromate.jobs.reaper
+.. automodule:: axqua.jobs.reaper
    :members:
 
-.. automodule:: hydromate.jobs.profiles
+.. automodule:: axqua.jobs.profiles
    :members:
 
-.. automodule:: hydromate.jobs.events
+.. automodule:: axqua.jobs.events
    :members:
 
-.. automodule:: hydromate.jobs.logs
+.. automodule:: axqua.jobs.logs
    :members:
 
-.. automodule:: hydromate.jobs.interaction
+.. automodule:: axqua.jobs.interaction
    :members:
 
-.. automodule:: hydromate.jobs.results
+.. automodule:: axqua.jobs.results
    :members:
 
-.. automodule:: hydromate.jobs.executor
+.. automodule:: axqua.jobs.executor
    :members:
 
-.. automodule:: hydromate.jobs.submit
+.. automodule:: axqua.jobs.submit
    :members:
 
 Detached launchers
--------------------------------------------------------------------------------
+------------------
 
-.. automodule:: hydromate.jobs.launcher
+.. automodule:: axqua.jobs.launcher
    :members:
 
-.. automodule:: hydromate.jobs.launchers.systemd
+.. automodule:: axqua.jobs.launchers.systemd
    :members:
 
-.. automodule:: hydromate.jobs.launchers.posix
+.. automodule:: axqua.jobs.launchers.posix
    :members:
 
-.. automodule:: hydromate.jobs.launchers.windows
+.. automodule:: axqua.jobs.launchers.windows
    :members:
 
-.. automodule:: hydromate.jobs.launchers.wsl
+.. automodule:: axqua.jobs.launchers.wsl
    :members:
 
 Solver backends
--------------------------------------------------------------------------------
+---------------
 
 The adapters the job system dispatches to. Both are thin: every piece of work is a
 function the per-case scripts already call, so the standalone path and a submitted job
 drive the same code.
 
-.. automodule:: hydromate.solvers.telemac.backend
+.. automodule:: axqua.solvers.telemac.backend
    :members:
 
-.. automodule:: hydromate.solvers.openfoam.backend
+.. automodule:: axqua.solvers.openfoam.backend
    :members:
 
 Job command line
--------------------------------------------------------------------------------
+----------------
 
-.. automodule:: hydromate.jobcli
+.. automodule:: axqua.jobcli
    :members:

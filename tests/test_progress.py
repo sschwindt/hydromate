@@ -1,4 +1,4 @@
-"""Live solver-progress parsing/rendering (:mod:`hydromate.progress`).
+"""Live solver-progress parsing/rendering (:mod:`axqua.progress`).
 
 Checks that :class:`SolverProgress` reads TELEMAC's listing header
 (``ITERATION ... TIME: ... ( <seconds> S)``, written by ``entete.f`` / ``mittit.f``)
@@ -8,14 +8,14 @@ day/hour/minute/second decomposition for the run's first minute (where TELEMAC
 omits the parenthesised absolute-seconds group).
 
 Pure-python (no subprocess/TELEMAC). Run via:
-    mamba run -n hydromate-env pytest tests/test_progress.py
+    mamba run -n axqua-env pytest tests/test_progress.py
 """
 
 from __future__ import annotations
 
 import io
 
-from hydromate.progress import SolverProgress
+from axqua.progress import SolverProgress
 
 
 def _feed(lines, total=1000.0):

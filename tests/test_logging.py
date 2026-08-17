@@ -1,29 +1,29 @@
 """Compound logfile: per-step timing, and captured warnings/errors.
 
-Checks that :func:`hydromate.setup_logging` writes a single logfile and that
-:func:`hydromate.log_step` records each step's start, elapsed time, or failure,
+Checks that :func:`axqua.setup_logging` writes a single logfile and that
+:func:`axqua.log_step` records each step's start, elapsed time, or failure,
 and that warnings and errors land in the same file.
 
 Pure-python (stdlib logging). Run via:
-    mamba run -n hydromate-env pytest tests/test_logging.py
+    mamba run -n axqua-env pytest tests/test_logging.py
 """
 
 from __future__ import annotations
 
 import logging
 
-from hydromate import log_step, logging_to, setup_logging
+from axqua import log_step, logging_to, setup_logging
 
-log = logging.getLogger("hydromate")
+log = logging.getLogger("axqua")
 
 
 def _flush():
-    for h in logging.getLogger("hydromate").handlers:
+    for h in logging.getLogger("axqua").handlers:
         h.flush()
 
 
 def test_compound_logfile_captures_steps_and_levels(tmp_path):
-    logfile = setup_logging(tmp_path / "hydromate.log", console=False)
+    logfile = setup_logging(tmp_path / "axqua.log", console=False)
     assert logfile is not None and logfile.exists()
 
     with log_step("demo calculation"):
@@ -62,7 +62,7 @@ def test_setup_logging_is_idempotent(tmp_path):
     # same file again should not add a second handler
     p2 = setup_logging(tmp_path / "one.log", console=False)
     assert p1 == p2
-    file_handlers = [h for h in logging.getLogger("hydromate").handlers
+    file_handlers = [h for h in logging.getLogger("axqua").handlers
                      if isinstance(h, logging.FileHandler)]
     assert len(file_handlers) == 1
 

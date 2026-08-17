@@ -1,14 +1,14 @@
-"""How the HydroBayesCal driver is located and staged (:mod:`hydromate.bayescal`).
+"""How the HydroBayesCal driver is located and staged (:mod:`axqua.bayescal`).
 
 HydroBayesCal is a pip dependency, so the driver comes from the **installed
 package** - there is no checkout directory to configure and no second conda
-environment to name. These tests pin that, plus the one behavioural patch hydromate
+environment to name. These tests pin that, plus the one behavioural patch axqua
 applies to the stock driver.
 
 The tests that need the real package are skipped when it is not installed
-(``pip install 'hydromate[calibration]'``), since it is an optional extra.
+(``pip install 'axqua[calibration]'``), since it is an optional extra.
 
-Run via: mamba run -n hydromate-env pytest tests/test_bayescal_staging.py
+Run via: mamba run -n axqua-env pytest tests/test_bayescal_staging.py
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ import sys
 import pytest
 
 hbc = pytest.importorskip(
-    "hydroBayesCal", reason="optional extra: pip install 'hydromate[calibration]'")
+    "hydroBayesCal", reason="optional extra: pip install 'axqua[calibration]'")
 
 
 def test_driver_comes_from_the_installed_package(tmp_path):
-    from hydromate.bayescal import stage_driver
+    from axqua.bayescal import stage_driver
 
     staged = stage_driver(tmp_path, "bal_telemac.py")
 
@@ -36,7 +36,7 @@ def test_driver_comes_from_the_installed_package(tmp_path):
 def test_extraction_window_is_patched_to_the_converged_frame(tmp_path):
     """The stock driver averages the last window of frames; on a run marching to
     steady state that averages the residual transient into the calibration values."""
-    from hydromate.bayescal import stage_driver
+    from axqua.bayescal import stage_driver
 
     original = (hbc.driver_path("bal_telemac.py")).read_text()
     staged = stage_driver(tmp_path, "bal_telemac.py").read_text()
@@ -53,7 +53,7 @@ def test_every_staged_file_is_patched_not_just_the_primary(tmp_path):
     default. Patching only the primary left multi-flow calibrations averaging the
     dry-start transient while single-flow ones did not - a silent, mode-dependent
     difference in what the calibration is fitted to."""
-    from hydromate.bayescal import stage_driver
+    from axqua.bayescal import stage_driver
 
     stage_driver(tmp_path, "bal_telemac_multiflow.py")
 
@@ -68,7 +68,7 @@ def test_every_staged_file_is_patched_not_just_the_primary(tmp_path):
 def test_multiflow_driver_brings_the_sibling_it_imports(tmp_path):
     """bal_telemac_multiflow.py imports bal_telemac.py by file name, so staging one
     without the other yields an ImportError only at run time, hours in."""
-    from hydromate.bayescal import stage_driver
+    from axqua.bayescal import stage_driver
 
     stage_driver(tmp_path, "bal_telemac_multiflow.py")
 
@@ -78,7 +78,7 @@ def test_multiflow_driver_brings_the_sibling_it_imports(tmp_path):
 
 def test_a_checkout_can_still_override_the_installed_package(tmp_path):
     """For developing against an unreleased driver."""
-    from hydromate.bayescal import stage_driver
+    from axqua.bayescal import stage_driver
 
     checkout = tmp_path / "checkout" / "src" / "hydroBayesCal" / "drivers"
     checkout.mkdir(parents=True)
@@ -90,18 +90,18 @@ def test_a_checkout_can_still_override_the_installed_package(tmp_path):
 
 
 def test_missing_driver_names_what_is_available(tmp_path):
-    from hydromate.bayescal import stage_driver
+    from axqua.bayescal import stage_driver
 
     with pytest.raises(FileNotFoundError, match="available:"):
         stage_driver(tmp_path, "bal_nonexistent.py")
 
 
 def test_launch_uses_this_interpreter_and_no_conda_env(tmp_path, monkeypatch, capsys):
-    """The calibration runs in hydromate's own environment - naming a conda env was
+    """The calibration runs in axqua's own environment - naming a conda env was
     the thing that made this fragile across machines."""
     from types import SimpleNamespace
 
-    from hydromate import bayescal
+    from axqua import bayescal
 
     seen = {}
 
@@ -127,7 +127,7 @@ def test_launch_reports_an_ignored_env_argument(tmp_path, monkeypatch, capsys):
     rather than silently ignoring it."""
     from types import SimpleNamespace
 
-    from hydromate import bayescal
+    from axqua import bayescal
 
     monkeypatch.setattr(bayescal.subprocess, "run",
                         lambda args, **kw: SimpleNamespace(returncode=0))

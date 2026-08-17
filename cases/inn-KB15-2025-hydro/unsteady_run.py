@@ -2,9 +2,9 @@
 
 Turns the steady case built by ``preprocessing.py`` + ``initial_run.py`` into a
 hydrograph-driven **quasi-steady** run, hotstarted from the converged 2D result
-``r2d.slf`` (see ``hydromate.unsteady``). The flood wave Q(t) comes from THIS case's
+``r2d.slf`` (see ``axqua.unsteady``). The flood wave Q(t) comes from THIS case's
 ``boundaries.inflow`` time series in ``case-config.yml`` (a varying discharge - a
-constant Q is the steady case). hydromate's generated ``boundaries.cli`` is reused
+constant Q is the steady case). axqua's generated ``boundaries.cli`` is reused
 unchanged: the inflow discharge is driven by the ``LIQUID BOUNDARIES FILE`` and the
 downstream water level by its prescribed elevation / rating, so there is no manual
 ``.cli`` editing.
@@ -16,7 +16,7 @@ For a 3D unsteady run also settle the horizontal mesh with mesh_convergence_stud
 first (the 3D case reuses that horizontal mesh).
 
 Toggle the run below, then:
-  mamba run -n hydromate-env python cases/<your-case>/unsteady_run.py [--run]
+  mamba run -n axqua-env python cases/<your-case>/unsteady_run.py [--run]
 
 ``--run`` also launches the solver; otherwise the case is only written and the
 command to run it is printed.
@@ -27,9 +27,9 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hydromate import build_unsteady_3d_case, build_unsteady_case, setup_logging
-from hydromate.config import load_config
-from hydromate.env import TelemacRuntime
+from axqua import build_unsteady_3d_case, build_unsteady_case, setup_logging
+from axqua.config import load_config
+from axqua.env import TelemacRuntime
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)

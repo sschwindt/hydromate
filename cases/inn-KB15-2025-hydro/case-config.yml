@@ -1,11 +1,11 @@
 # =============================================================================
-# hydromate case configuration - Inn river (Bavaria), 2025 hydro survey
+# axqua case configuration - Inn river (Bavaria), 2025 hydro survey
 # =============================================================================
 # All relative paths resolve against THIS file's directory. The co-development
 # dataset lives under user-sources/ (kept out of version control).
 # Build with:
-#   hydromate cases/inn-2025-hydro/case-config.yml --check    # validate first
-#   hydromate cases/inn-2025-hydro/case-config.yml            # build the case
+#   axqua cases/inn-2025-hydro/case-config.yml --check    # validate first
+#   axqua cases/inn-2025-hydro/case-config.yml            # build the case
 #
 # Sections: project / telemac / geodata / boundaries / initialization / mesh /
 #           friction / hydrodynamics / morphodynamics / ground_truth / calibration
@@ -138,7 +138,7 @@ dem_of_difference:
 
 ground_truth:
   # Calibration ground truth: a tidy multi-tab table (measurements) OR raw sources
-  # hydromate compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
+  # axqua compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
   # `measurements` gives an explicit output path.
   # measurements: path/to/ground-truth.xlsx    # (a) user-authored tidy table
   sources:                                      # (b) raw sources -> compiled tidy table

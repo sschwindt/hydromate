@@ -1,7 +1,7 @@
 """Surrogate-assisted Bayesian calibration of the built case (workflow step 3).
 
-Thin wrapper around :func:`hydromate.run_single_flow_calibration` - all the
-logic lives in ``hydromate.bayescal``. Run AFTER ``preprocessing.py`` (builds the
+Thin wrapper around :func:`axqua.run_single_flow_calibration` - all the
+logic lives in ``axqua.bayescal``. Run AFTER ``preprocessing.py`` (builds the
 case) and ``initial_run.py`` (confirms it runs). It compiles the FlowTracker
 velocity ground truth (from ``ground_truth.sources`` in case-config.yml) into the
 HydroBayesCal calibration-points CSV, makes sure the ``.cas`` prints SCALAR
@@ -9,10 +9,10 @@ VELOCITY, emits ``config_Telemac.py`` and launches HydroBayesCal.
 
 The calibration target is the FlowTracker velocity at 0.6*h (~ the depth-averaged
 velocity a 2D model resolves), compared to TELEMAC-2D ``SCALAR VELOCITY``. Point
-HydroBayesCal is a pip dependency (pip install 'hydromate[calibration]'); the
+HydroBayesCal is a pip dependency (pip install 'axqua[calibration]'); the
 --hbc-dir / --hbc-env flags).
 
-Run: mamba run -n hydromate-env python <case>/run_Bayes_cal.py [--prepare-only]
+Run: mamba run -n axqua-env python <case>/run_Bayes_cal.py [--prepare-only]
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from hydromate import run_single_flow_calibration
-from hydromate.config import load_config
+from axqua import run_single_flow_calibration
+from axqua.config import load_config
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 

@@ -1,7 +1,7 @@
-"""Dams, weirs, walls and buildings (:mod:`hydromate.core.structures`).
+"""Dams, weirs, walls and buildings (:mod:`axqua.core.structures`).
 
 The point of this module is that a structure is an **ordinary QGIS vector layer**, not
-a triangulated surface. STL is a snappyHexMesh requirement, and hydromate writes its
+a triangulated surface. STL is a snappyHexMesh requirement, and axqua writes its
 mesh directly, so a dam only has to say where its footprint is and how high it stands.
 These tests pin the two authoring forms (polygon footprint, or line + width) and the
 two hydraulic modes, because getting the mode wrong is the difference between water
@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from shapely.geometry import LineString, Polygon
 
-from hydromate.core.structures import (
+from axqua.core.structures import (
     OVERFLOW, SOLID, Structure, apply_to_bed, classify_structure, load_structures,
     solid_footprint, solid_mask,
 )
@@ -53,7 +53,7 @@ def test_an_unrecognised_type_defaults_to_overflow():
 
 
 def _case(tmp_path, layer_name="structures.gpkg", **structures_cfg):
-    from hydromate.config import load_config
+    from axqua.config import load_config
 
     (tmp_path / "dem.tif").write_bytes(b"")
     (tmp_path / "pysource.sh").write_text("# stub\n")
@@ -146,7 +146,7 @@ def test_the_layer_is_reprojected_like_every_other(tmp_path):
 
 
 def test_no_layer_means_no_structures(tmp_path):
-    from hydromate.config import load_config
+    from axqua.config import load_config
 
     (tmp_path / "dem.tif").write_bytes(b"")
     (tmp_path / "pysource.sh").write_text("# stub\n")
@@ -228,7 +228,7 @@ def test_solid_mask_and_footprint_select_only_solids():
 def test_a_solid_structure_removes_columns_from_the_openfoam_lattice():
     """And the removal must survive the hole-filling step, which exists to close
     exactly this kind of interior void."""
-    from hydromate.solvers.openfoam.mesh import build_plan_grid
+    from axqua.solvers.openfoam.mesh import build_plan_grid
 
     domain = Polygon([(0, 0), (30, 0), (30, 30), (0, 30)])
     plain = build_plan_grid(domain, 1.0)
@@ -246,10 +246,10 @@ def test_a_wall_across_the_whole_domain_is_reported_not_silently_halved(caplog):
     """Cutting the domain in two is almost always a drawing error; it must be loud."""
     import logging
 
-    from hydromate.solvers.openfoam.mesh import build_plan_grid
+    from axqua.solvers.openfoam.mesh import build_plan_grid
 
     domain = Polygon([(0, 0), (30, 0), (30, 30), (0, 30)])
-    with caplog.at_level(logging.WARNING, logger="hydromate"):
+    with caplog.at_level(logging.WARNING, logger="axqua"):
         grid = build_plan_grid(domain, 1.0,
                                blocked=Polygon([(14, -1), (16, -1), (16, 31), (14, 31)]))
     assert "cut the domain in two" in caplog.text

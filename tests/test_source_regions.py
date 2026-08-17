@@ -15,7 +15,7 @@ Validates (no solver):
   region vertices, signed discharges and depth guards baked in;
 * ``hydrodynamics.control_of_limits: false`` drops the CONTROL OF LIMITS guard.
 
-Run via pytest: mamba run -n hydromate-env pytest tests/test_source_regions.py
+Run via pytest: mamba run -n axqua-env pytest tests/test_source_regions.py
 """
 
 from __future__ import annotations
@@ -25,11 +25,11 @@ import re
 import pytest
 from shapely.geometry import Polygon
 
-from hydromate.boundary import InternalSourceRegion, LiquidBoundary
+from axqua.boundary import InternalSourceRegion, LiquidBoundary
 
 
 def _cfg(tmp_path, **overrides):
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries,
         Calibration,
         Config,
@@ -83,7 +83,7 @@ def _liquids():
 
 
 def test_write_source_regions_roundtrip(tmp_path):
-    from hydromate import steering
+    from axqua import steering
 
     cfg = _cfg(tmp_path)
     regions = _regions()
@@ -104,7 +104,7 @@ def test_write_source_regions_roundtrip(tmp_path):
 
 
 def test_cas_region_keywords(tmp_path):
-    from hydromate import steering
+    from axqua import steering
 
     cfg = _cfg(tmp_path)
     regions = _regions()
@@ -129,7 +129,7 @@ def test_cas_region_keywords(tmp_path):
 
 
 def test_cas_without_regions_has_no_source_keywords(tmp_path):
-    from hydromate import steering
+    from axqua import steering
 
     cfg = _cfg(tmp_path)
     cas = steering.write_cas(cfg, _liquids(), inflow_q=2.4, outflow_wse=815.1,
@@ -139,8 +139,8 @@ def test_cas_without_regions_has_no_source_keywords(tmp_path):
 
 
 def test_cas_fortran_mode(tmp_path):
-    from hydromate import steering
-    from hydromate.config import Percolation
+    from axqua import steering
+    from axqua.config import Percolation
 
     zone = tmp_path / "zone.gpkg"
     zone.write_text("")   # existence is all Percolation.validate checks here
@@ -158,8 +158,8 @@ def test_cas_fortran_mode(tmp_path):
 
 
 def test_fortran_template(tmp_path):
-    from hydromate import fortran
-    from hydromate.config import Percolation
+    from axqua import fortran
+    from axqua.config import Percolation
 
     zone = tmp_path / "zone.gpkg"
     zone.write_text("")
@@ -225,8 +225,8 @@ def test_fortran_patch_drain_adds_region_last(tmp_path):
     prescribed exchange is not double-counted; its extraction must feed the same
     reinjection total, so the routine stays mass-exact.
     """
-    from hydromate import fortran
-    from hydromate.config import Percolation
+    from axqua import fortran
+    from axqua.config import Percolation
 
     zone = _patch_zone(tmp_path)
     cfg = _cfg(tmp_path, percolation=Percolation(faces="lines", zone=zone, mode="fortran",
@@ -256,8 +256,8 @@ def test_patch_drain_rate_is_capped_in_both_exchange_modes(tmp_path):
     """``patch_drain_max_rate`` must bind whether the exchange is prescribed or
     Green-Ampt driven: the Green-Ampt rate applies over the whole wet patch, so
     without the cap the drain keeps drawing from the (genuinely wet) patch toe."""
-    from hydromate import fortran
-    from hydromate.config import Percolation
+    from axqua import fortran
+    from axqua.config import Percolation
 
     zone = _patch_zone(tmp_path)
     for conductivity in (None, 3.0e-4):
@@ -276,8 +276,8 @@ def test_patch_drain_rate_is_capped_in_both_exchange_modes(tmp_path):
 def test_fortran_patch_drain_skipped_when_patch_is_the_losing_region(tmp_path):
     """With ``losing_region: patch`` the prescribed withdrawal already covers the
     patch, so a drain region would double up on it."""
-    from hydromate import fortran
-    from hydromate.config import Percolation
+    from axqua import fortran
+    from axqua.config import Percolation
 
     zone = _patch_zone(tmp_path)
     cfg = _cfg(tmp_path, percolation=Percolation(faces="lines", zone=zone, mode="fortran",
@@ -289,7 +289,7 @@ def test_fortran_patch_drain_skipped_when_patch_is_the_losing_region(tmp_path):
 
 
 def test_patch_drain_requires_fortran_mode(tmp_path):
-    from hydromate.config import Percolation
+    from axqua.config import Percolation
 
     zone = _patch_zone(tmp_path)
     with pytest.raises(ValueError, match="patch_drain needs gain_lose.mode: fortran"):
@@ -297,7 +297,7 @@ def test_patch_drain_requires_fortran_mode(tmp_path):
 
 
 def _plane():
-    from hydromate.watertable import PhreaticPlane
+    from axqua.watertable import PhreaticPlane
 
     return PhreaticPlane(c0=817.0, cx=-0.005, cy=0.001, x0=100.0, y0=200.0,
                          levels={"losing": 817.3, "gaining": 816.8}, residual=0.02)
@@ -307,8 +307,8 @@ def test_water_table_becomes_the_drain_taper_floor(tmp_path):
     """With a water table the drain tapers to zero AT THE TABLE, not at min_depth,
     so it clears the bar top but cannot empty a pool cutting below the saturated
     zone. The plane is five numbers, so no per-node array is needed."""
-    from hydromate import fortran
-    from hydromate.config import Percolation
+    from axqua import fortran
+    from axqua.config import Percolation
 
     cfg = _cfg(tmp_path, percolation=Percolation(faces="lines", 
         zone=_patch_zone(tmp_path), mode="fortran", patch_drain=True,
@@ -332,8 +332,8 @@ def test_water_table_becomes_the_drain_taper_floor(tmp_path):
 
 def test_water_table_absent_without_a_drain_region(tmp_path):
     """No drain region means nothing consults the table, so it is not emitted."""
-    from hydromate import fortran
-    from hydromate.config import Percolation
+    from axqua import fortran
+    from axqua.config import Percolation
 
     cfg = _cfg(tmp_path, percolation=Percolation(faces="lines", 
         zone=_patch_zone(tmp_path), mode="fortran", water_table="phreatic"))
@@ -346,8 +346,8 @@ def test_film_infiltration_is_gated_and_reinjected(tmp_path):
     """The film term applies OUTSIDE every exchange region, is gated on depth AND
     velocity, and feeds the same total the gaining line reinjects - so it removes
     the film without opening a net sink that would floor the flux imbalance."""
-    from hydromate import fortran
-    from hydromate.config import Drying, Percolation
+    from axqua import fortran
+    from axqua.config import Drying, Percolation
 
     perc = Percolation(faces="lines", zone=_patch_zone(tmp_path), mode="fortran", patch_drain=True)
     cfg = _cfg(tmp_path, percolation=perc)
@@ -371,7 +371,7 @@ def test_film_infiltration_is_gated_and_reinjected(tmp_path):
 
 
 def test_film_infiltration_requires_fortran_percolation():
-    from hydromate.config import Drying, Percolation
+    from axqua.config import Drying, Percolation
 
     with pytest.raises(ValueError, match="needs a gain-lose reach"):
         Drying(film_infiltration=True).validate(Percolation(faces="lines", mode="off"))
@@ -392,8 +392,8 @@ def test_fortran_compiles(tmp_path):
     import subprocess
     from pathlib import Path
 
-    from hydromate import fortran
-    from hydromate.config import Percolation
+    from axqua import fortran
+    from axqua.config import Percolation
 
     if not shutil.which("gfortran"):
         pytest.skip("gfortran not available")
@@ -404,7 +404,7 @@ def test_fortran_compiles(tmp_path):
 
     # every emitted variant: prescribed / Green-Ampt exchange, with and without the
     # patch drain (each takes a different branch of the generator)
-    from hydromate.config import Drying
+    from axqua.config import Drying
 
     variants = {
         # (percolation, water-table plane, drying)
@@ -446,8 +446,8 @@ def test_fortran_compiles(tmp_path):
 
 
 def test_control_of_limits_toggle(tmp_path):
-    from hydromate import steering
-    from hydromate.config import Hydrodynamics
+    from axqua import steering
+    from axqua.config import Hydrodynamics
 
     cfg = _cfg(tmp_path)
     txt = steering.write_cas(cfg, _liquids(), inflow_q=2.4, outflow_wse=815.1,

@@ -1,8 +1,8 @@
-"""The shared geodata reader (:mod:`hydromate.core.geodata`).
+"""The shared geodata reader (:mod:`axqua.core.geodata`).
 
 Before this existed, fourteen modules each opened their own layers: one build read
 ``mesh-zones.gpkg`` five times and ``roi.gpkg`` three times, and two modules reached
-into ``hydromate.mesh._channel_union`` because there was nowhere shared to put it.
+into ``axqua.mesh._channel_union`` because there was nowhere shared to put it.
 
 The two properties worth pinning are opposites of each other, which is why they are
 easy to get wrong together:
@@ -21,8 +21,8 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import LineString, Polygon
 
-from hydromate.core import geodata
-from hydromate.core.geodata import Dataset, classify_zone, dataset, parse_decimal
+from axqua.core import geodata
+from axqua.core.geodata import Dataset, classify_zone, dataset, parse_decimal
 
 
 # --------------------------------------------------------------------------- #
@@ -33,7 +33,7 @@ from hydromate.core.geodata import Dataset, classify_zone, dataset, parse_decima
 @pytest.fixture
 def case(tmp_path):
     """A minimal case with an ROI, two mesh zones and a centerline."""
-    from hydromate.config import load_config
+    from axqua.config import load_config
 
     crs = "EPSG:25832"
     gpd.GeoDataFrame(
@@ -211,7 +211,7 @@ def test_roi_polygonises_a_closed_boundary_line(case, tmp_path):
 
 def test_a_layer_can_be_supplied_in_memory(case, counting_reads):
     """A QGIS plugin has the layers open already; making it write temp files so
-    hydromate can read them back would be absurd."""
+    axqua can read them back would be absurd."""
     ds = Dataset(case)
     ds.set_layer("roi", gpd.GeoDataFrame(
         {"n": [1]}, geometry=[Polygon([(0, 0), (5, 0), (5, 5), (0, 5)])],
@@ -268,9 +268,9 @@ def test_roughness_table_skips_a_header_row(tmp_path):
 
 
 def test_the_historic_private_names_still_import_from_mesh():
-    """Existing code and tests reach for hydromate.mesh._parse_decimal and friends;
+    """Existing code and tests reach for axqua.mesh._parse_decimal and friends;
     the move to core must not break them."""
-    from hydromate import mesh
+    from axqua import mesh
 
     assert mesh._parse_decimal("0,5") == 0.5
     assert mesh._classify_zone("Main channel") == "channel"

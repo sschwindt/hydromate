@@ -1,4 +1,4 @@
-"""The OpenFOAM free-surface extension (:mod:`hydromate.solvers.openfoam`).
+"""The OpenFOAM free-surface extension (:mod:`axqua.solvers.openfoam`).
 
 Pure-python: no OpenFOAM, no solver, no geodata. The mesh under test is a small
 hand-built lattice, which is enough to pin down the things that would otherwise only
@@ -16,7 +16,7 @@ fail once ``checkMesh`` or ``interFoam`` had been launched on a million cells:
 * the **dictionary and field keywords**, which are the OpenFOAM 9 spellings verified
   against that install's source and tutorials, and are easy to break silently.
 
-Run via: mamba run -n hydromate-env pytest tests/test_openfoam.py
+Run via: mamba run -n axqua-env pytest tests/test_openfoam.py
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from hydromate.solvers.openfoam import mesh as ofmesh
-from hydromate.solvers.openfoam import polymesh
-from hydromate.solvers.openfoam.quality import (
+from axqua.solvers.openfoam import mesh as ofmesh
+from axqua.solvers.openfoam import polymesh
+from axqua.solvers.openfoam.quality import (
     aspect_ratios, cell_geometry, face_geometry, non_orthogonality, skewness,
 )
 
@@ -248,14 +248,14 @@ class _Cfg:
     """Enough of a Config for the dictionary writers."""
 
     def __init__(self, **kw):
-        from hydromate.config import Hydrodynamics, OpenFoam
+        from axqua.config import Hydrodynamics, OpenFoam
 
         self.openfoam = OpenFoam(**kw)
         self.hydrodynamics = Hydrodynamics()
 
 
 def test_fvsolution_carries_the_settings_that_tame_the_air_phase():
-    from hydromate.solvers.openfoam.dicts import fv_solution, stages
+    from axqua.solvers.openfoam.dicts import fv_solution, stages
 
     cfg = _Cfg()
     run = [s for s in stages(cfg) if s.name == "run"][0]
@@ -270,7 +270,7 @@ def test_fvsolution_carries_the_settings_that_tame_the_air_phase():
 
 
 def test_fvconstraints_caps_the_velocity():
-    from hydromate.solvers.openfoam.dicts import fv_constraints
+    from axqua.solvers.openfoam.dicts import fv_constraints
 
     text = fv_constraints(_Cfg(), 4.5)
     assert "type            limitVelocity;" in text
@@ -282,7 +282,7 @@ def test_stage_schemes_differ_in_compression_not_in_kind():
     """Stage 1 must still compress the interface, only less - OF9 puts cAlpha in the
     scheme, so dropping interfaceCompression entirely would demand a legacy
     fvSolution key and smear the surface through the whole spin-up."""
-    from hydromate.solvers.openfoam.dicts import fv_schemes, stages
+    from axqua.solvers.openfoam.dicts import fv_schemes, stages
 
     cfg = _Cfg()
     spinup, run = stages(cfg)
@@ -300,7 +300,7 @@ def test_time_step_estimate_is_calibrated_against_a_measured_run():
     0.3 with the 4.5 m/s cap and a 0.057 m thinnest layer. The naive
     `Courant * layer / water_speed` gave 1e-1 s - fifty times too optimistic.
     """
-    from hydromate.solvers.openfoam.case import estimate_time_step
+    from axqua.solvers.openfoam.case import estimate_time_step
 
     class _M:
         min_layer_height = 0.057
@@ -312,7 +312,7 @@ def test_time_step_estimate_is_calibrated_against_a_measured_run():
 
 def test_reach_flush_time_warns_when_the_run_is_too_short():
     """A free-surface run cannot be steady before the domain has been flushed once."""
-    from hydromate.solvers.openfoam.case import cost_lines
+    from axqua.solvers.openfoam.case import cost_lines
 
     class _Grid:
         cell_xy = np.array([[0.0, 0.0], [300.0, 400.0]])   # 500 m diagonal
@@ -333,7 +333,7 @@ def test_reach_flush_time_warns_when_the_run_is_too_short():
 
 
 def test_control_dict_monitors_water_discharge_not_total_flux():
-    from hydromate.solvers.openfoam.dicts import control_dict, stages
+    from axqua.solvers.openfoam.dicts import control_dict, stages
 
     cfg = _Cfg()
     text = control_dict(cfg, stages(cfg)[1], patches=["inlet-1", "outlet-1"])
@@ -349,7 +349,7 @@ def test_control_dict_monitors_water_discharge_not_total_flux():
 
 
 def test_stage_activation_swaps_the_system_dicts(tmp_path):
-    from hydromate.solvers.openfoam.dicts import STAGED_FILES, activate
+    from axqua.solvers.openfoam.dicts import STAGED_FILES, activate
 
     system = tmp_path / "system"
     for stage in ("stage1-spinup", "stage2-run"):
@@ -365,7 +365,7 @@ def test_stage_activation_swaps_the_system_dicts(tmp_path):
 def test_activate_regenerates_from_the_config_it_is_given(tmp_path):
     """Changing end_time and re-running must actually change the run, not just the
     message about it - the staged dicts are rewritten from the live config."""
-    from hydromate.solvers.openfoam.dicts import activate, write_dicts
+    from axqua.solvers.openfoam.dicts import activate, write_dicts
 
     class _Mesh:
         inlet_patches = ["inlet-1"]
@@ -394,7 +394,7 @@ def test_read_patch_names_round_trips_the_boundary_file(tmp_path):
 
 
 def test_field_rendering_uses_the_verified_boundary_types():
-    from hydromate.solvers.openfoam.fields import render_field, scalar_list
+    from axqua.solvers.openfoam.fields import render_field, scalar_list
 
     text = render_field("volScalarField", "alpha.water", "[0 0 0 0 0 0 0]",
                         scalar_list(np.array([0.0, 1.0])),
@@ -408,7 +408,7 @@ def test_field_rendering_uses_the_verified_boundary_types():
 
 def test_alpha_is_the_submerged_fraction_of_each_cell():
     """The VOF seed must be a one-cell-sharp interface at the 2D free surface."""
-    from hydromate.solvers.openfoam.fields import initial_alpha
+    from axqua.solvers.openfoam.fields import initial_alpha
 
     grid = _plan_grid(1, 1)
     bed = np.zeros(grid.n_vertices)
@@ -457,7 +457,7 @@ def _rigid_mesh(*, dx=1.5, slope=0.08, min_layer=0.040):
 
 def test_rigid_lid_has_no_spin_up_stage():
     """A spin-up exists to let an interface settle; a rigid lid has no interface."""
-    from hydromate.solvers.openfoam.dicts import stages
+    from axqua.solvers.openfoam.dicts import stages
 
     assert [s.name for s in stages(_Cfg(mode="rigid-lid"))] == ["run"]
     assert [s.name for s in stages(_Cfg())] == ["spinup", "run"]
@@ -466,7 +466,7 @@ def test_rigid_lid_has_no_spin_up_stage():
 def test_rigid_lid_solves_alpha_explicitly():
     """alpha is identically 1, so the implicit MULES correction has nothing to
     correct - and measured four fifths of the run time on isar-2025."""
-    from hydromate.solvers.openfoam.dicts import fv_solution, stages
+    from axqua.solvers.openfoam.dicts import fv_solution, stages
 
     cfg = _Cfg(mode="rigid-lid")
     text = fv_solution(cfg, stages(cfg)[0])
@@ -481,7 +481,7 @@ def test_rigid_lid_time_step_follows_the_terrain_slope():
     Courant 0.9. Carrying the two-phase model across - thinnest layer at the full
     water speed - predicted 0.019 s, nineteen times too pessimistic, because only
     the *vertical* component crosses a thin layer."""
-    from hydromate.solvers.openfoam.case import estimate_time_step, terrain_slope
+    from axqua.solvers.openfoam.case import estimate_time_step, terrain_slope
 
     m = _rigid_mesh()
     assert terrain_slope(m) == pytest.approx(0.08, rel=0.05)
@@ -491,7 +491,7 @@ def test_rigid_lid_time_step_follows_the_terrain_slope():
 
 
 def test_rigid_lid_cost_names_the_water_not_the_air():
-    from hydromate.solvers.openfoam.case import cost_lines
+    from axqua.solvers.openfoam.case import cost_lines
 
     class _State:
         def velocity_scale(self):
@@ -506,11 +506,11 @@ def test_rigid_lid_cost_names_the_water_not_the_air():
 def test_cell_size_factor_coarsens_relative_to_the_telemac_mesh(monkeypatch):
     """The point of the factor is that one number coarsens a test run without
     editing the resolution the TELEMAC case is meshed at."""
-    from hydromate.solvers.openfoam import mesh as m
+    from axqua.solvers.openfoam import mesh as m
 
     cfg = _Cfg(cell_size=0.5)
     cfg.mesh = None
-    monkeypatch.setattr("hydromate.core.geodata.nominal_channel_size",
+    monkeypatch.setattr("axqua.core.geodata.nominal_channel_size",
                         lambda _cfg: 0.5)
     assert m.plan_spacing(cfg) == pytest.approx(0.5)
     cfg.openfoam.cell_size_factor = 5.0
@@ -530,7 +530,7 @@ class _State:
     """
 
     def __init__(self, speed=1.0, depth=0.5):
-        from hydromate.solvers.openfoam.hotstart import State2D
+        from axqua.solvers.openfoam.hotstart import State2D
 
         self._speed, self._depth = speed, depth
         self.headroom = State2D.headroom.__get__(self)
@@ -572,7 +572,7 @@ def test_lateral_margin_turns_a_surface_rise_into_plan_distance():
 
 
 def test_fixed_mode_and_rigid_lid_bypass_the_derivation():
-    from hydromate.solvers.openfoam.mesh import resolve_headroom, resolve_margin
+    from axqua.solvers.openfoam.mesh import resolve_headroom, resolve_margin
 
     fast = _state(speed=3.0, depth=1.0)
     auto = _Cfg(freeboard=0.5, wet_margin=5.0)
@@ -591,7 +591,7 @@ def test_fixed_mode_and_rigid_lid_bypass_the_derivation():
 def test_surface_freedom_reads_the_monitors_and_names_the_knob(tmp_path):
     """A run that pressed against the lid is constrained by a MESH decision, and
     nothing else in the output would say so."""
-    from hydromate.solvers.openfoam.report import surface_freedom
+    from axqua.solvers.openfoam.report import surface_freedom
 
     def monitor(name, values, area=1000.0):
         d = tmp_path / "postProcessing" / name / "0"
@@ -617,7 +617,7 @@ def test_the_wall_tolerance_absorbs_the_inflow_and_outflow_corners(tmp_path):
     into that edge - so a threshold of zero would report every healthy run as boxed
     in. Judged as a fraction, which also means the same thing on a side channel and
     on a full reach."""
-    from hydromate.solvers.openfoam.report import surface_freedom
+    from axqua.solvers.openfoam.report import surface_freedom
 
     def monitor(name, peak, area):
         d = tmp_path / "postProcessing" / name / "0"
@@ -636,7 +636,7 @@ def test_the_wall_tolerance_absorbs_the_inflow_and_outflow_corners(tmp_path):
 
 def test_surface_freedom_is_honest_about_the_rigid_lid(tmp_path):
     """There the surface never had freedom to lose, so 'free' would be a lie."""
-    from hydromate.solvers.openfoam.report import surface_freedom
+    from axqua.solvers.openfoam.report import surface_freedom
 
     verdict = surface_freedom(_Cfg(mode="rigid-lid"), tmp_path)
     assert verdict.prescribed
@@ -645,7 +645,7 @@ def test_surface_freedom_is_honest_about_the_rigid_lid(tmp_path):
 
 def test_no_monitors_reports_nothing_rather_than_a_clean_bill(tmp_path):
     """An unrun case must not read as 'the surface was free'."""
-    from hydromate.solvers.openfoam.report import surface_freedom
+    from axqua.solvers.openfoam.report import surface_freedom
 
     verdict = surface_freedom(_Cfg(), tmp_path)
     assert not verdict.measured
@@ -653,7 +653,7 @@ def test_no_monitors_reports_nothing_rather_than_a_clean_bill(tmp_path):
 
 
 def test_the_monitors_are_written_for_vof_and_skipped_under_a_rigid_lid():
-    from hydromate.solvers.openfoam.dicts import control_dict, stages
+    from axqua.solvers.openfoam.dicts import control_dict, stages
 
     cfg = _Cfg()
     text = control_dict(cfg, stages(cfg)[1], patches=["inlet-1"],
@@ -719,7 +719,7 @@ def _write_3d_slf(path, *, nplan=3, npoin2=4):
 def test_read_slf_unrolls_a_3d_result_onto_its_plan_nodes(tmp_path):
     """SERAFIN stores a 3D field plane by plane over the same 2D mesh; leaving it
     flat would make every consumer re-derive npoin2 from the dims record."""
-    from hydromate.core.selafin import read_slf
+    from axqua.core.selafin import read_slf
 
     data = read_slf(_write_3d_slf(tmp_path / "r3d.slf", nplan=3, npoin2=4))
     # from IPARAM(7), not the dims record - see _write_3d_slf
@@ -731,7 +731,7 @@ def test_read_slf_unrolls_a_3d_result_onto_its_plan_nodes(tmp_path):
 
 def test_a_2d_result_is_untouched_by_the_3d_path(tmp_path):
     """nplan == 1 must stay exactly as it was: flat values, no reshape."""
-    from hydromate.core.selafin import read_slf, write_geometry
+    from axqua.core.selafin import read_slf, write_geometry
 
     path = write_geometry(tmp_path / "geometry.slf",
                           x=np.array([0.0, 1.0, 0.0]), y=np.array([0.0, 0.0, 1.0]),
@@ -745,7 +745,7 @@ def test_a_2d_result_is_untouched_by_the_3d_path(tmp_path):
 def test_the_3d_seed_carries_the_profile_and_a_true_depth_average(tmp_path):
     """The depth-average must integrate over the levels' actual elevations, not
     average the levels - sigma layers are equal only where the depth is."""
-    from hydromate.solvers.openfoam.hotstart import State2D
+    from axqua.solvers.openfoam.hotstart import State2D
 
     state = State2D.from_slf(_write_3d_slf(tmp_path / "r3d.slf"))
     assert state.has_profile
@@ -759,7 +759,7 @@ def test_the_3d_seed_carries_the_profile_and_a_true_depth_average(tmp_path):
 def test_sample_profile_interpolates_in_z_and_holds_the_ends(tmp_path):
     """Below the bed and above the surface there is nothing to continue, and a
     linear extrapolation there would invent a jet."""
-    from hydromate.solvers.openfoam.hotstart import State2D
+    from axqua.solvers.openfoam.hotstart import State2D
 
     state = State2D.from_slf(_write_3d_slf(tmp_path / "r3d.slf"))
     xy = np.array([[0.0, 0.0]] * 4)
@@ -769,7 +769,7 @@ def test_sample_profile_interpolates_in_z_and_holds_the_ends(tmp_path):
 
 def test_a_2d_seed_still_answers_sample_profile(tmp_path):
     """So a caller never has to ask which kind of seed it was handed."""
-    from hydromate.solvers.openfoam.hotstart import State2D
+    from axqua.solvers.openfoam.hotstart import State2D
 
     flat = State2D(x=np.array([0.0, 1.0]), y=np.array([0.0, 0.0]),
                    triangles=np.zeros((0, 3), dtype=int),
@@ -786,8 +786,8 @@ def test_initial_velocity_varies_over_the_depth_with_a_3d_seed(tmp_path):
     """The whole point of pre_run.dimension: 3d. Verified against a real telemac3d
     result (inn-kb08, 5 sigma planes): the seed spans 0.074 m/s at the bed to
     0.390 m/s at the surface where a 2D seed gives a uniform 0.251 m/s."""
-    from hydromate.solvers.openfoam.fields import initial_velocity
-    from hydromate.solvers.openfoam.hotstart import State2D
+    from axqua.solvers.openfoam.fields import initial_velocity
+    from axqua.solvers.openfoam.hotstart import State2D
 
     state = State2D.from_slf(_write_3d_slf(tmp_path / "r3d.slf"))   # u = 1, 2, 3
     n = 3

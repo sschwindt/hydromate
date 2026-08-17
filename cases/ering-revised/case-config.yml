@@ -1,11 +1,11 @@
 # =============================================================================
-# hydromate case configuration - Ering reach (Inn river)
+# axqua case configuration - Ering reach (Inn river)
 # =============================================================================
 # All relative paths resolve against THIS file's directory. The co-development
 # dataset lives under user-sources/ (kept out of version control).
 # Build with:
-#   hydromate cases/ering-revised/case-config.yml --check    # validate first
-#   hydromate cases/ering-revised/case-config.yml            # build the case
+#   axqua cases/ering-revised/case-config.yml --check    # validate first
+#   axqua cases/ering-revised/case-config.yml            # build the case
 #
 # Sections: project / telemac / geodata / boundaries / initialization / mesh /
 #           friction / hydrodynamics / morphodynamics / ground_truth / calibration
@@ -123,7 +123,7 @@ dem_of_difference:
 
 ground_truth:
   # Calibration ground truth: a tidy multi-tab table (measurements) OR raw sources
-  # hydromate compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
+  # axqua compiles into it. Compiled to preprocessing/ground-truth.xlsx unless
   # `measurements` gives an explicit output path.
   # measurements: path/to/ground-truth.xlsx    # (a) user-authored tidy table
   sources:                                      # (b) raw sources -> compiled tidy table

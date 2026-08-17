@@ -1,7 +1,7 @@
 """Entering a solver environment on Linux, Windows or WSL
-(:mod:`hydromate.core.environment`).
+(:mod:`axqua.core.environment`).
 
-hydromate used to hardcode ``bash -lc 'source X; cmd'`` - three Linux assumptions in
+axqua used to hardcode ``bash -lc 'source X; cmd'`` - three Linux assumptions in
 one line, and the sole reason it could not run on Windows. These tests pin the three
 kinds, the safety of the argv construction, and the two things that turned out to be
 wrong when the mechanism was first run against the real installations on this machine:
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from hydromate.core.environment import (
+from axqua.core.environment import (
     EnvironmentKind, EnvStatus, SolverEnvironment, default_mpi_launcher,
     windows_to_wsl, wsl_to_windows,
 )
@@ -123,7 +123,7 @@ def test_an_explicit_mpi_launcher_wins():
 
 
 @pytest.mark.parametrize("win,posix", [
-    (r"C:\scratch\hydromate\case", "/mnt/c/scratch/hydromate/case"),
+    (r"C:\scratch\axqua\case", "/mnt/c/scratch/axqua/case"),
     (r"D:\data", "/mnt/d/data"),
 ])
 def test_windows_paths_translate_across_the_wsl_boundary(win, posix):
@@ -163,9 +163,9 @@ def test_a_non_mnt_posix_path_survives_the_inverse():
 @pytest.mark.skipif(os.name == "nt", reason="POSIX stub script")
 def test_capture_reads_variables_the_script_exports(tmp_path):
     script = tmp_path / "setup.sh"
-    script.write_text("export HYDROMATE_TEST=works\nexport SECOND=2\n")
+    script.write_text("export AXQUA_TEST=works\nexport SECOND=2\n")
     captured = SolverEnvironment(kind="posix", setup_script=script).capture()
-    assert captured["HYDROMATE_TEST"] == "works"
+    assert captured["AXQUA_TEST"] == "works"
     assert captured["SECOND"] == "2"
     assert "PATH" in captured                 # the whole environment, not just the diff
 
@@ -308,7 +308,7 @@ def test_an_explicit_block_wins_over_the_legacy_script():
 
 def test_shell_runtime_still_wraps_the_way_it_always_did():
     """The refactor must not change what an existing TELEMAC case actually runs."""
-    from hydromate.env import ShellRuntime
+    from axqua.env import ShellRuntime
 
     runtime = ShellRuntime("/opt/telemac/pysource.sh")
     argv = runtime._wrap("telemac2d.py case.cas")

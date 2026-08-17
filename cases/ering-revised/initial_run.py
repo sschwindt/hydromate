@@ -1,6 +1,6 @@
 """Test-run the built TELEMAC case and check hotstart convergence (workflow step 1, continued).
 
-After ``preprocessing.py`` has assembled the case in ``hydromate-case/simulation/``,
+After ``preprocessing.py`` has assembled the case in ``axqua-case/simulation/``,
 this launches the solver once on exactly that ``steady2d.cas`` to confirm the case
 runs without crashing -- it does NOT rebuild anything. This concludes the
 preprocessing step. Next run ``mesh_convergence_study.py``, then
@@ -8,7 +8,7 @@ hand off to HydroBayesCal.
 
 Because this steady result is also the **hotstart** seed for the HydroBayesCal
 calibration, the run then gets a flux / mass-balance convergence analysis (via the
-``hydromate.sortie`` + ``hydromate.flux_convergence``). It writes four files into the
+``axqua.sortie`` + ``axqua.flux_convergence``). It writes four files into the
 simulation folder -- ``extracted-fluxes.csv`` + ``flux-convergence.png`` (per-boundary
 fluxes) and ``convergence-rate.csv`` + ``convergence-rate.png`` (the relative flux
 imbalance and its convergence rate) -- and reports the simulation time at which the
@@ -18,26 +18,26 @@ When the fluxes stay balanced within 1e-3 m3/s over 10 consecutive listing print
 written next to the steady case: it continues from the steady result ``r2d.slf``
 with that steady time as ``DURATION`` and the constant Q / H prescriptions kept
 alive. The per-processor ``*_p0000N.sortie`` copies of a parallel run are deleted.
-See ``hydromate.flux_convergence``.
+See ``axqua.flux_convergence``.
 
 Needs ``telemac.pysource`` in case-config.yml to point at a real TELEMAC env.
-Run: mamba run -n hydromate-env python cases/<your-case>/initial_run.py
+Run: mamba run -n axqua-env python cases/<your-case>/initial_run.py
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from hydromate import (
+from axqua import (
     format_flux_convergence,
     report_sections,
     report_wetting,
     run_solver_streaming,
     setup_logging,
 )
-from hydromate.config import load_config
-from hydromate.env import TelemacRuntime
-from hydromate.flux_convergence import HOTSTART_TOLERANCE, analyze_flux_convergence
+from axqua.config import load_config
+from axqua.env import TelemacRuntime
+from axqua.flux_convergence import HOTSTART_TOLERANCE, analyze_flux_convergence
 
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
 cfg = load_config(CONFIG)
@@ -63,7 +63,7 @@ def main() -> None:
     try:
         runtime.check_available()
         # stream the solver listing live and show a simulated-time vs DURATION
-        # progress bar instead of running silently (see hydromate.progress).
+        # progress bar instead of running silently (see axqua.progress).
         proc = run_solver_streaming(runtime, cfg, ncsize=NCSIZE)
     except Exception as exc:  # noqa: BLE001 - report cleanly
         print(f"could not run the solver: {type(exc).__name__}: {exc}")

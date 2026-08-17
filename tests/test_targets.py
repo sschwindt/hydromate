@@ -6,18 +6,18 @@ programmatically (as a user would in Excel), and checks:
 
 * the template carries the four tabs, the parameter drop-down and the
   prefilled friction-zone rows (current ks from the roughness table);
-* :func:`hydromate.targets.read_targets` joins the hydraulics/morphodynamics
+* :func:`axqua.targets.read_targets` joins the hydraulics/morphodynamics
   IDs to the point layers (reprojected to the project CRS), recomputes the
   derived quantities (U_h, U_h', TKE proxy), converts grain sizes mm -> m and
   samples the DoD raster into ``dz``;
-* :func:`hydromate.targets.read_target_parameters` turns the parameters tab
+* :func:`axqua.targets.read_target_parameters` turns the parameters tab
   into HydroBayesCal names/ranges (``zone<N>``, ``gaia<KEYWORD> <class>``,
   literal keywords) and these override the config's parameters in the merge;
 * unique-ID violations and unmatched IDs raise.
 
-Requires ``hydromate-env`` (geopandas/rasterio/openpyxl). No TELEMAC needed.
+Requires ``axqua-env`` (geopandas/rasterio/openpyxl). No TELEMAC needed.
 
-Run via pytest: mamba run -n hydromate-env pytest tests/test_targets.py
+Run via pytest: mamba run -n axqua-env pytest tests/test_targets.py
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def _write_dod(path: Path, value: float = -0.35) -> None:
 @pytest.fixture()
 def case(tmp_path: Path):
     """A minimal loaded Config with roughness zones, position layers and a DoD."""
-    from hydromate.config import load_config
+    from axqua.config import load_config
 
     geo = tmp_path / "user-sources" / "geodata"
     gt = tmp_path / "user-sources" / "ground-truth"
@@ -166,7 +166,7 @@ def _fill_template(path: Path) -> None:
 def test_template_layout_and_prefill(case):
     from openpyxl import load_workbook
 
-    from hydromate.targets import PARAMETER_CATALOG, write_target_template
+    from axqua.targets import PARAMETER_CATALOG, write_target_template
 
     out = write_target_template(case)
     assert out == Path(case.ground_truth.targets.file)
@@ -199,7 +199,7 @@ def test_template_layout_and_prefill(case):
 # ingest round trip
 # --------------------------------------------------------------------------- #
 def test_read_targets_round_trip(case):
-    from hydromate.targets import read_targets, write_target_template
+    from axqua.targets import read_targets, write_target_template
 
     _fill_template(write_target_template(case))
     tables = read_targets(case)
@@ -232,9 +232,9 @@ def test_read_targets_round_trip(case):
 
 
 def test_compile_and_calibration_csv(case):
-    from hydromate import calibration
-    from hydromate.ground_truth import compile_ground_truth, read_tidy
-    from hydromate.targets import write_target_template
+    from axqua import calibration
+    from axqua.ground_truth import compile_ground_truth, read_tidy
+    from axqua.targets import write_target_template
 
     _fill_template(write_target_template(case))
     out = compile_ground_truth(case)
@@ -257,8 +257,8 @@ def test_compile_and_calibration_csv(case):
 
 
 def test_read_target_parameters_and_merge(case):
-    from hydromate import calibration
-    from hydromate.targets import read_target_parameters, write_target_template
+    from axqua import calibration
+    from axqua.targets import read_target_parameters, write_target_template
 
     _fill_template(write_target_template(case))
     params = {p.name: p for p in read_target_parameters(case)}
@@ -279,7 +279,7 @@ def test_read_target_parameters_and_merge(case):
 def test_duplicate_and_unmatched_ids_raise(case):
     from openpyxl import load_workbook
 
-    from hydromate.targets import read_targets, write_target_template
+    from axqua.targets import read_targets, write_target_template
 
     path = write_target_template(case)
     _fill_template(path)

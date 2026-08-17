@@ -28,7 +28,7 @@ compute time. A ``README.md`` documenting the study folder for external readers
 (the central .xlsx summary, the governing equations and quantities examined,
 and the purpose of every produced file) is written alongside, ready for data
 publication. The study creates and works in its own
-``hydromate-case/mesh-convergence/`` folder.
+``axqua-case/mesh-convergence/`` folder.
 
 The discharge and the outflow stage prescription come from ``case-config.yml``
 (same source as preprocessing.py); each mesh is **pre-wetted**: the channel is
@@ -47,8 +47,8 @@ auto-approved (no prompts), so the study keeps refining one grid at a time until
 it reaches the tolerance, exhausts AUTO_MAX_EXTRA_LEVELS refinements, or a level
 fails to mesh/run -- then it writes the report from the completed levels.
 
-Run: mamba run -n hydromate-env python cases/inn-KB08-2025-hydro/mesh_convergence_study.py
-     mamba run -n hydromate-env python cases/inn-KB08-2025-hydro/mesh_convergence_study.py mode='auto-refinement'
+Run: mamba run -n axqua-env python cases/inn-KB08-2025-hydro/mesh_convergence_study.py
+     mamba run -n axqua-env python cases/inn-KB08-2025-hydro/mesh_convergence_study.py mode='auto-refinement'
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hydromate import convergence, logging_to, prepare_steady_inputs
-from hydromate.config import load_config
+from axqua import convergence, logging_to, prepare_steady_inputs
+from axqua.config import load_config
 
 # case-config.yml lives next to this script (in the case folder)
 CONFIG = Path(__file__).resolve().parent / "case-config.yml"
@@ -85,7 +85,7 @@ def _parse_mode(argv: list[str]) -> str:
 def main(mode: str = "standard") -> None:
     auto = mode == "auto-refinement"
     cfg.ensure_dirs()
-    # the study creates and works in its own hydromate-case/mesh-convergence/ folder
+    # the study creates and works in its own axqua-case/mesh-convergence/ folder
     # (a sibling of the preprocessing/ simulation/ postprocessing/ phase dirs)
     mc_dir = Path(cfg.postprocessing_dir).parent / "mesh-convergence"
     mc_dir.mkdir(parents=True, exist_ok=True)

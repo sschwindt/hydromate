@@ -1,15 +1,15 @@
 """Flux / mass-balance (hotstart) convergence analysis.
 
-Everything under test is hydromate's own: the ``.sortie`` listing parser
-(:mod:`hydromate.sortie`), the convergence maths (relative flux imbalance,
+Everything under test is axqua's own: the ``.sortie`` listing parser
+(:mod:`axqua.sortie`), the convergence maths (relative flux imbalance,
 convergence rate, the converged printout), the absolute steady-window detection and
 the derived hotstart steering file. The analysis used to delegate to the ``pythomac``
-package; it no longer does (see the :mod:`hydromate.flux_convergence` docstring), so
+package; it no longer does (see the :mod:`axqua.flux_convergence` docstring), so
 these tests drive it end to end from a **synthetic listing written in TELEMAC's real
 output format** rather than by stubbing out the parser.
 
 Run via:
-    mamba run -n hydromate-env pytest tests/test_flux_convergence.py
+    mamba run -n axqua-env pytest tests/test_flux_convergence.py
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from hydromate.flux_convergence import (
+from axqua.flux_convergence import (
     _mean_balance_time,
     analyze_flux_convergence,
     convergence_index,
@@ -28,7 +28,7 @@ from hydromate.flux_convergence import (
     find_steady_window,
     relative_imbalance,
 )
-from hydromate.sortie import latest_sortie, read_sortie
+from axqua.sortie import latest_sortie, read_sortie
 
 
 def _stub_cfg(model_dir, *, period=50, dt=1.0, n_steps=10000, cas="steady2d.cas"):
@@ -296,7 +296,7 @@ _GAIA_BLOCK = """\
 
 
 def test_sediment_mass_profile_reads_gaia_blocks(tmp_path):
-    from hydromate.sortie import sediment_mass_profile
+    from axqua.sortie import sediment_mass_profile
 
     p = tmp_path / "gaia.sortie"
     p.write_text("".join(
@@ -321,12 +321,12 @@ def test_sediment_mass_profile_reads_gaia_blocks(tmp_path):
 
 def test_sediment_mass_profile_empty_without_gaia(tmp_path):
     path = _write_sortie(tmp_path, _two_boundary(np.array([0.1, 0.05])))
-    from hydromate.sortie import sediment_mass_profile
+    from axqua.sortie import sediment_mass_profile
     assert sediment_mass_profile(path) == {}
 
 
 def test_tracer_mass_profile_skips_the_water_block(tmp_path):
-    from hydromate.sortie import tracer_mass_profile
+    from axqua.sortie import tracer_mass_profile
 
     p = tmp_path / "tracer.sortie"
     p.write_text(
@@ -348,7 +348,7 @@ def test_tracer_mass_profile_skips_the_water_block(tmp_path):
 
 
 def test_find_lines_extracts_user_fortran_printouts(tmp_path):
-    from hydromate.sortie import find_lines
+    from axqua.sortie import find_lines
 
     p = tmp_path / "run.sortie"
     p.write_text(
@@ -367,7 +367,7 @@ def test_tolerance_grade_comes_from_the_config_and_scales_the_absolute_criterion
     absolute steady criterion is derived from it times the discharge - so the
     hotstart gate means the same thing on a 2 m3/s side channel and a 200 m3/s river
     instead of being decided by the size of the case."""
-    from hydromate import flux_convergence as fcmod
+    from axqua import flux_convergence as fcmod
 
     eps = np.concatenate([np.full(10, 1e-2), np.full(30, 5e-4)])   # settles at 5e-4
     _write_sortie(tmp_path, _two_boundary(eps, q=2.0))

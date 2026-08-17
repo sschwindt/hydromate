@@ -1,7 +1,7 @@
 """Build the OpenFOAM free-surface case (OPTIONAL 3D extension, after step 1b).
 
 Turns the converged TELEMAC 2D result into a complete, ready-to-run ``interFoam``
-case under ``hydromate-case/openfoam/``. It does NOT launch anything: run
+case under ``axqua-case/openfoam/``. It does NOT launch anything: run
 ``openfoam_run.py`` next.
 
 Why this exists
@@ -27,14 +27,14 @@ Three things here address that directly:
 And the mesh is written directly, not snapped: a river bed is a height field, so it
 is *followed* by a structured, all-hexahedral, terrain-following grid rather than
 approximated by snappyHexMesh's castellate-and-snap. See
-``hydromate.solvers.openfoam.polymesh`` for the reasoning.
+``axqua.solvers.openfoam.polymesh`` for the reasoning.
 
 Prerequisites: ``preprocessing.py`` and ``initial_run.py`` have run, so the case has
 a converged ``r2d.slf``; and ``openfoam.bashrc`` in case-config.yml points at your
 OpenFOAM ``etc/bashrc``. Ideally ``mesh_convergence_study.py`` has run too - this
 case reuses the horizontal resolution decision implicitly through ``cell_size``.
 
-Run: mamba run -n hydromate-env python cases/<your-case>/openfoam_preprocessing.py
+Run: mamba run -n axqua-env python cases/<your-case>/openfoam_preprocessing.py
 """
 
 from __future__ import annotations
@@ -42,10 +42,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from hydromate import setup_logging
-from hydromate.config import load_config
-from hydromate.prerun import ensure_seed
-from hydromate.solvers.openfoam import build_case, estimate_cells, load_hotstart, summarise
+from axqua import setup_logging
+from axqua.config import load_config
+from axqua.prerun import ensure_seed
+from axqua.solvers.openfoam import build_case, estimate_cells, load_hotstart, summarise
 
 # optional CLI arg selects the scenario config, e.g.
 #   python openfoam_preprocessing.py case-config-greenampt.yml

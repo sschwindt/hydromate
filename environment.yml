@@ -1,4 +1,4 @@
-# Conda/mamba environment for the Inn TELEMAC setup-automation workflow (hydromate).
+# Conda/mamba environment for the Inn TELEMAC setup-automation workflow (axqua).
 #
 # This environment runs the *case-building* pipeline (DEM clipping, gmsh meshing,
 # SELAFIN/CLI/CAS/TBL generation, calibration CSV + hydrobayescal config emit).
@@ -8,9 +8,9 @@
 #
 # Create with:
 #   mamba env create -f environment.yml
-#   mamba activate hydromate-env
+#   mamba activate axqua-env
 #   pip install -e .
-name: hydromate-env
+name: axqua-env
 channels:
   - conda-forge
 dependencies:

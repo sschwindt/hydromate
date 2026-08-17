@@ -3,16 +3,16 @@
 Builds tiny synthetic roughness zones (two side-by-side polygons with integer
 ``Zone ID`` 1 and 2) plus a zone->ks CSV, then checks:
 
-* :func:`hydromate.mesh.read_roughness_table` parses the CSV (with and without a
+* :func:`axqua.mesh.read_roughness_table` parses the CSV (with and without a
   header row);
-* :func:`hydromate.mesh.interpolate_roughness` tags each node with its zone's ks;
-* :func:`hydromate.mesh.write_mesh` carries the per-node roughness into the
+* :func:`axqua.mesh.interpolate_roughness` tags each node with its zone's ks;
+* :func:`axqua.mesh.write_mesh` carries the per-node roughness into the
   geometry SELAFIN as the ``BOTTOM FRICTION`` variable.
 
-Requires the ``hydromate-env`` environment (geopandas). No TELEMAC needed.
+Requires the ``axqua-env`` environment (geopandas). No TELEMAC needed.
 
-Run directly:  mamba run -n hydromate-env python tests/test_roughness.py
-Or via pytest: mamba run -n hydromate-env pytest tests/test_roughness.py
+Run directly:  mamba run -n axqua-env python tests/test_roughness.py
+Or via pytest: mamba run -n axqua-env pytest tests/test_roughness.py
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ boundaries:
 
 def _toy_mesh(x0=700000.0, y0=5340000.0, w=200.0, h=60.0):
     """A 4-node, 2-triangle mesh straddling the zone split."""
-    from hydromate.mesh import Mesh
+    from axqua.mesh import Mesh
 
     xm = x0 + w / 2
     # nodes: two left of the split (zone 1), two right (zone 2)
@@ -76,8 +76,8 @@ def _toy_mesh(x0=700000.0, y0=5340000.0, w=200.0, h=60.0):
 
 
 def run_roughness_test(tmp: Path) -> None:
-    from hydromate.config import load_config
-    from hydromate.mesh import interpolate_roughness, read_roughness_table, write_mesh
+    from axqua.config import load_config
+    from axqua.mesh import interpolate_roughness, read_roughness_table, write_mesh
 
     cfg_yaml = _write_fixtures(tmp)
     cfg = load_config(cfg_yaml)
@@ -114,8 +114,8 @@ def run_roughness_test(tmp: Path) -> None:
 def test_friction_tbl_from_roughness(tmp_path):
     """The friction .tbl is derived from the roughness table (NIKU + ks) when no
     explicit friction.zones are given, matching the geometry's FRIC_ID zones."""
-    from hydromate import steering
-    from hydromate.config import load_config
+    from axqua import steering
+    from axqua.config import load_config
 
     cfg = load_config(_write_fixtures(tmp_path))
     cfg.ensure_dirs()

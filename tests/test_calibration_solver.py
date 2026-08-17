@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from hydromate.calibration import emit_hbc_config
+from axqua.calibration import emit_hbc_config
 
 
 @pytest.fixture
 def cfg(tmp_path):
-    from hydromate.config import (
+    from axqua.config import (
         Boundaries, Calibration, Config, Friction, Geodata, GroundTruth,
         Hydrodynamics, Initialization, MeshConfig, Morphodynamics, TelemacEnv,
     )

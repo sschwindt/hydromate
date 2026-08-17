@@ -33,7 +33,7 @@ jobs:
         # and a user's "update available" never resolves.
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          meta=$(grep -m1 '^version=' qgis_plugin/hydromate/metadata.txt | cut -d= -f2 | tr -d ' ')
+          meta=$(grep -m1 '^version=' qgis_plugin/axqua/metadata.txt | cut -d= -f2 | tr -d ' ')
           echo "tag=$tag metadata=$meta"
           if [ -n "$tag" ] && [ "$tag" != "$meta" ]; then
             echo "::error::tag $tag does not match metadata.txt version $meta"

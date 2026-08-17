@@ -4,11 +4,11 @@ Builds synthetic FlowTracker2 workbooks in the three real export layouts,
 checks the velocity/fluctuation extraction (including the RMS reconstruction
 from the standard error of the mean), then fills a generated
 ``calibration-target-data.xlsx`` and confirms the round trip through
-:func:`hydromate.targets.read_targets`.
+:func:`axqua.targets.read_targets`.
 
-Requires ``hydromate-env`` (openpyxl/geopandas). No TELEMAC needed.
+Requires ``axqua-env`` (openpyxl/geopandas). No TELEMAC needed.
 
-Run via pytest: mamba run -n hydromate-env pytest tests/test_flowtracker.py
+Run via pytest: mamba run -n axqua-env pytest tests/test_flowtracker.py
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def _write_ft_tke_summary(path: Path) -> None:
 # reading
 # --------------------------------------------------------------------------- #
 def test_ftsum_reconstructs_rms_from_stderr(tmp_path):
-    from hydromate.flowtracker import read_flowtracker
+    from axqua.flowtracker import read_flowtracker
 
     _write_ftsum(tmp_path / "day1.ft.sum.xlsx")
     df = read_flowtracker(tmp_path / "day1.ft.sum.xlsx")
@@ -102,7 +102,7 @@ def test_ftsum_reconstructs_rms_from_stderr(tmp_path):
 
 
 def test_tkestats_uses_measured_std(tmp_path):
-    from hydromate.flowtracker import read_flowtracker
+    from axqua.flowtracker import read_flowtracker
 
     _write_tkestats(tmp_path / "up.xlsx")
     df = read_flowtracker(tmp_path / "up.xlsx")
@@ -114,7 +114,7 @@ def test_tkestats_uses_measured_std(tmp_path):
 
 
 def test_multisheet_skips_raw_and_reads_measured_tke(tmp_path):
-    from hydromate.flowtracker import read_flowtracker
+    from axqua.flowtracker import read_flowtracker
 
     _write_ft_tke_summary(tmp_path / "FT_TKE_Summary.xlsx")
     df = read_flowtracker(tmp_path / "FT_TKE_Summary.xlsx")
@@ -130,7 +130,7 @@ def test_multisheet_skips_raw_and_reads_measured_tke(tmp_path):
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def case(tmp_path):
-    from hydromate.config import load_config
+    from axqua.config import load_config
 
     geo = tmp_path / "user-sources" / "geodata"
     gt = tmp_path / "user-sources" / "ground-truth"
@@ -164,7 +164,7 @@ ground_truth:
 
 
 def test_write_target_template_emits_driver_script(case):
-    from hydromate.targets import write_target_template
+    from axqua.targets import write_target_template
 
     out = write_target_template(case)
     script = out.parent / "extract_flowtracker.py"
@@ -173,8 +173,8 @@ def test_write_target_template_emits_driver_script(case):
 
 
 def test_fill_template_and_round_trip(case, tmp_path):
-    from hydromate.flowtracker import fill_template_hydraulics
-    from hydromate.targets import read_targets, write_target_template
+    from axqua.flowtracker import fill_template_hydraulics
+    from axqua.targets import read_targets, write_target_template
 
     template = write_target_template(case)
     _write_ftsum(tmp_path / "day1.xlsx")
@@ -203,8 +203,8 @@ def test_fill_template_and_round_trip(case, tmp_path):
 
 
 def test_fill_is_idempotent(case, tmp_path):
-    from hydromate.flowtracker import fill_template_hydraulics
-    from hydromate.targets import write_target_template
+    from axqua.flowtracker import fill_template_hydraulics
+    from axqua.targets import write_target_template
 
     template = write_target_template(case)
     _write_ftsum(tmp_path / "day1.xlsx")
