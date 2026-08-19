@@ -68,14 +68,20 @@ know nothing about the package name.
 
 ## Documentation
 
-Full docs (Sphinx) live in `docs/`. Start with `docs/usage.rst` for the workflow, meshing and config reference, and `docs/input_files.rst` for the required input files. Then:
+Full docs (Sphinx) live in `docs/`, in the order you need them:
 
 | doc | what it covers |
 |---|---|
-| [`docs/architecture.rst`](docs/architecture.rst) | how the model builder, the job runner and the QGIS plugin fit together, and why the seams are where they are |
+| [`docs/installation.rst`](docs/installation.rst) | environment, install, the TELEMAC link, the QGIS plugin |
+| [`docs/preparation.rst`](docs/preparation.rst) | the common preparation workflow: input files, config, ground truth, meshing, structures, building and checking a case |
+| [`docs/telemac.rst`](docs/telemac.rst) | the TELEMAC path: initial condition, initial run, numerics, 3D, gain-lose reaches, GAIA |
+| [`docs/openfoam.rst`](docs/openfoam.rst) | the OpenFOAM path (seeded by a TELEMAC run), and the rigid-lid shortcut |
+| [`docs/outputs.rst`](docs/outputs.rst) | the case folder, what the build writes, and the reports that say whether a run can be believed |
+| [`docs/hbc.rst`](docs/hbc.rst) | what aXqua hands to HydroBayesCal |
 | [`docs/jobs.rst`](docs/jobs.rst) | submitting, monitoring and cancelling runs that outlive their shell; solver profiles; debugging |
 | [`docs/qgis_plugin.rst`](docs/qgis_plugin.rst) | installing and using the QGIS frontend |
-| [`docs/hbc.rst`](docs/hbc.rst) | what aXqua hands to HydroBayesCal |
+| [`docs/architecture.rst`](docs/architecture.rst) | how the model builder, the job runner and the QGIS plugin fit together, and why the seams are where they are |
+| [`docs/help.rst`](docs/help.rst) | troubleshooting and tips |
 
 ### Building / recompiling the docs
 
