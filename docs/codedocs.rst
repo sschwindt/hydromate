@@ -12,10 +12,7 @@ Configuration
 Solver-agnostic core
 --------------------
 
-``axqua.core`` holds everything that describes the river and the modelling intent
-rather than a particular simulation code. **Nothing here imports a solver** - backends
-depend on the core, never the other way round - which is what lets a second simulation
-code be an addition rather than a rewrite.
+``axqua.core`` holds everything that describes the river and the modelling intent rather than a particular simulation code. **Nothing here imports a solver** - backends depend on the core, never the other way round - which is what lets a second simulation code be an addition rather than a rewrite.
 
 .. automodule:: axqua.core.geodata
    :members:
@@ -238,10 +235,7 @@ Command-line interface
 The job system
 --------------
 
-Job identity, persistence, execution and detachment. A sibling of ``core`` and
-``solvers`` rather than part of ``core``, because the executor dispatches to a solver
-backend - which nothing in ``core`` may do. ``model``, ``ids`` and ``paths`` are
-standard-library only, so a job verb costs no more than a capability listing.
+Job identity, persistence, execution and detachment. A sibling of ``core`` and ``solvers`` rather than part of ``core``, because the executor dispatches to a solver backend - which nothing in ``core`` may do. ``model``, ``ids`` and ``paths`` are standard-library only, so a job verb costs no more than a capability listing.
 
 .. automodule:: axqua.jobs.model
    :members:
@@ -309,9 +303,7 @@ Detached launchers
 Solver backends
 ---------------
 
-The adapters the job system dispatches to. Both are thin: every piece of work is a
-function the per-case scripts already call, so the standalone path and a submitted job
-drive the same code.
+The adapters the job system dispatches to. Both are thin: every piece of work is a function the per-case scripts already call, so the standalone path and a submitted job drive the same code.
 
 .. automodule:: axqua.solvers.telemac.backend
    :members:

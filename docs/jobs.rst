@@ -1,10 +1,7 @@
 Jobs: running simulations that outlive their shell
 ==================================================
 
-A hydraulic simulation runs for hours or days. Tying it to the lifetime of a terminal, an
-SSH session or a QGIS window makes it fragile in exactly the way that costs the most: a
-run that is nearly finished. The job system exists so that a submitted simulation keeps
-going, can be found again, and can be stopped cleanly.
+A hydraulic simulation runs for hours or days. Tying it to the lifetime of a terminal, an SSH session or a QGIS window makes it fragile in exactly the way that costs the most: a run that is nearly finished. The job system exists so that a submitted simulation keeps going, can be found again, and can be stopped cleanly.
 
 Quick start
 -----------
@@ -19,8 +16,7 @@ Quick start
     axqua logs   <JOB_ID> --follow    # what it is saying
     axqua cancel <JOB_ID>             # stop it and everything it started
 
-Close the terminal, log out, reboot QGIS - the job carries on. Add ``--json`` to any of
-these for machine-readable output.
+Close the terminal, log out, reboot QGIS - the job carries on. Add ``--json`` to any of these for machine-readable output.
 
 Job kinds
 ---------
@@ -49,8 +45,7 @@ Per-kind options are the knobs that used to be constants at the top of each case
     axqua submit case-config.yml --kind mesh-convergence \
         --option tolerance=0.05 --option auto_extend=true --option ncsize=16
 
-An unknown option is refused before anything is created, because a job that *looks*
-submitted and quietly runs something else is worse than one that will not start.
+An unknown option is refused before anything is created, because a job that *looks* submitted and quietly runs something else is worse than one that will not start.
 
 What a job looks like on disk
 -----------------------------
@@ -68,17 +63,11 @@ What a job looks like on disk
         qgis/           GIS-ready exports
       hydrobayescal/    calibration artifacts
 
-The identifier is readable and sortable on purpose: it is a directory name and a dashboard
-column, and ``f835ac7d-3e91-...`` is neither greppable nor meaningful six months later.
+The identifier is readable and sortable on purpose: it is a directory name and a dashboard column, and ``f835ac7d-3e91-...`` is neither greppable nor meaningful six months later.
 
-**The directory is authoritative.** A SQLite index at
-``~/.local/share/axqua/jobs.sqlite`` makes listing hundreds of jobs fast, but it is a
-cache: ``axqua list --rebuild`` reconstructs it by scanning, and every index failure is
-swallowed so that bookkeeping can never take a job down.
+**The directory is authoritative.** A SQLite index at ``~/.local/share/axqua/jobs.sqlite`` makes listing hundreds of jobs fast, but it is a cache: ``axqua list --rebuild`` reconstructs it by scanning, and every index failure is swallowed so that bookkeeping can never take a job down.
 
-``job.json`` freezes the **resolved configuration**, not a pointer to it. Editing
-``case-config.yml`` afterwards cannot change a running job, and a finished job stays
-reproducible from its own folder.
+``job.json`` freezes the **resolved configuration**, not a pointer to it. Editing ``case-config.yml`` afterwards cannot change a running job, and a finished job stays reproducible from its own folder.
 
 States
 ------
@@ -89,27 +78,16 @@ States
                                  \-> FAILED
     (any active state) -> CANCEL_REQUESTED -> CANCELLED
 
-Two edges look wrong until you think about them, and both are deliberate:
-``QUEUED -> CANCELLED`` directly (nothing was ever launched, so there is nothing to tear
-down) and ``CANCEL_REQUESTED -> COMPLETED`` (a cancel is a *request*, and a solver seconds
-from finishing may finish first; reporting that as cancelled would be a lie).
+Two edges look wrong until you think about them, and both are deliberate: ``QUEUED -> CANCELLED`` directly (nothing was ever launched, so there is nothing to tear down) and ``CANCEL_REQUESTED -> COMPLETED`` (a cancel is a *request*, and a solver seconds from finishing may finish first; reporting that as cancelled would be a lie).
 
-Progress is **typed by kind** rather than flattened: a solver run reports simulated time
-against duration, a convergence study reports levels, a calibration reports iterations and
-a best objective. That is why the dashboard's progress column reads sensibly whatever the
-job is.
+Progress is **typed by kind** rather than flattened: a solver run reports simulated time against duration, a convergence study reports levels, a calibration reports iterations and a best objective. That is why the dashboard's progress column reads sensibly whatever the job is.
 
-**A job never sticks in RUNNING.** If the recorded process is gone - a crash, a reboot,
-``wsl --shutdown``, an OOM kill - the next status or list reconciles it to FAILED with an
-explanation. PID reuse is detected too, by comparing the process start time as well as the
-number.
+**A job never sticks in RUNNING.** If the recorded process is gone - a crash, a reboot, ``wsl --shutdown``, an OOM kill - the next status or list reconciles it to FAILED with an explanation. PID reuse is detected too, by comparing the process start time as well as the number.
 
 How detachment works
 --------------------
 
-The environment is captured from the solver's setup script **once**, at submit, and set
-directly on the detached process. No shell sits inside the job's process tree, which is
-what makes cancelling it reliable.
+The environment is captured from the solver's setup script **once**, at submit, and set directly on the detached process. No shell sits inside the job's process tree, which is what makes cancelling it reliable.
 
 =============  ================================================================
 launcher       how
@@ -129,19 +107,14 @@ Chosen automatically; override with ``--launcher``.
 
 .. note::
 
-   The Windows and WSL launchers are implemented and unit-tested, but have not been
-   executed against a real Windows or WSL installation. Reports welcome.
+   The Windows and WSL launchers are implemented and unit-tested, but have not been executed against a real Windows or WSL installation. Reports welcome.
 
-Cancellation is cooperative first: ``cancel`` writes a request file, the running job
-notices it, tears itself down and records ``CANCELLED`` - which lets it close its files
-and note where it got to. Only if it does not respond within the grace period does the
-launcher kill the tree.
+Cancellation is cooperative first: ``cancel`` writes a request file, the running job notices it, tears itself down and records ``CANCELLED`` - which lets it close its files and note where it got to. Only if it does not respond within the grace period does the launcher kill the tree.
 
 Solver profiles
 ---------------
 
-Machine-local, in ``~/.config/axqua/profiles.yml`` - never in a project file, because
-these are install paths and would destroy its portability:
+Machine-local, in ``~/.config/axqua/profiles.yml`` - never in a project file, because these are install paths and would destroy its portability:
 
 .. code-block:: yaml
 
@@ -165,10 +138,7 @@ these are install paths and would destroy its portability:
     axqua profiles list
     axqua profiles validate            # can these actually reach their solvers?
 
-``validate`` is the check to run **when you write the profile**, not when you submit a
-six-hour job. It also warns when a solver variable came from your ambient shell rather than
-from the setup script - a detached job does not inherit an interactive environment, so that
-is precisely the "works in my terminal, fails in the runner" trap.
+``validate`` is the check to run **when you write the profile**, not when you submit a six-hour job. It also warns when a solver variable came from your ambient shell rather than from the setup script - a detached job does not inherit an interactive environment, so that is precisely the "works in my terminal, fails in the runner" trap.
 
 Profiles are optional. A case that already carries ``telemac.pysource`` needs none.
 
@@ -182,18 +152,14 @@ Where things are kept
     ``jobs.sqlite`` and the default job root - derived, safe to delete.
 
 The job root, first hit wins
-    ``--job-root`` → ``$AXQUA_JOB_ROOT`` → the profile's ``working_root`` → the case
-    config → ``~/.local/share/axqua/jobs``.
+    ``--job-root`` → ``$AXQUA_JOB_ROOT`` → the profile's ``working_root`` → the case config → ``~/.local/share/axqua/jobs``.
 
-Platform-aware: ``%APPDATA%`` / ``%LOCALAPPDATA%`` on Windows,
-``~/Library/Application Support`` on macOS. Point the job root at a large volume - CFD
-output is measured in tens of gigabytes.
+Platform-aware: ``%APPDATA%`` / ``%LOCALAPPDATA%`` on Windows, ``~/Library/Application Support`` on macOS. Point the job root at a large volume - CFD output is measured in tens of gigabytes.
 
 Debugging
 ---------
 
-Run a job **synchronously** in the current shell, which is exactly what a detached job
-does internally, so a failure reproduces under a terminal:
+Run a job **synchronously** in the current shell, which is exactly what a detached job does internally, so a failure reproduces under a terminal:
 
 .. code-block:: bash
 
@@ -202,14 +168,10 @@ does internally, so a failure reproduces under a terminal:
 Then read, in this order:
 
 ``runner.log``
-    aXqua's narration: state transitions, the commands it issued, exit codes. Where a
-    *setup* problem is explained.
+    aXqua's narration: state transitions, the commands it issued, exit codes. Where a *setup* problem is explained.
 ``solver/*.log``
-    The solver talking. Where a *numerical* problem is diagnosed. ``aXqua logs
-    <JOB_ID> --solver``.
+    The solver talking. Where a *numerical* problem is diagnosed. ``aXqua logs <JOB_ID> --solver``.
 ``status.json``
-    The structured error, with a stable ``code``, the ``subject`` at fault and a
-    ``remedy``.
+    The structured error, with a stable ``code``, the ``subject`` at fault and a ``remedy``.
 
-Exit codes are per category, so a script can branch without parsing text: 2 config,
-3 geodata, 4 environment, 5 solver, 6 mesh, 1 anything unanticipated, 130 cancelled.
+Exit codes are per category, so a script can branch without parsing text: 2 config, 3 geodata, 4 environment, 5 solver, 6 mesh, 1 anything unanticipated, 130 cancelled.

@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # module name resolves differently on case-insensitive filesystems. PyPI normalises the
 # two to the same project, so `pip install aXqua` and `pip install axqua` both work.
 name = "aXqua"
-version = "0.3.2"
+version = "0.3.3"
 description = "Automated setup, persistent execution and calibration of river models - TELEMAC-2D/3D with GAIA, and OpenFOAM interFoam - with a QGIS frontend."
 readme = "README.md"
 requires-python = ">=3.10"
