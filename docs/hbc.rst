@@ -1,7 +1,7 @@
 Calibration & validation (HydroBayesCal)
 ========================================
 
-Once :doc:`the build <preparation>` has produced a calibration-ready case and ``initial_run.py`` has confirmed it runs and is converged, the model is calibrated with `HydroBayesCal <https://github.com/Ecohydraulics/hydrobayescal>`_ (HBC) - surrogate-assisted Bayesian calibration with quantified uncertainty.
+Once :doc:`the build <preprocessing>` has produced a calibration-ready case and ``initial_run.py`` has confirmed it runs and is converged, the model is calibrated with `HydroBayesCal <https://github.com/Ecohydraulics/hydrobayescal>`_ (HBC) - surrogate-assisted Bayesian calibration with quantified uncertainty.
 
 What aXqua hands over
 ---------------------

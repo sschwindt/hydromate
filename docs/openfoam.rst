@@ -1,7 +1,7 @@
-The OpenFOAM workflow
-=====================
+OpenFOAM workflow
+=================
 
-Use OpenFOAM when the **vertical structure** of the flow matters *and* the water surface has a gradient - which rules out ``simpleFoam`` and means a two-phase VOF solver, ``interFoam``. It reads the same case description as the TELEMAC path (:doc:`preparation`), so nothing has to be drawn or configured twice.
+Use OpenFOAM when the **vertical structure** of the flow matters *and* the water surface has a gradient - which rules out ``simpleFoam`` and means a two-phase VOF solver, ``interFoam``. It reads the same case description as the TELEMAC path (:doc:`preprocessing`), so nothing has to be drawn or configured twice.
 
 **TELEMAC runs first, automatically.** OpenFOAM is the expensive model in the chain, and almost everything it needs to know at ``t = 0`` is something a 2D depth-averaged run answers in minutes: where the water is, how deep it is, how fast it moves, and roughly where its surface sits. So the build seeds itself - it reuses the case's own converged ``r2d.slf`` when there is one, and otherwise builds and runs a **coarse TELEMAC pre-run** of its own (54 s on isar-2025 at ``size_scale: 4``, producing a 3D mesh within 3% of the one the full production result gives). That seed does four jobs at once: the wetted cells start wet, the lid is clamped just above the surface so most air cells never exist, the plan footprint is trimmed to the wetted corridor, and every column starts with a velocity.
 
@@ -18,7 +18,7 @@ Build and run
 
 #. **Build** - a terrain-following, all-hexahedral mesh written straight to ``constant/polyMesh`` (no snappyHexMesh: a river bed is a height field, so it is *followed* rather than snapped to), fields seeded from the converged ``r2d.slf``, and the two staged dictionary sets. The build prints its own **cost report** - the time step the Courant target will settle on, the number of steps your ``end_time`` implies, and how that compares with one flush of the reach.
 #. **Run** - ``checkMesh``, ``decomposePar``, then two stages of ``interFoam``: a short spin-up that settles the interface from the depth-averaged hotstart, then the production stage. Watch ``Co`` and ``dt`` on the progress bar; a healthy run holds ``dt`` near the Courant target.
-#. **Report** - inlet and outlet **water** discharge and their relative imbalance, judged against the same ``hydrodynamics.flux_tolerance`` the 2D run is judged by, plus the **surface-freedom** verdict described in :doc:`outputs`.
+#. **Report** - inlet and outlet **water** discharge and their relative imbalance, judged against the same ``hydrodynamics.flux_tolerance`` the 2D run is judged by, plus the **surface-freedom** verdict described in :doc:`results`.
 
 The air phase is the usual reason such runs fail, so three things address it: the **lid follows the 2D free surface** at a fixed ``freeboard`` so most air cells never exist; **semi-implicit MULES** lets the Courant target run near 0.9 instead of the tutorials' 0.2; and a **``limitVelocity`` constraint** caps ``|U|`` at several times the reach's own water speed - water never reaches it, a runaway air jet does.
 

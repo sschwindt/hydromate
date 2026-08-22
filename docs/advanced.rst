@@ -1,7 +1,11 @@
-Jobs: running simulations that outlive their shell
+Advanced: running simulations outside your session
 ==================================================
 
-A hydraulic simulation runs for hours or days. Tying it to the lifetime of a terminal, an SSH session or a QGIS window makes it fragile in exactly the way that costs the most: a run that is nearly finished. The job system exists so that a submitted simulation keeps going, can be found again, and can be stopped cleanly.
+A hydraulic simulation runs for hours or days. Tying it to the lifetime of a terminal, an SSH session or a QGIS window makes it fragile in exactly the way that costs the most: a run that is nearly finished. Everything on this page is about **decoupling the run from the session that started it** - the solver's process, its terminal and its output streams keep going after you close the window, log out, or reboot QGIS, and are picked up again afterwards.
+
+You do not have to read it to use aXqua. The QGIS plugin (:doc:`qgis_plugin`) and the per-case scripts submit jobs for you and show you their progress, and the defaults are sensible. Read it when you need to know *where* a detached run actually lives, why it cannot inherit your shell, how to attach a terminal to one that is already going, or how to run several solver installations from one machine.
+
+The short version: a submitted simulation is a **detached system job**. It owns a directory, its environment is captured once at submit time rather than inherited, and no shell sits inside its process tree - which is what makes it both survivable and cleanly cancellable.
 
 Quick start
 -----------

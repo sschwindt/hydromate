@@ -10,30 +10,12 @@ The QGIS plugin
    Boundaries, mesh zones and ground-truth points are drawn in QGIS anyway. The plugin
    closes the loop.
 
-Installing
-----------
+Where it fits
+-------------
 
-The plugin is a **frontend**. It runs no solver and does no heavy numerics; it drives the separately installed ``axqua`` command-line tool.
+This is the **primary way to use aXqua**: everything the command line can do, the plugin does from the map canvas you already have your geodata open in. Choose a case, build it, submit runs, watch them, load the results as styled layers. The simulation itself runs outside QGIS as a detached job, so closing QGIS does not stop it (:doc:`advanced`).
 
-1. **Install aXqua** in the environment that already reaches your solver::
-
-       pip install git+https://github.com/sschwindt/aXqua.git
-       axqua --version
-
-2. **Install the plugin.** From the QGIS plugin repository (*Plugins ▸ Manage and Install Plugins*, tick *Show also experimental plugins*), or from the zip attached to a `GitHub release <https://github.com/sschwindt/aXqua/releases>`_ via *Install from ZIP*.
-
-   For development, symlink the folder into your QGIS profile instead::
-
-       ln -s /path/to/axqua/qgis_plugin/axqua \
-             ~/.local/share/QGIS/QGIS3/profiles/default/python/plugins/axqua
-
-3. **Point the plugin at axqua.** Open the aXqua panel and press *Check* on the Setup tab. If it is not on ``PATH``, set the path in *Settings…* - this is validated immediately, so a wrong path is caught here rather than when you submit a long run.
-
-Requirements: QGIS 3.44 or newer (including QGIS 4.x), aXqua 0.2+, and a working TELEMAC and/or OpenFOAM installation. Nothing is bundled - no solver, no MPI, no scientific Python stack.
-
-.. note::
-
-   QGIS's Python does **not** need to be the solver's Python, and should not be. The plugin talks to axqua over its command line, so the two environments stay separate.
+The plugin runs no solver and does no heavy numerics; it drives the separately installed ``axqua`` command-line tool. Install both as described in :doc:`installation`, then come back here. Everything remains fully usable from the command line with QGIS absent - the two paths call the same code, so neither is a fallback for the other.
 
 Setting up a project
 --------------------
@@ -41,7 +23,7 @@ Setting up a project
 On the **Setup** tab:
 
 1. *Add case…* and pick a ``case-config.yml``.
-2. Optionally choose a **solver profile** (see :doc:`jobs`) and a **job root** - point the latter at a large volume.
+2. Optionally choose a **solver profile** (see :doc:`advanced`) and a **job root** - point the latter at a large volume.
 3. *Save as…* to write a ``<name>.axqua-prj`` beside your case.
 
 The project file is a thin pointer: which cases belong together, which profile to use, where jobs go. It deliberately carries **no simulation status** - the runner writes status while QGIS is closed, so a copy here would be stale, and two open QGIS windows would fight over it.

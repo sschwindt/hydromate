@@ -1,5 +1,5 @@
-Preparation
-===========
+Common Preprocessing
+====================
 
 Everything on this page is done **once per reach, whichever solver you end up running**. ``axqua`` is driven by a single YAML configuration file that points, by path, at your input data, and describes the reach once: the region of interest, the liquid boundaries, the mesh zones and centerline, the roughness zones, the discharge and the outflow condition, any structures, and the field measurements. Both the TELEMAC and the OpenFOAM build read exactly this description, and each solver then adds only the knobs that are genuinely its own.
 
@@ -9,7 +9,7 @@ There are three kinds of input:
 #. the **simulation config** - the YAML itself, hand-written or filled in through the graphical configurator;
 #. **ground truth** - the field measurements that become calibration and validation targets.
 
-All paths in the config are resolved **relative to the configuration file's own directory**. Every vector and raster layer may be in any coordinate system: it is **reprojected to the project CRS** (``project.crs_epsg``, metres) on ingest. Keep raw inputs immutable - produced artifacts are written under ``axqua-case/``, described in :doc:`outputs`.
+All paths in the config are resolved **relative to the configuration file's own directory**. Every vector and raster layer may be in any coordinate system: it is **reprojected to the project CRS** (``project.crs_epsg``, metres) on ingest. Keep raw inputs immutable - produced artifacts are written under ``axqua-case/``, described in :doc:`results`.
 
 The workflow in three steps
 ---------------------------
@@ -424,7 +424,7 @@ The mode is taken from the ``Type`` text by substring (``dam`` / ``weir`` / ``le
 Building the case
 -----------------
 
-The build runs five stages (:doc:`codedocs` documents the modules):
+The build runs five stages (:doc:`development` documents the modules):
 
 #. **DEM → ROI** (:mod:`axqua.dem`) - reproject and clip the DEM(s) to the boundary, and compute the DEM-of-Difference when a target DEM is given.
 #. **Mesh + bathymetry** (:mod:`axqua.mesh`, :mod:`axqua.selafin`) - a gmsh triangular mesh (see :ref:`Meshing <meshing>`), the DEM interpolated onto the nodes, written as a TELEMAC geometry ``.slf`` with friction zones embedded as a per-node ``FRIC_ID`` variable.
@@ -508,7 +508,7 @@ Building and inspecting a case:
    axqua rating -o <out.csv> --manning <n> --slope <S0> --width <b> --q <Q...>
    axqua migrate <config> [-o <out.yml> | --in-place]
 
-Running work that outlives this shell (see :doc:`jobs`):
+Running work that outlives this shell (see :doc:`advanced`):
 
 .. code-block:: bash
 

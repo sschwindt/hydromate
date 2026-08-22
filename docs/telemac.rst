@@ -1,7 +1,7 @@
-The TELEMAC workflow
-====================
+TELEMAC workflow
+================
 
-TELEMAC is the depth-averaged path and the one to run first: it answers the whole reach in hours, it is what the calibration is run on, and it is also the hotstart for both the TELEMAC-3D extension and the :doc:`OpenFOAM build <openfoam>`. Everything on this page assumes the case has been prepared and built as described in :doc:`preparation`.
+TELEMAC is the depth-averaged path and the one to run first: it answers the whole reach in hours, it is what the calibration is run on, and it is also the hotstart for both the TELEMAC-3D extension and the :doc:`OpenFOAM build <openfoam>`. Everything on this page assumes the case has been prepared and built as described in :doc:`preprocessing`.
 
 .. code-block:: bash
 
@@ -29,7 +29,7 @@ How the pre-wet surface is built matters more than it looks. With ``prewet_mode:
 
 ``prewet_fill`` scales the depth above the thalweg and defaults to **0.70, deliberately below 1**. The asymmetry is the point: under-seeding is recoverable, because the flow refills a pool within seconds, whereas over-seeding is not. Water seeded above the converged surface has nowhere to go in a model with neither infiltration nor evaporation; it drains only where it can flow, and on flat ground over coarse gravel it stops as immobile film that survives to the end of the run. ``prewet_min_depth`` similarly leaves a node dry rather than laying down a feathered margin, since a seed film is exactly what stalls.
 
-Whatever the mode, the **inflow plug is re-imposed after every filter**: none of them has any reason to keep the inflow cross-section wet, and ``DEBIMP`` aborts at t=0 without it. Check the result with the wetted-extent report described in :doc:`outputs`.
+Whatever the mode, the **inflow plug is re-imposed after every filter**: none of them has any reason to keep the inflow cross-section wet, and ``DEBIMP`` aborts at t=0 without it. Check the result with the wetted-extent report described in :doc:`results`.
 
 The initial run
 ---------------
@@ -38,8 +38,8 @@ The initial run
 
 * **Live output and progress bar.** The solver's listing is streamed to the terminal as the run marches, rather than captured silently, and a single-line progress bar tracks the **simulated time against the run's** ``DURATION``, the point the variable-time-step march reaches when no stop criterion fires. Because the CFL-adaptive step makes the *number* of time steps unknown in advance, progress is measured against that simulated-time cap, with the live iteration count shown alongside (:class:`axqua.progress.SolverProgress`, wired by :func:`axqua.run_solver_streaming`). **Every** solver launch in the workflow streams the same way: the per-mesh runs of the mesh-convergence study, the per-layer runs of the vertical convergence study, and the ``--run`` modes of ``add3d.py`` and ``unsteady_run.py``.
 * **Core-count override.** Set the module-level ``NCSIZE`` at the top of ``initial_run.py`` to run this test on a different number of MPI processes than the ``telemac.n_processors`` chosen during preprocessing; leave it ``None`` to use the configured count. The command run is exactly ``telemac2d.py steady2d.cas --ncsize=<N> -s --nozip``, so the wrapper adds no compute overhead versus launching TELEMAC by hand.
-* **Flux convergence and the generated hotstart case.** After the run, the fluxes are read from the ``.sortie`` listing and reported; once the imbalance is small enough for long enough, a ``hotstart2d.cas`` is written next to the steady case. The files this produces are described in :doc:`outputs`.
-* **Where the water is.** A balanced flux budget says nothing about wetted *extent*, and the two are independent failure modes: a run can close its budget to 1e-4 and still show water standing where the reach has none. The wetted-extent and outlet-profile reports in :doc:`outputs` answer that question.
+* **Flux convergence and the generated hotstart case.** After the run, the fluxes are read from the ``.sortie`` listing and reported; once the imbalance is small enough for long enough, a ``hotstart2d.cas`` is written next to the steady case. The files this produces are described in :doc:`results`.
+* **Where the water is.** A balanced flux budget says nothing about wetted *extent*, and the two are independent failure modes: a run can close its budget to 1e-4 and still show water standing where the reach has none. The wetted-extent and outlet-profile reports in :doc:`results` answer that question.
 
 .. _numerics:
 
