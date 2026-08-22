@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 # Single source of truth: whatever was installed. The literal is the fallback for a
 # source checkout that was never `pip install`ed, and is kept in step with
 # pyproject.toml by a test.
-_FALLBACK_VERSION = "0.3.3"
+_FALLBACK_VERSION = "0.3.4"
 
 try:
     from importlib.metadata import version as _pkg_version

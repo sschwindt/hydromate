@@ -10,7 +10,7 @@ Tips that save time
 * **Reach a working OpenFOAM run through the rigid lid.** ``openfoam.mode: rigid-lid`` with a ``cell_size_factor`` of 3 to 5 turns a run of ~100,000 time steps into one of ~1,000, which is how a mesh problem or a misplaced inlet is found in minutes rather than days (:ref:`the rigid lid <usage-rigid-lid>`).
 * **Filter ParaView at ``hydrodynamics.wet_depth``.** The wetted-extent report uses that threshold (0.01 m by default), so a picture drawn without it will disagree with the report for no real reason.
 * **Debug a failing job in the foreground.** ``axqua execute <JOB_ID>`` runs exactly the code path a detached job takes, but synchronously and in your terminal.
-* **Draw over a hillshade.** It makes the channel banks, bars and structures visible, and is the difference between guessing a centerline and tracing one (see :doc:`preparation`).
+* **Draw over a hillshade.** It makes the channel banks, bars and structures visible, and is the difference between guessing a centerline and tracing one (see :doc:`preprocessing`).
 
 Installation
 ------------
@@ -180,4 +180,4 @@ The dataset name in the result did not match what the manifest expected. The fil
 Reporting a problem
 ~~~~~~~~~~~~~~~~~~~
 
-Include the aXqua version, the QGIS version, your platform, and the relevant log. The plugin's messages are written to the QGIS message log under the *aXqua* tab, and every job keeps its own ``runner.log`` next to its outputs (see :doc:`jobs`).
+Include the aXqua version, the QGIS version, your platform, and the relevant log. The plugin's messages are written to the QGIS message log under the *aXqua* tab, and every job keeps its own ``runner.log`` next to its outputs (see :doc:`advanced`).

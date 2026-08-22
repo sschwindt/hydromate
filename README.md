@@ -17,7 +17,7 @@ axqua status <JOB_ID>                                          # where it is
 axqua cancel <JOB_ID>                                          # stop it, and everything it started
 ```
 
-Close the terminal, log out, restart QGIS: the job carries on. See [`docs/jobs.rst`](docs/jobs.rst).
+Close the terminal, log out, restart QGIS: the job carries on. See [`docs/advanced.rst`](docs/advanced.rst).
 
 ## Migrating from hydromate
 
@@ -72,16 +72,16 @@ Full docs (Sphinx) live in `docs/`, in the order you need them:
 
 | doc | what it covers |
 |---|---|
-| [`docs/installation.rst`](docs/installation.rst) | environment, install, the TELEMAC link, the QGIS plugin |
-| [`docs/preparation.rst`](docs/preparation.rst) | the common preparation workflow: input files, config, ground truth, meshing, structures, building and checking a case |
+| [`docs/installation.rst`](docs/installation.rst) | the simulation software, the axqua environment, and installing the QGIS plugin |
+| [`docs/qgis_plugin.rst`](docs/qgis_plugin.rst) | using aXqua from QGIS - the primary interface |
+| [`docs/preprocessing.rst`](docs/preprocessing.rst) | the common preprocessing workflow: input files, config, ground truth, meshing, structures, building and checking a case |
 | [`docs/telemac.rst`](docs/telemac.rst) | the TELEMAC path: initial condition, initial run, numerics, 3D, gain-lose reaches, GAIA |
 | [`docs/openfoam.rst`](docs/openfoam.rst) | the OpenFOAM path (seeded by a TELEMAC run), and the rigid-lid shortcut |
-| [`docs/outputs.rst`](docs/outputs.rst) | the case folder, what the build writes, and the reports that say whether a run can be believed |
-| [`docs/hbc.rst`](docs/hbc.rst) | what aXqua hands to HydroBayesCal |
-| [`docs/jobs.rst`](docs/jobs.rst) | submitting, monitoring and cancelling runs that outlive their shell; solver profiles; debugging |
-| [`docs/qgis_plugin.rst`](docs/qgis_plugin.rst) | installing and using the QGIS frontend |
-| [`docs/architecture.rst`](docs/architecture.rst) | how the model builder, the job runner and the QGIS plugin fit together, and why the seams are where they are |
+| [`docs/hbc.rst`](docs/hbc.rst) | what aXqua hands to HydroBayesCal for the Bayesian calibration |
+| [`docs/results.rst`](docs/results.rst) | result visualization and export: the case folder, the run reports, QGIS/ParaView/CSV, layouts and movies |
+| [`docs/advanced.rst`](docs/advanced.rst) | running simulations outside your session: detached jobs, solver profiles, debugging |
 | [`docs/help.rst`](docs/help.rst) | troubleshooting and tips |
+| [`docs/development.rst`](docs/development.rst) | architecture, package layout and the generated code reference |
 
 ### Building / recompiling the docs
 

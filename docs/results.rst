@@ -1,7 +1,7 @@
-Outputs
-=======
+Result Visualization & Export
+=============================
 
-Everything aXqua produces lands under one folder per case, ``axqua-case/``, split by workflow phase. Raw inputs stay immutable in ``user-sources/``, so a case can always be rebuilt from scratch, and both folders are gitignored: they are local state, often tens of gigabytes of it.
+What a run produced, where it lands, how to look at it and how to get it out of aXqua. Everything aXqua produces lands under one folder per case, ``axqua-case/``, split by workflow phase. Raw inputs stay immutable in ``user-sources/``, so a case can always be rebuilt from scratch, and both folders are gitignored: they are local state, often tens of gigabytes of it.
 
 The case folder
 ---------------
@@ -58,6 +58,26 @@ A solver writes results; aXqua writes the reports that say whether those results
 .. note::
 
    The anisotropic mesh is **not reproducible byte-for-byte** between builds: BAMG fails intermittently and the retry ladder then meshes with a coarser background metric, giving a different but equally valid mesh (~0.4% spread in node count on the isar-2025 reach). So ``geometry.slf``, ``boundaries.cli`` and ``initial-conditions.slf`` cannot be byte-compared between runs, a resumed mesh-convergence study may compare levels built at different retry rungs, and a published result should quote the ``geometry.slf`` actually used rather than assume it can be regenerated exactly. The OpenFOAM mesh is aXqua's own structured lattice and *is* reproducible.
+
+Looking at the results
+----------------------
+
+**In QGIS, through the plugin.** *Load results* adds a job's output under ``axqua/<job id>`` in the layer tree, referencing the files where the solver left them - nothing is copied, which matters when a reconstructed OpenFOAM case is several gigabytes. Water depth and velocity come in styled, with everything below your minimum depth transparent and the velocity ramp capped so one nearly-dry cell cannot flatten the map. This is the quickest way to see a result, and it is described in full in :doc:`qgis_plugin`.
+
+**In ParaView, for the field data.** A TELEMAC ``r2d.slf`` and an OpenFOAM case both open directly. Filter at ``hydrodynamics.wet_depth`` so the picture agrees with the reports above; for a 3D or two-phase result, that threshold is the difference between a river and a film of numerical water over the whole floodplain.
+
+**As tables.** Every report on this page is a CSV next to the result it describes, so a plot in your own tooling needs no extraction step: ``extracted-fluxes.csv``, ``convergence-rate.csv``, ``wetting-report.csv``, ``outlet-profile.csv``, ``baffle-XS-q.csv``, plus the PNGs the flux-convergence analysis renders.
+
+Exporting
+---------
+
+**Layers and rasters.** The loaded result layers are ordinary QGIS layers over the original files, so QGIS's own export - *Export ▸ Save As…* for vectors and rasters, and the mesh-layer export for a SELAFIN - writes whatever format you need without aXqua in the loop.
+
+**A figure.** *aXqua ▸ Add the default A3 print layout* creates a layout fitted to the current extent, with the ROI, a north arrow, a bold **Q** arrow along the reach, a two-tone scale bar and a legend placeholder. Export it from QGIS's layout manager as PDF, SVG or PNG.
+
+**An animation.** For an unsteady result, *Export movie* renders the visible variable frame by frame and encodes WebM/VP9 with ``ffmpeg``. Without ffmpeg the PNG frames are kept and the exact encoding command is printed, so the frames are never lost to a missing tool.
+
+**The whole case.** ``axqua-case/`` is self-contained and ordinary files: copying that folder moves the built case, the results and the reports together. The tracked ``case-config.yml`` plus ``user-sources/`` is the smaller thing to archive when the results can be rebuilt.
 
 What the calibration is handed
 ------------------------------
